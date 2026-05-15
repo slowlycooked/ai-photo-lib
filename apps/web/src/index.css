@@ -1,0 +1,56 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-surface-soft text-body font-sans antialiased;
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+}
+
+/* Masonry grid — CSS columns approach preserves natural photo aspect ratios */
+@layer components {
+  .masonry-grid {
+    columns: 2;
+    column-gap: 8px;
+  }
+
+  @media (min-width: 640px) {
+    .masonry-grid { columns: 3; }
+  }
+
+  @media (min-width: 1024px) {
+    .masonry-grid { columns: 4; }
+  }
+
+  @media (min-width: 1280px) {
+    .masonry-grid { columns: 5; }
+  }
+
+  .masonry-item {
+    break-inside: avoid;
+    margin-bottom: 8px;
+    border-radius: 16px;
+    overflow: hidden;
+    display: block;
+  }
+}
+
+/* Smooth image load fade-in */
+@layer utilities {
+  .img-fade {
+    transition: opacity 0.2s ease;
+  }
+
+  .img-fade[data-loaded="true"] {
+    opacity: 1;
+  }
+
+  .img-fade[data-loaded="false"] {
+    opacity: 0;
+  }
+}

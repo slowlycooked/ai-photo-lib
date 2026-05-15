@@ -1,0 +1,242 @@
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useRef, useState } from "react";
+import {
+  Brain,
+  FolderSearch,
+  Loader2,
+  Play,
+  RefreshCw,
+  AlertCircle,
+  CheckCircle2,
+  Clock,
+} from "lucide-react";
+import { ScanPanel } from "@/components/ScanPanel";
+import { api, type AIJob } from "@/lib/api";
+import { useScanStatus, useStartScan } from "@/hooks/useScan";
+
+// ─── Stat tile ───────────────────────────────────────────────────────────────
+
+function StatTile({
+  label,
+  value,
+  color = "text-ink",
+}: {
+  label: string;
+  value: number | string;
+  color?: string;
+}) {
+  return (
+    <div className="bg-canvas border border-hairline rounded-md px-4 py-3 text-center">
+      <p className={`text-heading-md font-bold tabular-nums ${color}`}>{value}</p>
+      <p className="text-caption-sm text-mute mt-0.5">{label}</p>
+    </div>
+  );
+}
+
+// ─── Failed jobs list ─────────────────────────────────────────────────────────
+
+function FailedJobsSection() {
+  const queryClient = useQueryClient();
+  const [showAll, setShowAll] = useState(false);
+
+  const { data } = useQuery({
+    queryKey: ["ai-jobs-failed"],
+    queryFn: () => api.ai.jobs("failed", 50),
+    staleTime: 10_000,
+  });
+
+  const retryMutation = useMutation({
+    mutationFn: api.ai.retryFailed,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["ai-status"] });
+      queryClient.invalidateQueries({ queryKey: ["ai-jobs-failed"] });
+    },
+  });
+
+  const items = data?.items ?? [];
+  if (items.length === 0) return null;
+
+  const visible = showAll ? items : items.slice(0, 5);
+
+  return (
+    <section className="space-y-3">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <AlertCircle className="w-4 h-4 text-amber-500" />
+          <h2 className="text-body-sm font-semibold text-ink">失败任务</h2>
+          <span className="text-caption-sm text-mute">{items.length} 个</span>
+        </div>
+        <button
+          onClick={() => retryMutation.mutate()}
+          disabled={retryMutation.isPending}
+          className="flex items-center gap-1 text-btn-sm font-bold text-primary hover:text-primary-pressed disabled:text-stone transition-colors"
+        >
+          <RefreshCw className="w-3.5 h-3.5" />
+          {retryMutation.isPending ? "重试中…" : "全部重试"}
+        </button>
+      </div>
+
+      <div className="space-y-1.5">
+        {visible.map((job) => (
+          <FailedJobRow key={job.id} job={job} />
+        ))}
+      </div>
+
+      {items.length > 5 && (
+        <button
+          onClick={() => setShowAll((v) => !v)}
+          className="text-btn-sm text-primary hover:text-primary-pressed"
+        >
+          {showAll ? "收起" : `显示全部 ${items.length} 个`}
+        </button>
+      )}
+    </section>
+  );
+}
+
+function FailedJobRow({ job }: { job: AIJob }) {
+  return (
+    <div className="bg-canvas border border-hairline rounded-md px-4 py-2.5 flex items-start gap-3">
+      <AlertCircle className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" />
+      <div className="min-w-0 flex-1">
+        <p className="text-body-sm text-ink truncate">{job.file_name ?? `#${job.photo_id}`}</p>
+        {job.error_message && (
+          <p className="text-caption-sm text-mute truncate mt-0.5">{job.error_message}</p>
+        )}
+      </div>
+      <span className="text-caption-sm text-stone flex-shrink-0">
+        {job.retry_count > 0 ? `重试 ${job.retry_count}×` : ""}
+      </span>
+    </div>
+  );
+}
+
+// ─── AI section ───────────────────────────────────────────────────────────────
+
+function AISection() {
+  const queryClient = useQueryClient();
+  const [message, setMessage] = useState<string | null>(null);
+  const wasActiveRef = useRef(false);
+
+  const { data: status, isLoading } = useQuery({
+    queryKey: ["ai-status"],
+    queryFn: api.ai.status,
+    refetchInterval: (query) => {
+      const d = query.state.data;
+      return d && (d.queued > 0 || d.running > 0) ? 3000 : 15000;
+    },
+  });
+
+  useEffect(() => {
+    const isActive = !!status && (status.queued > 0 || status.running > 0);
+    if (wasActiveRef.current && !isActive && status) {
+      queryClient.invalidateQueries({ queryKey: ["photos"] });
+      queryClient.invalidateQueries({ queryKey: ["photo-ai"] });
+      queryClient.invalidateQueries({ queryKey: ["tags"] });
+    }
+    wasActiveRef.current = isActive;
+  }, [status, queryClient]);
+
+  const startMutation = useMutation({
+    mutationFn: api.ai.startAnalysis,
+    onSuccess: (data) => {
+      setMessage(
+        data.created_jobs > 0
+          ? `已创建 ${data.created_jobs} 个分析任务`
+          : "所有照片已在分析队列中"
+      );
+      queryClient.invalidateQueries({ queryKey: ["ai-status"] });
+      setTimeout(() => setMessage(null), 5000);
+    },
+    onError: (err: Error) => setMessage(`启动失败：${err.message}`),
+  });
+
+  const isRunning = status && status.running > 0;
+
+  // Rough speed: success / (age of oldest running job in hours) — simplified
+  const speed = status && status.success > 0 ? status.success : null;
+
+  return (
+    <section className="space-y-4">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          {isLoading ? (
+            <Loader2 className="w-4 h-4 animate-spin text-mute" />
+          ) : isRunning ? (
+            <Loader2 className="w-4 h-4 animate-spin text-primary" />
+          ) : (
+            <Brain className="w-4 h-4 text-primary" />
+          )}
+          <h2 className="text-body-sm font-semibold text-ink">
+            {isRunning ? "AI 分析进行中…" : "AI 图片分析"}
+          </h2>
+        </div>
+        <button
+          onClick={() => startMutation.mutate()}
+          disabled={startMutation.isPending}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-primary text-white text-btn-sm font-bold hover:bg-primary-pressed disabled:bg-stone transition-colors"
+        >
+          <Play className="w-3.5 h-3.5" />
+          {startMutation.isPending ? "启动中…" : "开始分析"}
+        </button>
+      </div>
+
+      {/* Stats */}
+      {status && (
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <StatTile label="排队中" value={status.queued} />
+          <StatTile label="进行中" value={status.running} color={status.running > 0 ? "text-primary" : "text-ink"} />
+          <StatTile label="已完成" value={status.success} color="text-green-700" />
+          <StatTile label="失败" value={status.failed} color={status.failed > 0 ? "text-amber-600" : "text-ink"} />
+        </div>
+      )}
+
+      {speed !== null && (
+        <p className="text-caption-sm text-mute flex items-center gap-1">
+          <CheckCircle2 className="w-3.5 h-3.5 text-green-600" />
+          累计已分析 {speed.toLocaleString()} 张照片
+        </p>
+      )}
+
+      {message && <p className="text-caption-sm text-mute">{message}</p>}
+
+      <FailedJobsSection />
+    </section>
+  );
+}
+
+// ─── Page ─────────────────────────────────────────────────────────────────────
+
+export function TasksPage() {
+  const { data: scanStatus, isLoading: scanLoading } = useScanStatus();
+  const { mutate: startScan, isPending } = useStartScan();
+
+  return (
+    <main className="max-w-3xl mx-auto px-4 sm:px-6 py-6 space-y-8">
+      <h1 className="text-heading-md font-semibold text-ink flex items-center gap-2">
+        <Clock className="w-5 h-5" />
+        任务中心
+      </h1>
+
+      {/* Scan section */}
+      <section className="space-y-3">
+        <div className="flex items-center gap-2">
+          <FolderSearch className="w-4 h-4 text-mute" />
+          <h2 className="text-body-sm font-semibold text-ink">照片扫描</h2>
+        </div>
+        <ScanPanel
+          status={scanStatus}
+          isLoading={scanLoading}
+          onStart={() => startScan()}
+          isPending={isPending}
+        />
+      </section>
+
+      <div className="border-t border-hairline" />
+
+      {/* AI section */}
+      <AISection />
+    </main>
+  );
+}

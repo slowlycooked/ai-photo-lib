@@ -1,0 +1,103 @@
+import { useEffect, useState } from "react";
+import { Camera, Search, X, Images, Tag, ListTodo, Settings } from "lucide-react";
+import { NavLink, useNavigate, useSearchParams, useLocation } from "react-router-dom";
+
+const navItems = [
+  { to: "/photos", label: "照片", icon: Images },
+  { to: "/tags", label: "标签", icon: Tag },
+  { to: "/tasks", label: "任务", icon: ListTodo },
+  { to: "/settings", label: "设置", icon: Settings },
+];
+
+export function Header() {
+  const [params] = useSearchParams();
+  const location = useLocation();
+  const navigate = useNavigate();
+
+  // Pre-fill search input from URL when on /search
+  const urlQuery = location.pathname === "/search" ? (params.get("q") ?? "") : "";
+  const [input, setInput] = useState(urlQuery);
+
+  useEffect(() => {
+    if (location.pathname === "/search") {
+      setInput(params.get("q") ?? "");
+    } else {
+      setInput("");
+    }
+  }, [location.pathname, params]);
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const q = input.trim();
+    if (q) navigate(`/search?q=${encodeURIComponent(q)}`);
+  };
+
+  const handleClear = () => {
+    setInput("");
+    if (location.pathname === "/search") navigate("/search");
+  };
+
+  return (
+    <header className="sticky top-0 z-50 bg-canvas border-b border-hairline h-14 flex items-center px-4 sm:px-6 gap-3">
+      {/* Logo */}
+      <NavLink to="/photos" className="flex items-center gap-2 flex-shrink-0">
+        <div className="w-7 h-7 bg-primary rounded-full flex items-center justify-center">
+          <Camera className="w-4 h-4 text-white" strokeWidth={2.5} />
+        </div>
+        <span className="text-body-sm font-bold text-ink tracking-tight hidden md:block">
+          AI Photo Library
+        </span>
+      </NavLink>
+
+      {/* Nav links */}
+      <nav className="hidden sm:flex items-center gap-1">
+        {navItems.map(({ to, label, icon: Icon }) => (
+          <NavLink
+            key={to}
+            to={to}
+            className={({ isActive }) =>
+              [
+                "flex items-center gap-1.5 px-3 py-1.5 rounded-md text-btn-sm transition-colors",
+                isActive
+                  ? "bg-secondary-bg text-ink font-bold"
+                  : "text-mute hover:text-ink hover:bg-surface-card",
+              ].join(" ")
+            }
+          >
+            <Icon className="w-3.5 h-3.5" />
+            {label}
+          </NavLink>
+        ))}
+      </nav>
+
+      {/* Search bar */}
+      <form onSubmit={handleSubmit} className="flex-1 max-w-md mx-auto">
+        <div className="relative flex items-center">
+          <Search className="absolute left-3 w-4 h-4 text-ash pointer-events-none" />
+          <input
+            type="search"
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            placeholder="搜索：爬山、夜景、有文字的照片…"
+            className={[
+              "w-full pl-9 pr-9 py-1.5 rounded-full bg-surface-card text-body-sm text-ink",
+              "placeholder:text-ash border border-hairline",
+              "focus:outline-none focus:ring-2 focus:ring-focus-outer focus:border-transparent",
+              "transition-shadow",
+            ].join(" ")}
+          />
+          {input && (
+            <button
+              type="button"
+              onClick={handleClear}
+              className="absolute right-3 w-5 h-5 flex items-center justify-center rounded-full hover:bg-secondary-bg text-ash hover:text-ink transition-colors"
+              aria-label="清除搜索"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </div>
+      </form>
+    </header>
+  );
+}

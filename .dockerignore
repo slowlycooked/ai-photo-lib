@@ -1,0 +1,47 @@
+# Root .dockerignore — used by the worker build (context = .)
+# Exclude everything except what the worker needs
+
+# ── Source: keep only worker + shared nothing else ────────────────────────────
+apps/api/
+apps/web/
+
+# ── Python cache ──────────────────────────────────────────────────────────────
+**/__pycache__/
+**/*.py[cod]
+**/*.pyo
+
+# ── Node ──────────────────────────────────────────────────────────────────────
+**/node_modules/
+apps/web/dist/
+apps/web/.vite/
+
+# ── Data & Media ──────────────────────────────────────────────────────────────
+data/
+sample-photos/
+
+# ── Environment & Secrets ─────────────────────────────────────────────────────
+.env
+.env.*
+*.env
+
+# ── Git ───────────────────────────────────────────────────────────────────────
+.git/
+.gitignore
+
+# ── IDE & OS ──────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+.DS_Store
+**/.DS_Store
+
+# ── Docs & Scripts ────────────────────────────────────────────────────────────
+Design-document/
+scripts/
+README.md
+
+# ── Test & Coverage ───────────────────────────────────────────────────────────
+**/.pytest_cache/
+**/.coverage
+**/htmlcov/
+**/.mypy_cache/
+**/.ruff_cache/

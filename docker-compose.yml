@@ -1,0 +1,89 @@
+services:
+  # ─── PostgreSQL ────────────────────────────────────────────────────────────
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: photo
+      POSTGRES_USER: photo
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-photo}
+    volumes:
+      - ${DATA_DIR:-./data}/postgres:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:${POSTGRES_HOST_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U photo -d photo"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ─── Redis ─────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - ${DATA_DIR:-./data}/redis:/data
+    ports:
+      - "127.0.0.1:${REDIS_HOST_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ─── API (FastAPI) ─────────────────────────────────────────────────────────
+  api:
+    build:
+      context: ./apps/api
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+psycopg://photo:${POSTGRES_PASSWORD:-photo}@postgres:5432/photo
+      REDIS_URL: redis://redis:6379/0
+      PHOTO_LIBRARY_PATH: /photos
+      THUMBNAIL_PATH: /data/thumbs
+      THUMBNAIL_SIZE: ${THUMBNAIL_SIZE:-512}
+    volumes:
+      - ${PHOTO_LIBRARY_PATH:-./sample-photos}:/photos:ro
+      - ${DATA_DIR:-./data}/thumbs:/data/thumbs
+    ports:
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # ─── Web (React + nginx) ───────────────────────────────────────────────────
+  web:
+    build:
+      context: ./apps/web
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${WEB_PORT:-8088}:80"
+    depends_on:
+      - api
+
+  # ─── AI Worker ─────────────────────────────────────────────────────────────
+  worker:
+    build:
+      context: .
+      dockerfile: apps/worker/Dockerfile
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+psycopg://photo:${POSTGRES_PASSWORD:-photo}@postgres:5432/photo
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-sk-local}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-http://host.docker.internal:8082/v1}
+      OPENAI_MODEL: ${OPENAI_MODEL:-MiniCPM-V-4.6}
+      OPENAI_VISION_MODEL: ${OPENAI_VISION_MODEL:-MiniCPM-V-4.6}
+      AI_MAX_RETRIES: ${AI_MAX_RETRIES:-3}
+      AI_WORKER_CONCURRENCY: ${AI_WORKER_CONCURRENCY:-1}
+      THUMBNAIL_PATH: /data/thumbs
+      PHOTO_LIBRARY_PATH: /photos
+    volumes:
+      - ${PHOTO_LIBRARY_PATH:-./sample-photos}:/photos:ro
+      - ${DATA_DIR:-./data}/thumbs:/data/thumbs
+    depends_on:
+      postgres:
+        condition: service_healthy

@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# scripts/init-db.sh — Run Alembic migrations against a running Postgres instance
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+API_DIR="$SCRIPT_DIR/../apps/api"
+
+echo "▶ Running database migrations..."
+cd "$API_DIR"
+alembic upgrade head
+echo "✓ Migrations complete."

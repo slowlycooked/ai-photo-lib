@@ -1,0 +1,76 @@
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+.venv/
+venv/
+env/
+ENV/
+.Python
+
+# ── Alembic ───────────────────────────────────────────────────────────────────
+# Keep versions/ tracked; ignore auto-generated py cache inside alembic
+alembic/__pycache__/
+
+# ── Node / Frontend ───────────────────────────────────────────────────────────
+apps/web/node_modules/
+apps/web/dist/
+apps/web/.vite/
+*.tsbuildinfo
+
+# ── Environment & Secrets ─────────────────────────────────────────────────────
+.env
+.env.local
+.env.*.local
+*.env
+
+# ── Data & Media (generated at runtime) ──────────────────────────────────────
+data/
+sample-photos/
+*.jpg
+*.jpeg
+*.png
+*.gif
+*.webp
+*.heic
+*.heif
+*.tiff
+*.tif
+*.raw
+*.cr2
+*.nef
+*.arw
+
+# ── Docker ────────────────────────────────────────────────────────────────────
+# don't ignore docker-compose overrides if someone adds them
+docker-compose.override.yml
+
+# ── IDE & Editor ──────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ── macOS ─────────────────────────────────────────────────────────────────────
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# ── Logs ──────────────────────────────────────────────────────────────────────
+*.log
+logs/
+
+# ── Test & Coverage ───────────────────────────────────────────────────────────
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/

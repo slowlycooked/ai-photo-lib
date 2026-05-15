@@ -1,0 +1,27 @@
+# apps/web/.dockerignore — build context = ./apps/web
+
+# ── Dependencies (reinstalled during build) ───────────────────────────────────
+node_modules/
+
+# ── Build output (regenerated during build) ───────────────────────────────────
+dist/
+.vite/
+*.tsbuildinfo
+
+# ── Environment ───────────────────────────────────────────────────────────────
+.env
+.env.*
+*.env
+
+# ── IDE & OS ──────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+.DS_Store
+
+# ── Git ───────────────────────────────────────────────────────────────────────
+.git/
+.gitignore
+
+# ── Docs ──────────────────────────────────────────────────────────────────────
+README.md
+*.md
