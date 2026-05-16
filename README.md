@@ -2,14 +2,29 @@
 
 私有化本地 AI 照片库，运行于群晖 NAS / Docker 环境。所有 AI 分析均在本地完成，照片不会上传至任何外部服务。
 
-## 功能（v0.1）
+## 功能（当前实现状态，v0.4）
 
+**照片管理**
 - 扫描本地照片目录（jpg / jpeg / png / webp / heic）
 - 自动生成 WebP 缩略图（长边 512px）
 - 读取 EXIF 元数据（拍摄时间、相机型号等）
-- 按拍摄时间倒序浏览照片墙
-- 支持无限滚动分页
-- 点击照片查看详情
+- 照片时间线（按年月分组）
+- 无限滚动分页
+
+**AI 打标签**
+- Worker 轮询 PostgreSQL `ai_jobs` 表，调用 llama-server `/v1/chat/completions`
+- 解析 JSON 结果，入库：内容描述、场景标签、物体标签、OCR 文字、中文关键词
+- 失败任务支持重试（可配置最大重试次数）
+
+**智能搜索**
+- 中文关键词搜索（PostgreSQL ILIKE + 标签数组 + 内容评分）
+
+**多页面 UI**
+- `/photos` — 照片时间线
+- `/search` — 关键词搜索
+- `/tags` — 标签浏览（分类展示，点击跳搜索）
+- `/tasks` — 任务中心（扫描 + AI 状态 + 失败任务重试）
+- `/settings` — 设置页（只读显示环境配置）
 
 ## 技术栈
 
@@ -108,7 +123,9 @@ PHOTO_LIBRARY_PATH=/Users/yourname/Pictures
 ./scripts/svc.sh stop web
 ```
 
-**可管理的服务名：** `postgres` `redis` `api` `web`
+**可管理的服务名：** `postgres` `redis` `ai` `api` `worker` `web`
+
+> `ai` 对应宿主机上的 llama-server；`worker` 轮询 `ai_jobs` 表并通过 `OPENAI_BASE_URL` 调用 `/v1/chat/completions`。
 
 ### 4. 服务地址
 

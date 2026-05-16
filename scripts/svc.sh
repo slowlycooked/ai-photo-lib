@@ -400,7 +400,7 @@ do_stop() {
   local services; services="$(resolve_services "$@")"
   # 停止顺序：先应用层，再基础设施
   local ordered=""
-  for s in web worker api redis postgres; do
+  for s in web worker api ai redis postgres; do
     if echo "$services" | grep -qw "$s"; then
       ordered="$ordered $s"
     fi
@@ -464,10 +464,12 @@ case "$COMMAND" in
     echo "  logs    <服务>      实时追踪日志（api / web）"
     echo ""
     echo -e "${BOLD}服务名:${RESET}"
-    echo "  postgres  — PostgreSQL (Docker)"
-    echo "  redis     — Redis       (Docker)"
-    echo "  api       — FastAPI     (uvicorn, 本地进程)"
-    echo "  web       — React       (vite dev server, 本地进程)"
+    echo "  postgres  — PostgreSQL    (Docker)"
+    echo "  redis     — Redis          (Docker)"
+    echo "  ai        — llama-server  (本地进程, OPENAI_BASE_URL, port LLAMA_PORT)"
+    echo "  api       — FastAPI        (uvicorn, 本地进程, port API_PORT)"
+    echo "  worker    — AI Worker      (Python 轮询 ai_jobs 表)"
+    echo "  web       — React          (vite dev server, port WEB_PORT)"
     echo ""
     echo -e "${BOLD}示例:${RESET}"
     echo "  ./scripts/svc.sh start"

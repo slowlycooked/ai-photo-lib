@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-AI Worker — processes queued ai_jobs, calls Ollama MiniCPM-V,
+AI Worker — processes queued ai_jobs, calls llama-server / OpenAI-compatible VLM,
 writes results to photo_ai_analysis.
 
 Usage:
     python main.py
 
 Environment variables (see .env.example):
-    DATABASE_URL, OLLAMA_BASE_URL, OLLAMA_MODEL,
+    DATABASE_URL, OPENAI_BASE_URL, OPENAI_MODEL,
     AI_MAX_RETRIES, AI_WORKER_CONCURRENCY, THUMBNAIL_PATH
 """
 from __future__ import annotations
@@ -34,7 +34,7 @@ from sqlalchemy.orm import sessionmaker, Session
 from app.config import settings
 from app.models.ai import AIJob, PhotoAIAnalysis
 from app.models.photo import Photo
-from app.services.ollama_client import analyze_image
+from app.services.vlm_client import analyze_image
 from app.services.json_parser import parse_model_json_output
 
 # ---------------------------------------------------------------------------
