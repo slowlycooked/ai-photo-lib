@@ -1,89 +1,131 @@
 services:
-  # ─── PostgreSQL ────────────────────────────────────────────────────────────
   postgres:
     image: pgvector/pgvector:pg16
+    container_name: ai-photo-lib-postgres
     restart: unless-stopped
     environment:
       POSTGRES_DB: photo
       POSTGRES_USER: photo
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-photo}
     volumes:
-      - ${DATA_DIR:-./data}/postgres:/var/lib/postgresql/data
+      - ${DATA_DIR:-/volume1/docker/ai-photo-lib}/postgres:/var/lib/postgresql/data
     ports:
-      - "127.0.0.1:${POSTGRES_HOST_PORT:-5432}:5432"
+      - "127.0.0.1:${POSTGRES_HOST_PORT:-15432}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U photo -d photo"]
-      interval: 5s
+      interval: 10s
       timeout: 5s
       retries: 10
 
-  # ─── Redis ─────────────────────────────────────────────────────────────────
   redis:
     image: redis:7-alpine
+    container_name: ai-photo-lib-redis
     restart: unless-stopped
     volumes:
-      - ${DATA_DIR:-./data}/redis:/data
+      - ${DATA_DIR:-/volume1/docker/ai-photo-lib}/redis:/data
     ports:
-      - "127.0.0.1:${REDIS_HOST_PORT:-6379}:6379"
+      - "127.0.0.1:${REDIS_HOST_PORT:-16379}:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
+      interval: 10s
       timeout: 3s
       retries: 5
 
-  # ─── API (FastAPI) ─────────────────────────────────────────────────────────
+  llama:
+    image: ai-photo-lib-llama:ds916-cpu
+    container_name: ai-photo-lib-llama
+    restart: unless-stopped
+
+    volumes:
+      - ${MODEL_DIR:-/volume1/docker/ai-photo-lib/models}:/models:ro
+      - ${PHOTO_LIBRARY_PATH:-/volume1/photo}:/photos:ro
+
+    ports:
+      # 仅用于 NAS 本机 SSH 调试。生产环境可以删掉。
+      - "127.0.0.1:${LLAMA_HOST_PORT:-18082}:8082"
+
+    command: >
+      -m /models/MiniCPM-V-4_6-Q4_K_M.gguf
+      --mmproj /models/mmproj-model-f16.gguf
+      --alias MiniCPM-V-4.6
+      --host 0.0.0.0
+      --port 8082
+      -c ${LLAMA_CTX:-2048}
+      --threads ${LLAMA_THREADS:-4}
+      --parallel 1
+      --media-path /photos
+      -ngl 0
+
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8082/v1/models >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 20
+      start_period: 120s
+
   api:
-    build:
-      context: ./apps/api
-      dockerfile: Dockerfile
+    image: ai-photo-lib-api:ds916
+    container_name: ai-photo-lib-api
     restart: unless-stopped
     environment:
       DATABASE_URL: postgresql+psycopg://photo:${POSTGRES_PASSWORD:-photo}@postgres:5432/photo
       REDIS_URL: redis://redis:6379/0
+
       PHOTO_LIBRARY_PATH: /photos
       THUMBNAIL_PATH: /data/thumbs
       THUMBNAIL_SIZE: ${THUMBNAIL_SIZE:-512}
+
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-sk-local}
+      OPENAI_BASE_URL: http://llama:8082/v1
+      OPENAI_MODEL: ${OPENAI_MODEL:-MiniCPM-V-4.6}
+      OPENAI_VISION_MODEL: ${OPENAI_VISION_MODEL:-MiniCPM-V-4.6}
+
+      AI_MAX_RETRIES: ${AI_MAX_RETRIES:-3}
+      AI_WORKER_CONCURRENCY: ${AI_WORKER_CONCURRENCY:-1}
+
     volumes:
-      - ${PHOTO_LIBRARY_PATH:-./sample-photos}:/photos:ro
-      - ${DATA_DIR:-./data}/thumbs:/data/thumbs
-    ports:
-      - "127.0.0.1:8000:8000"
+      - ${PHOTO_LIBRARY_PATH:-/volume1/photo}:/photos:ro
+      - ${DATA_DIR:-/volume1/docker/ai-photo-lib}/thumbs:/data/thumbs
+
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
 
-  # ─── Web (React + nginx) ───────────────────────────────────────────────────
   web:
-    build:
-      context: ./apps/web
-      dockerfile: Dockerfile
+    image: ai-photo-lib-web:ds916
+    container_name: ai-photo-lib-web
     restart: unless-stopped
     ports:
-      - "${WEB_PORT:-8088}:80"
+      - "${WEB_PORT:-18088}:80"
     depends_on:
       - api
 
-  # ─── AI Worker ─────────────────────────────────────────────────────────────
   worker:
-    build:
-      context: .
-      dockerfile: apps/worker/Dockerfile
+    image: ai-photo-lib-worker:ds916
+    container_name: ai-photo-lib-worker
     restart: unless-stopped
     environment:
       DATABASE_URL: postgresql+psycopg://photo:${POSTGRES_PASSWORD:-photo}@postgres:5432/photo
+
+      PHOTO_LIBRARY_PATH: /photos
+      THUMBNAIL_PATH: /data/thumbs
+
       OPENAI_API_KEY: ${OPENAI_API_KEY:-sk-local}
-      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-http://host.docker.internal:8082/v1}
+      OPENAI_BASE_URL: http://llama:8082/v1
       OPENAI_MODEL: ${OPENAI_MODEL:-MiniCPM-V-4.6}
       OPENAI_VISION_MODEL: ${OPENAI_VISION_MODEL:-MiniCPM-V-4.6}
+
       AI_MAX_RETRIES: ${AI_MAX_RETRIES:-3}
       AI_WORKER_CONCURRENCY: ${AI_WORKER_CONCURRENCY:-1}
-      THUMBNAIL_PATH: /data/thumbs
-      PHOTO_LIBRARY_PATH: /photos
+
     volumes:
-      - ${PHOTO_LIBRARY_PATH:-./sample-photos}:/photos:ro
-      - ${DATA_DIR:-./data}/thumbs:/data/thumbs
+      - ${PHOTO_LIBRARY_PATH:-/volume1/photo}:/photos:ro
+      - ${DATA_DIR:-/volume1/docker/ai-photo-lib}/thumbs:/data/thumbs
+
     depends_on:
       postgres:
+        condition: service_healthy
+      llama:
         condition: service_healthy

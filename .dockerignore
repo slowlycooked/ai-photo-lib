@@ -1,8 +1,7 @@
 # Root .dockerignore — used by the worker build (context = .)
 # Exclude everything except what the worker needs
 
-# ── Source: keep only worker + shared nothing else ────────────────────────────
-apps/api/
+# ── Source: worker needs apps/api/ (shared models/services) ──────────────────
 apps/web/
 
 # ── Python cache ──────────────────────────────────────────────────────────────
