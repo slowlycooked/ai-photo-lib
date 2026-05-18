@@ -1,5 +1,7 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from sqlalchemy.exc import OperationalError
 
 from .routers import health, photos, scan, ai, search, tags, settings
 
@@ -16,6 +18,15 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT", "DELETE"],
     allow_headers=["*"],
 )
+
+
+@app.exception_handler(OperationalError)
+async def db_unavailable_handler(request: Request, exc: OperationalError) -> JSONResponse:
+    return JSONResponse(
+        status_code=503,
+        content={"detail": "Database unavailable, please try again later"},
+    )
+
 
 app.include_router(health.router)
 app.include_router(photos.router)

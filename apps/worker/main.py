@@ -29,6 +29,7 @@ if str(_API_DIR) not in sys.path:
     sys.path.insert(0, str(_API_DIR))
 
 from sqlalchemy import create_engine
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import sessionmaker, Session
 
 from app.config import settings
@@ -174,20 +175,29 @@ def run() -> None:
     )
 
     while not _shutdown:
-        with SessionLocal() as db:
-            job = (
-                db.query(AIJob)
-                .filter(AIJob.status == "queued")
-                .order_by(AIJob.created_at)
-                .with_for_update(skip_locked=True)
-                .first()
-            )
+        try:
+            with SessionLocal() as db:
+                job = (
+                    db.query(AIJob)
+                    .filter(AIJob.status == "queued")
+                    .order_by(AIJob.created_at)
+                    .with_for_update(skip_locked=True)
+                    .first()
+                )
 
-            if job is None:
-                pass  # nothing to do this cycle
-            else:
-                _process_job(db, job)
-                continue  # immediately pick next job
+                if job is None:
+                    pass  # nothing to do this cycle
+                else:
+                    _process_job(db, job)
+                    continue  # immediately pick next job
+
+        except OperationalError as exc:
+            logger.error("Database connection error: %s — retrying in 30s", exc)
+            for _ in range(30):
+                if _shutdown:
+                    break
+                time.sleep(1)
+            continue
 
         # No jobs available — sleep briefly before polling again
         for _ in range(10):
