@@ -12,8 +12,10 @@ from sqlalchemy.orm import Session
 from ..database import get_db
 from ..models.ai import PhotoAIAnalysis
 from ..models.photo import Photo
+from ..models.folder import ProjectFolder
 from ..schemas.ai import AIAnalysisResponse
 from ..schemas.photo import PhotoDetailResponse, PhotoListResponse, PhotoResponse
+from ..services.folder_service import apply_folder_filter
 
 router = APIRouter(prefix="/photos", tags=["photos"])
 
@@ -23,19 +25,26 @@ router = APIRouter(prefix="/photos", tags=["photos"])
 @router.get("/timeline")
 def get_timeline(
     project_id: Optional[int] = None,
+    folder_id: Optional[int] = None,
+    folder_scope: str = "subtree",
     db: Session = Depends(get_db),
 ):
-    filters = [Photo.deleted_at.is_(None), Photo.taken_at.is_not(None)]
+    base_query = db.query(Photo).filter(Photo.deleted_at.is_(None), Photo.taken_at.is_not(None))
     if project_id is not None:
-        filters.append(Photo.project_id == project_id)
+        base_query = base_query.filter(Photo.project_id == project_id)
+    
+    # 应用文件夹过滤
+    if folder_id is not None and project_id is not None:
+        base_query = apply_folder_filter(base_query, db, project_id, folder_id, folder_scope)
 
+    # 从 base_query 的 Photo 对象执行聚合
     rows = (
-        db.query(
+        base_query
+        .with_entities(
             extract("year", Photo.taken_at).label("year"),
             extract("month", Photo.taken_at).label("month"),
             func.count(Photo.id).label("count"),
         )
-        .filter(*filters)
         .group_by("year", "month")
         .order_by(
             extract("year", Photo.taken_at).desc(),
@@ -69,6 +78,8 @@ def list_photos(
     date_to: Optional[date] = Query(
         None, description="Filter photos taken before this date (exclusive, YYYY-MM-DD)"
     ),
+    folder_id: Optional[int] = None,
+    folder_scope: str = "subtree",
     db: Session = Depends(get_db),
 ):
     page_size = max(1, min(page_size, 100))
@@ -85,6 +96,10 @@ def list_photos(
         base_query = base_query.filter(
             Photo.taken_at < datetime.combine(date_to, time.min)
         )
+    
+    # 应用文件夹过滤
+    if folder_id is not None and project_id is not None:
+        base_query = apply_folder_filter(base_query, db, project_id, folder_id, folder_scope)
 
     total = base_query.count()
     photos = (

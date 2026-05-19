@@ -1,13 +1,16 @@
 import { useTimeline } from "@/hooks/usePhotos";
+import type { FolderScope } from "@/lib/api";
 
 interface TimelineRailProps {
   projectId?: number | null;
+  folderId?: number | null;
+  folderScope?: FolderScope;
   activeKey?: string | null;
   onSelect: (key: string, dateFrom: string, dateTo: string) => void;
 }
 
-export function TimelineRail({ projectId, activeKey, onSelect }: TimelineRailProps) {
-  const { data, isLoading } = useTimeline(projectId);
+export function TimelineRail({ projectId, folderId, folderScope = "subtree", activeKey, onSelect }: TimelineRailProps) {
+  const { data, isLoading } = useTimeline(projectId, folderId, folderScope);
 
   if (isLoading || !data?.items.length) return null;
 

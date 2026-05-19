@@ -18,10 +18,13 @@ def search(
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=100),
     project_id: Optional[int] = None,
+    folder_id: Optional[int] = None,
+    folder_scope: str = "subtree",
     db: Session = Depends(get_db),
 ):
     total, items = search_photos(
-        db, q, page=page, page_size=page_size, project_id=project_id
+        db, q, page=page, page_size=page_size, project_id=project_id,
+        folder_id=folder_id, folder_scope=folder_scope
     )
     return SearchResponse(
         query=q,

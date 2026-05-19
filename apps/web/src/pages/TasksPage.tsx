@@ -36,31 +36,40 @@ function StatTile({
 
 // ─── Failed jobs list ─────────────────────────────────────────────────────────
 
-function FailedJobsSection() {
+function FailedJobsSection({ projectId }: { projectId: number | null }) {
   const queryClient = useQueryClient();
   const [showAll, setShowAll] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const { data } = useQuery({
-    queryKey: ["ai-jobs-failed"],
-    queryFn: () => api.ai.jobs("failed", 50),
+    queryKey: ["ai-jobs-failed", projectId],
+    queryFn: () =>
+      projectId != null
+        ? api.projects.aiJobs(projectId, "failed", 50)
+        : api.ai.jobs("failed", 50),
     staleTime: 10_000,
   });
 
   const retryMutation = useMutation({
-    mutationFn: api.ai.retryFailed,
+    mutationFn: () =>
+      projectId != null
+        ? api.projects.retryFailedAiJobs(projectId)
+        : api.ai.retryFailed(),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["ai-status"] });
-      queryClient.invalidateQueries({ queryKey: ["ai-jobs-failed"] });
+      queryClient.invalidateQueries({ queryKey: ["ai-status", projectId] });
+      queryClient.invalidateQueries({ queryKey: ["ai-jobs-failed", projectId] });
     },
   });
 
   const clearFailedJobsMutation = useMutation({
-    mutationFn: api.ai.clearFailedJobs,
+    mutationFn: () =>
+      projectId != null
+        ? api.projects.clearFailedAiJobs(projectId)
+        : api.ai.clearFailedJobs(),
     onSuccess: () => {
       setError(null);
-      queryClient.invalidateQueries({ queryKey: ["ai-status"] });
-      queryClient.invalidateQueries({ queryKey: ["ai-jobs-failed"] });
+      queryClient.invalidateQueries({ queryKey: ["ai-status", projectId] });
+      queryClient.invalidateQueries({ queryKey: ["ai-jobs-failed", projectId] });
     },
     onError: (err: Error) => {
       setError(`清除失败记录失败：${err.message}`);
@@ -119,9 +128,12 @@ function FailedJobsSection() {
   );
 }
 
-/** Extract the human-readable message from an error string that may contain embedded JSON. */
-function parseErrorMessage(raw: string): { summary: string; detail: string | null } {
-  // Try to find a JSON object in the string and extract its message field
+/** Build a short summary and retain full detail text for expandable display. */
+function parseErrorMessage(raw: string): { summary: string; detail: string } {
+  const trimmed = raw.trim();
+  const firstLine = trimmed.split(/\r?\n/, 1)[0] ?? "";
+
+  // Try to extract an API-style nested message from embedded JSON.
   const jsonMatch = raw.match(/\{[\s\S]*\}/);
   if (jsonMatch) {
     try {
@@ -129,25 +141,27 @@ function parseErrorMessage(raw: string): { summary: string; detail: string | nul
       const msg: string | undefined =
         parsed?.error?.message ?? parsed?.message ?? parsed?.detail;
       if (msg) {
-        // Prefix before the JSON is the summary context (e.g. "API returned HTTP 400: ")
         const prefix = raw.slice(0, jsonMatch.index).replace(/:\s*$/, "").trim();
         return {
           summary: prefix ? `${prefix}: ${msg}` : msg,
-          detail: raw,
+          detail: trimmed,
         };
       }
     } catch {
-      // Not valid JSON — fall through
+      // Keep fallback summary below.
     }
   }
-  return { summary: raw, detail: null };
+
+  return {
+    summary: firstLine || trimmed,
+    detail: trimmed,
+  };
 }
 
 function FailedJobRow({ job }: { job: AIJob }) {
   const [expanded, setExpanded] = useState(false);
 
   const errorInfo = job.error_message ? parseErrorMessage(job.error_message) : null;
-  const hasDetail = !!errorInfo?.detail;
 
   return (
     <div className="bg-canvas border border-hairline rounded-md px-4 py-2.5 flex items-start gap-3">
@@ -157,9 +171,9 @@ function FailedJobRow({ job }: { job: AIJob }) {
         {errorInfo && (
           <>
             <p className={`text-caption-sm text-mute mt-0.5 ${expanded ? "whitespace-pre-wrap break-all" : "truncate"}`}>
-              {expanded && hasDetail ? errorInfo.detail : errorInfo.summary}
+              {expanded ? errorInfo.detail : errorInfo.summary}
             </p>
-            {hasDetail && (
+            {errorInfo.detail && (
               <button
                 onClick={() => setExpanded((v) => !v)}
                 className="text-caption-sm text-primary hover:text-primary-pressed"
@@ -185,8 +199,11 @@ function AISection({ projectId }: { projectId: number | null }) {
   const wasActiveRef = useRef(false);
 
   const { data: status, isLoading } = useQuery({
-    queryKey: ["ai-status"],
-    queryFn: api.ai.status,
+    queryKey: ["ai-status", projectId],
+    queryFn: () =>
+      projectId != null
+        ? api.projects.aiStatus(projectId)
+        : api.ai.status(),
     refetchInterval: (query) => {
       const d = query.state.data;
       return d && (d.queued > 0 || d.running > 0) ? 3000 : 15000;
@@ -267,7 +284,7 @@ function AISection({ projectId }: { projectId: number | null }) {
 
       {message && <p className="text-caption-sm text-mute">{message}</p>}
 
-      <FailedJobsSection />
+      <FailedJobsSection projectId={projectId} />
     </section>
   );
 }

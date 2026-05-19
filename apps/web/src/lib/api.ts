@@ -53,6 +53,17 @@ export interface Photo {
 
 export interface PhotoDetail extends Photo {
   exif: Record<string, string> | null;
+  gps_latitude: number | null;
+  gps_longitude: number | null;
+  gps_altitude: number | null;
+  camera_make: string | null;
+  camera_model: string | null;
+  lens_model: string | null;
+  focal_length: string | null;
+  aperture: string | null;
+  exposure_time: string | null;
+  iso: number | null;
+  orientation: number | null;
 }
 
 export interface PhotoListResponse {
@@ -72,6 +83,35 @@ export interface TimelineItem {
 export interface TimelineResponse {
   items: TimelineItem[];
 }
+
+// ─── Folder ───────────────────────────────────────────────────────────────────
+
+export interface FolderNode {
+  id: number;
+  name: string;
+  relative_path: string;
+  depth: number;
+  photo_count_direct: number;
+  photo_count_recursive: number;
+  children?: FolderNode[];
+}
+
+export interface FolderTreeResponse {
+  project_id: number;
+  root: FolderNode | null;
+}
+
+export interface FolderBreadcrumbItem {
+  id: number;
+  name: string;
+  relative_path: string;
+}
+
+export interface FolderBreadcrumbResponse {
+  items: FolderBreadcrumbItem[];
+}
+
+export type FolderScope = "direct" | "subtree";
 
 // ─── Scan ─────────────────────────────────────────────────────────────────────
 
@@ -187,12 +227,35 @@ export interface AppSettings {
 
 // ─── HTTP helper ──────────────────────────────────────────────────────────────
 
+export class ApiError extends Error {
+  constructor(
+    public readonly status: number,
+    public readonly detail: unknown,
+  ) {
+    const msg =
+      typeof detail === "string"
+        ? detail
+        : (detail as Record<string, unknown>)?.message
+          ? String((detail as Record<string, unknown>).message)
+          : JSON.stringify(detail);
+    super(msg);
+    this.name = "ApiError";
+  }
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, init);
+
   if (!res.ok) {
-    const text = await res.text().catch(() => res.statusText);
-    throw new Error(`API ${res.status}: ${text}`);
+    const body = await res.json().catch(() => null);
+    const detail = body?.error ?? body?.detail ?? res.statusText;
+    throw new ApiError(res.status, detail);
   }
+
+  if (res.status === 204) {
+    return undefined as T;
+  }
+
   return res.json() as Promise<T>;
 }
 
@@ -237,6 +300,20 @@ export const api = {
         { method: "POST" }
       ),
     aiStatus: (id: number) => request<AIStatus>(`/projects/${id}/ai/status`),
+    aiJobs: (id: number, status?: string, limit = 50, offset = 0) =>
+      request<AIJobListResponse>(
+        `/projects/${id}/ai/jobs${qs({ status, limit, offset })}`
+      ),
+    retryFailedAiJobs: (id: number) =>
+      request<{ retried_jobs: number; message: string }>(
+        `/projects/${id}/ai/jobs/retry-failed`,
+        { method: "POST" }
+      ),
+    clearFailedAiJobs: (id: number) =>
+      request<{ deleted_jobs: number; message: string }>(
+        `/projects/${id}/ai/jobs/failed`,
+        { method: "DELETE" }
+      ),
   },
 
   photos: {
@@ -245,7 +322,9 @@ export const api = {
       pageSize = 50,
       projectId?: number | null,
       dateFrom?: string | null,
-      dateTo?: string | null
+      dateTo?: string | null,
+      folderId?: number | null,
+      folderScope: FolderScope = "subtree"
     ) =>
       request<PhotoListResponse>(
         `/photos${qs({
@@ -254,11 +333,13 @@ export const api = {
           project_id: projectId,
           date_from: dateFrom,
           date_to: dateTo,
+          folder_id: folderId,
+          folder_scope: folderScope,
         })}`
       ),
-    timeline: (projectId?: number | null) =>
+    timeline: (projectId?: number | null, folderId?: number | null, folderScope: FolderScope = "subtree") =>
       request<TimelineResponse>(
-        `/photos/timeline${qs({ project_id: projectId })}`
+        `/photos/timeline${qs({ project_id: projectId, folder_id: folderId, folder_scope: folderScope })}`
       ),
     get: (id: number) => request<PhotoDetail>(`/photos/${id}`),
     thumbnailUrl: (id: number, updatedAt?: string | null) => {
@@ -269,6 +350,13 @@ export const api = {
     },
     originalUrl: (id: number) => `${BASE}/photos/${id}/original`,
     getAI: (id: number) => request<AIAnalysis>(`/photos/${id}/ai`),
+  },
+
+  folders: {
+    tree: (projectId: number) =>
+      request<FolderTreeResponse>(`/projects/${projectId}/folders/tree`),
+    breadcrumb: (projectId: number, folderId: number) =>
+      request<FolderBreadcrumbResponse>(`/projects/${projectId}/folders/${folderId}/breadcrumb`),
   },
 
   scan: {
@@ -299,13 +387,15 @@ export const api = {
   },
 
   search: {
-    query: (q: string, page = 1, pageSize = 50, projectId?: number | null) =>
+    query: (q: string, page = 1, pageSize = 50, projectId?: number | null, folderId?: number | null, folderScope: FolderScope = "subtree") =>
       request<SearchResponse>(
         `/search${qs({
           q,
           page,
           page_size: pageSize,
           project_id: projectId,
+          folder_id: folderId,
+          folder_scope: folderScope,
         })}`
       ),
   },

@@ -35,6 +35,7 @@ from sqlalchemy.orm import sessionmaker, Session
 from app.config import settings
 from app.models.ai import AIJob, PhotoAIAnalysis
 from app.models.photo import Photo
+from app.models.folder import ProjectFolder  # noqa: F401 — registers 'project_folders' table in metadata
 from app.models.project import Project  # noqa: F401 — registers 'projects' table in metadata
 from app.services.vlm_client import VLMRequestError, analyze_image
 from app.services.json_parser import parse_model_json_output
@@ -51,6 +52,7 @@ engine = create_engine(settings.database_url, pool_pre_ping=True)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 _shutdown = False
+_MAX_ERROR_MESSAGE_LEN = 12000
 
 
 def _handle_signal(signum, frame):
@@ -177,7 +179,8 @@ def _process_job(db: Session, job: AIJob) -> None:
         db.rollback()
         is_retryable = not isinstance(exc, VLMRequestError) or exc.retryable
         job.retry_count = (job.retry_count or 0) + 1
-        job.error_message = str(exc)[:2000]
+        error_detail = f"{type(exc).__name__}: {exc}"
+        job.error_message = error_detail[:_MAX_ERROR_MESSAGE_LEN]
         job.finished_at = datetime.now(timezone.utc)
         job.updated_at = job.finished_at
 

@@ -38,6 +38,7 @@ POSTGRES_HOST_PORT="${POSTGRES_HOST_PORT:-5432}"
 REDIS_HOST_PORT="${REDIS_HOST_PORT:-6379}"
 API_HOST="${API_HOST:-127.0.0.1}"
 API_PORT="${API_PORT:-8000}"
+API_RELOAD="${API_RELOAD:-0}"
 WEB_PORT="${WEB_PORT:-5173}"
 OPENAI_BASE_URL="${OPENAI_BASE_URL:-http://127.0.0.1:8082/v1}"
 OPENAI_MODEL="${OPENAI_MODEL:-}"
@@ -48,6 +49,7 @@ LLAMA_MMPROJ="${LLAMA_MMPROJ:-}"
 LLAMA_PORT="${LLAMA_PORT:-8082}"
 LLAMA_CTX="${LLAMA_CTX:-8192}"
 LLAMA_MEDIA_PATH="${LLAMA_MEDIA_PATH:-${PHOTO_LIBRARY_PATH:-}}"
+LLAMA_STOP_TIMEOUT="${LLAMA_STOP_TIMEOUT:-15}"
 
 # ── 辅助函数 ──────────────────────────────────────────────────────────────────
 log_info()    { echo -e "${CYAN}▶${RESET} $*"; }
@@ -126,20 +128,33 @@ start_api() {
   log_info "运行数据库迁移..."
   cd "$ROOT/apps/api"
   [ -d ".venv" ] && source .venv/bin/activate
-  alembic upgrade head
+  python3 stamp_migrations.py || true
+  alembic upgrade head || true
 
-  log_info "启动 API (uvicorn :$API_PORT)..."
+  log_info "启动 API (uvicorn :$API_PORT, reload=$API_RELOAD)..."
   cd "$ROOT/apps/api"
   [ -d ".venv" ] && source .venv/bin/activate
-  nohup uvicorn app.main:app \
-    --host "$API_HOST" \
-    --port "$API_PORT" \
-    --reload \
+  local uvicorn_args=(
+    app.main:app
+    --host "$API_HOST"
+    --port "$API_PORT"
+  )
+  if [ "$API_RELOAD" = "1" ] || [ "$API_RELOAD" = "true" ]; then
+    uvicorn_args+=(--reload)
+  fi
+  nohup uvicorn \
+    "${uvicorn_args[@]}" \
     > "$(log_file api)" 2>&1 &
   save_pid api
   sleep 1
   if is_running api; then
-    log_ok "api 已启动 (PID $(cat "$(pid_file api)"), log: .logs/api.log)"
+    # Ensure the process is not a short-lived dead start.
+    if curl -fsS "http://127.0.0.1:$API_PORT/health" >/dev/null 2>&1; then
+      log_ok "api 已启动 (PID $(cat "$(pid_file api)"), log: .logs/api.log)"
+    else
+      log_error "api 进程已启动但健康检查失败，请查看 .logs/api.log"
+      return 1
+    fi
   else
     log_error "api 启动失败，请查看 .logs/api.log"
     return 1
@@ -263,6 +278,7 @@ start_ai() {
     --host 127.0.0.1
     --port "$LLAMA_PORT"
     -c "$LLAMA_CTX"
+    --cache-ram "${LLAMA_CACHE_RAM:-0}"
   )
   [ -n "$LLAMA_MMPROJ" ]     && args+=(--mmproj "$LLAMA_MMPROJ")
   [ -n "$LLAMA_MEDIA_PATH" ] && args+=(--media-path "$LLAMA_MEDIA_PATH")
@@ -282,8 +298,29 @@ start_ai() {
 stop_ai() {
   if is_running ai; then
     local pid; pid="$(cat "$(pid_file ai)")"
-    log_info "停止 llama-server (PID $pid)..."
-    kill "$pid" 2>/dev/null && rm -f "$(pid_file ai)"
+    local timeout="${LLAMA_STOP_TIMEOUT}"
+    local waited=0
+
+    log_info "停止 llama-server (PID $pid, TERM -> 最多等待 ${timeout}s)..."
+
+    if ! kill -TERM "$pid" 2>/dev/null; then
+      rm -f "$(pid_file ai)"
+      log_warn "llama-server 进程不存在，已清理 PID 文件"
+      return 0
+    fi
+
+    # Send TERM once, then wait to avoid interrupting ggml-metal teardown.
+    while kill -0 "$pid" 2>/dev/null; do
+      if [ "$waited" -ge "$timeout" ]; then
+        log_warn "llama-server 在 ${timeout}s 内未退出，发送 SIGKILL..."
+        kill -KILL "$pid" 2>/dev/null || true
+        break
+      fi
+      sleep 1
+      waited=$((waited+1))
+    done
+
+    rm -f "$(pid_file ai)"
     log_ok "llama-server 已停止"
   else
     log_warn "llama-server 未在运行 (由 svc.sh 管理的实例)"

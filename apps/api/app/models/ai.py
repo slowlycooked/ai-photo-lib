@@ -65,6 +65,9 @@ class AIJob(Base):
     photo_id: Mapped[int] = mapped_column(
         BigInteger, ForeignKey("photos.id", ondelete="CASCADE"), nullable=False
     )
+    project_id: Mapped[Optional[int]] = mapped_column(
+        BigInteger, ForeignKey("projects.id", ondelete="CASCADE"), nullable=True, index=True
+    )
     job_type: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(Text, server_default="queued", nullable=False)
     retry_count: Mapped[int] = mapped_column(Integer, server_default="0", nullable=False)

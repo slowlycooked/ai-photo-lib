@@ -32,6 +32,8 @@ class Settings(BaseSettings):
     openai_base_url: str = "http://127.0.0.1:8082/v1"
     openai_model: str = "MiniCPM-V-4.6"
     openai_vision_model: str = "MiniCPM-V-4.6"
+    ai_vision_max_tokens: int = 512
+    ai_vision_temperature: float = 0.0
     ai_max_retries: int = 3
     ai_worker_concurrency: int = 1
 

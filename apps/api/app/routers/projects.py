@@ -13,7 +13,13 @@ from ..database import SessionLocal, get_db
 from ..models.ai import AIJob, PhotoAIAnalysis
 from ..models.photo import Photo
 from ..models.project import Project
-from ..schemas.ai import AIStatusResponse, StartAnalysisResponse
+from ..schemas.ai import (
+    AIJobListResponse,
+    AIJobResponse,
+    AIStatusResponse,
+    RetryFailedResponse,
+    StartAnalysisResponse,
+)
 from ..schemas.project import (
     ProjectCreate,
     ProjectListResponse,
@@ -161,7 +167,14 @@ def start_project_ai(project_id: int, db: Session = Depends(get_db)):
 
     count = 0
     for photo in photos_to_process:
-        db.add(AIJob(photo_id=photo.id, job_type="analyze", status="queued"))
+        db.add(
+            AIJob(
+                photo_id=photo.id,
+                project_id=project_id,
+                job_type="analyze",
+                status="queued",
+            )
+        )
         count += 1
 
     db.commit()
@@ -172,7 +185,6 @@ def start_project_ai(project_id: int, db: Session = Depends(get_db)):
 def get_project_ai_status(project_id: int, db: Session = Depends(get_db)):
     _get_or_404(db, project_id)
 
-    # Only count jobs for photos in this project
     rows = (
         db.query(AIJob.status, func.count(AIJob.id))
         .join(Photo, AIJob.photo_id == Photo.id)
@@ -189,6 +201,89 @@ def get_project_ai_status(project_id: int, db: Session = Depends(get_db)):
         failed=counts.get("failed", 0),
         total=total,
     )
+
+
+@router.get("/{project_id}/ai/jobs", response_model=AIJobListResponse)
+def list_project_ai_jobs(
+    project_id: int,
+    status: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0,
+    db: Session = Depends(get_db),
+):
+    _get_or_404(db, project_id)
+    limit = max(1, min(limit, 200))
+    query = (
+        db.query(AIJob, Photo.file_name)
+        .join(Photo, AIJob.photo_id == Photo.id)
+        .filter(Photo.project_id == project_id)
+    )
+    if status:
+        query = query.filter(AIJob.status == status)
+
+    total = query.count()
+    rows = query.order_by(AIJob.created_at.desc()).offset(offset).limit(limit).all()
+
+    items = [
+        AIJobResponse(
+            id=job.id,
+            photo_id=job.photo_id,
+            job_type=job.job_type,
+            status=job.status,
+            retry_count=job.retry_count,
+            error_message=job.error_message,
+            started_at=job.started_at,
+            finished_at=job.finished_at,
+            created_at=job.created_at,
+            updated_at=job.updated_at,
+            file_name=file_name,
+        )
+        for job, file_name in rows
+    ]
+    return AIJobListResponse(total=total, items=items)
+
+
+@router.post("/{project_id}/ai/jobs/retry-failed", response_model=RetryFailedResponse)
+def retry_project_failed_jobs(project_id: int, db: Session = Depends(get_db)):
+    from datetime import timezone
+
+    _get_or_404(db, project_id)
+    jobs = (
+        db.query(AIJob)
+        .join(Photo, AIJob.photo_id == Photo.id)
+        .filter(
+            Photo.project_id == project_id,
+            AIJob.status == "failed",
+            AIJob.retry_count < settings.ai_max_retries,
+        )
+        .all()
+    )
+    now = datetime.now(timezone.utc)
+    count = 0
+    for job in jobs:
+        job.status = "queued"
+        job.error_message = None
+        job.updated_at = now
+        count += 1
+    db.commit()
+    return RetryFailedResponse(retried_jobs=count, message="Failed jobs re-queued")
+
+
+@router.delete("/{project_id}/ai/jobs/failed", response_model=dict)
+def clear_project_failed_jobs(project_id: int, db: Session = Depends(get_db)):
+    _get_or_404(db, project_id)
+    failed = (
+        db.query(AIJob)
+        .join(Photo, AIJob.photo_id == Photo.id)
+        .filter(Photo.project_id == project_id, AIJob.status == "failed")
+    )
+    count = failed.count()
+    # Collect IDs to delete without touching cross-table state
+    ids = [job.id for job in failed.all()]
+    if ids:
+        db.query(AIJob).filter(AIJob.id.in_(ids)).delete(synchronize_session=False)
+    db.commit()
+    return {"deleted_jobs": count, "message": "Failed jobs cleared"}
 
 
 # ─── Helper ──────────────────────────────────────────────────────────────────

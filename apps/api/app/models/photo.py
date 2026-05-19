@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import BigInteger, ForeignKey, Integer, JSON, Text, TIMESTAMP, func
+from sqlalchemy import BigInteger, Double, ForeignKey, Integer, JSON, Text, TIMESTAMP, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from ..database import Base
@@ -25,6 +25,26 @@ class Photo(Base):
     exif: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     thumbnail_path: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(Text, server_default="pending", nullable=False)
+    # ── Structured GPS ──────────────────────────────────────────────────────────
+    gps_latitude: Mapped[Optional[float]] = mapped_column(Double, nullable=True)
+    gps_longitude: Mapped[Optional[float]] = mapped_column(Double, nullable=True)
+    gps_altitude: Mapped[Optional[float]] = mapped_column(Double, nullable=True)
+    # ── Camera / lens ───────────────────────────────────────────────────────────
+    camera_make: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    camera_model: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    lens_model: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    focal_length: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    aperture: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    exposure_time: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    iso: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    orientation: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    # ── Folder tree ────────────────────────────────────────────────────────────
+    folder_id: Mapped[Optional[int]] = mapped_column(
+        BigInteger, ForeignKey("project_folders.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    relative_path: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    folder_path: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # ────────────────────────────────────────────────────────────────────────────
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP, server_default=func.now(), nullable=False
     )

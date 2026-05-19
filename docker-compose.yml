@@ -51,6 +51,7 @@ services:
       --host 0.0.0.0
       --port 8082
       -c ${LLAMA_CTX:-2048}
+      --cache-ram ${LLAMA_CACHE_RAM:-0}
       --threads ${LLAMA_THREADS:-4}
       --parallel 1
       --media-path /photos

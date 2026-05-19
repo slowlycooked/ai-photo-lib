@@ -25,6 +25,18 @@ class PhotoResponse(BaseModel):
 
 class PhotoDetailResponse(PhotoResponse):
     exif: Optional[Dict[str, str]] = None
+    # Structured metadata
+    gps_latitude: Optional[float] = None
+    gps_longitude: Optional[float] = None
+    gps_altitude: Optional[float] = None
+    camera_make: Optional[str] = None
+    camera_model: Optional[str] = None
+    lens_model: Optional[str] = None
+    focal_length: Optional[str] = None
+    aperture: Optional[str] = None
+    exposure_time: Optional[str] = None
+    iso: Optional[int] = None
+    orientation: Optional[int] = None
 
 
 class PhotoListResponse(BaseModel):

@@ -18,22 +18,29 @@ pillow_heif.register_heif_opener()
 logger = logging.getLogger(__name__)
 
 _PROMPT = """\
-请分析图片并仅输出合法 JSON（不要 Markdown 或解释）。
+你是一个只返回 JSON 的图片分析 API。
+只输出一个 JSON 对象，不要任何解释、思考过程、前后缀、Markdown 或代码块。
 所有文本字段必须为中文；若无法判断请用空数组、空字符串或较低 confidence。
 不得推断人物身份，不得编造地点。
-严格输出以下字段（不可缺失）:
+
+严格输出以下字段（不可缺失，字段名不可改）：
 {
-  "caption": string,
-  "scene_tags": string[],
-  "object_tags": string[],
-  "activity_tags": string[],
-  "people_count": number,
-  "ocr_text": string[],
-  "location_clues": string[],
-  "quality_tags": string[],
-  "search_keywords": string[],
-  "confidence": number
-}"""
+    "caption": string,
+    "scene_tags": string[],
+    "object_tags": string[],
+    "activity_tags": string[],
+    "people_count": number,
+    "ocr_text": string[],
+    "location_clues": string[],
+    "quality_tags": string[],
+    "search_keywords": string[],
+    "confidence": number
+}
+
+额外约束：
+- people_count 必须是数字，不得是数组或字符串。
+- confidence 必须是 0 到 1 之间的数字。
+"""
 
 
 class VLMRequestError(RuntimeError):
@@ -53,6 +60,63 @@ def _safe_json(response: httpx.Response) -> dict[str, Any] | None:
     except ValueError:
         return None
     return None
+
+
+def _extract_message_text(message: dict[str, Any]) -> str:
+    content = message.get("content")
+    if isinstance(content, str) and content.strip():
+        return content
+
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if isinstance(item, dict):
+                text = item.get("text")
+                if isinstance(text, str) and text.strip():
+                    parts.append(text)
+        if parts:
+            return "".join(parts)
+
+    reasoning_content = message.get("reasoning_content")
+    if isinstance(reasoning_content, str) and reasoning_content.strip():
+        return reasoning_content
+
+    return ""
+
+
+def _send_chat_completion(
+    *,
+    url: str,
+    headers: dict[str, str],
+    payload: dict[str, Any],
+) -> httpx.Response:
+    """Send chat completion request with one compatibility fallback.
+
+    Some OpenAI-compatible backends do not support `response_format`.
+    When that specific parameter is rejected, retry once without it.
+    """
+    with httpx.Client(timeout=180.0) as client:
+        try:
+            response = client.post(url, json=payload, headers=headers)
+            response.raise_for_status()
+            return response
+        except httpx.HTTPStatusError as exc:
+            response = exc.response
+            payload_json = _safe_json(response)
+            err: dict[str, Any] = payload_json.get("error", {}) if payload_json else {}
+            err_message = str(err.get("message") or response.text[:500])
+
+            if response.status_code == 400 and "response_format" in err_message.lower():
+                logger.warning(
+                    "Backend does not support response_format=json_object; retrying without it."
+                )
+                compat_payload = dict(payload)
+                compat_payload.pop("response_format", None)
+                retry_response = client.post(url, json=compat_payload, headers=headers)
+                retry_response.raise_for_status()
+                return retry_response
+
+            raise
 
 
 def analyze_image(image_path: str) -> str:
@@ -97,6 +161,10 @@ def analyze_image(image_path: str) -> str:
         "model": settings.openai_vision_model,
         "messages": [
             {
+                "role": "system",
+                "content": "Return only valid JSON object output. No extra text.",
+            },
+            {
                 "role": "user",
                 "content": [
                     {"type": "text", "text": _PROMPT},
@@ -104,6 +172,10 @@ def analyze_image(image_path: str) -> str:
                 ],
             }
         ],
+        "max_tokens": settings.ai_vision_max_tokens,
+        "temperature": settings.ai_vision_temperature,
+        # Most OpenAI-compatible servers honor this and suppress non-JSON text.
+        "response_format": {"type": "json_object"},
         "stream": False,
     }
 
@@ -111,9 +183,7 @@ def analyze_image(image_path: str) -> str:
     headers = {"Authorization": f"Bearer {settings.openai_api_key}"}
 
     try:
-        with httpx.Client(timeout=180.0) as client:
-            response = client.post(url, json=payload, headers=headers)
-            response.raise_for_status()
+        response = _send_chat_completion(url=url, headers=headers, payload=payload)
     except httpx.ConnectError as exc:
         raise VLMRequestError(
             f"Cannot connect to OpenAI-compatible API at {settings.openai_base_url}. "
@@ -162,6 +232,21 @@ def analyze_image(image_path: str) -> str:
         ) from exc
 
     data = response.json()
-    raw_text: str = data["choices"][0]["message"]["content"]
-    return raw_text
+    choices = data.get("choices") or []
+    if not choices or not isinstance(choices[0], dict):
+        raise VLMRequestError(
+            "API response did not include any choices.",
+            retryable=False,
+            code="invalid_response",
+        )
+
+    message = choices[0].get("message") or {}
+    if not isinstance(message, dict):
+        raise VLMRequestError(
+            "API response message payload was malformed.",
+            retryable=False,
+            code="invalid_response",
+        )
+
+    return _extract_message_text(message)
 

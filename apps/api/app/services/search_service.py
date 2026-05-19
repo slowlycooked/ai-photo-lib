@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from ..models.ai import PhotoAIAnalysis
 from ..models.photo import Photo
+from ..services.folder_service import apply_folder_filter
 
 logger = logging.getLogger(__name__)
 
@@ -106,6 +107,8 @@ def search_photos(
     page: int = 1,
     page_size: int = 50,
     project_id: Optional[int] = None,
+    folder_id: Optional[int] = None,
+    folder_scope: str = "subtree",
 ) -> Tuple[int, list]:
     """Lightweight keyword search with in-Python scoring.
 
@@ -122,12 +125,31 @@ def search_photos(
     # Cap candidate fetch to avoid full-table scans on very broad queries
     MAX_CANDIDATES = 2000
 
-    rows: list[tuple[Photo, PhotoAIAnalysis]] = (
+    base_query = (
         db.query(Photo, PhotoAIAnalysis)
         .join(PhotoAIAnalysis, PhotoAIAnalysis.photo_id == Photo.id)
         .filter(Photo.deleted_at.is_(None))
         .filter(_build_any_match_filter(terms))
-        .filter(*([Photo.project_id == project_id] if project_id is not None else []))
+    )
+    
+    if project_id is not None:
+        base_query = base_query.filter(Photo.project_id == project_id)
+    
+    # 应用文件夹过滤
+    if folder_id is not None and project_id is not None:
+        # 构建基础查询以支持 apply_folder_filter
+        photo_query = db.query(Photo).filter(Photo.deleted_at.is_(None))
+        if project_id is not None:
+            photo_query = photo_query.filter(Photo.project_id == project_id)
+        photo_query = apply_folder_filter(photo_query, db, project_id, folder_id, folder_scope)
+        photo_ids = [p.id for p in photo_query.all()]
+        if photo_ids:
+            base_query = base_query.filter(Photo.id.in_(photo_ids))
+        else:
+            return 0, []
+
+    rows: list[tuple[Photo, PhotoAIAnalysis]] = (
+        base_query
         .order_by(Photo.taken_at.desc().nullslast(), Photo.created_at.desc())
         .limit(MAX_CANDIDATES)
         .all()

@@ -3,10 +3,12 @@ import { Loader2, ImageOff } from "lucide-react";
 import { usePhotos } from "@/hooks/usePhotos";
 import { PhotoCard } from "./PhotoCard";
 import { TimelineRail } from "./TimelineRail";
-import type { Photo } from "@/lib/api";
+import type { Photo, FolderScope } from "@/lib/api";
 
 interface TimelineGridProps {
   projectId?: number | null;
+  folderId?: number | null;
+  folderScope?: FolderScope;
 }
 
 function formatGroupLabel(key: string): string {
@@ -40,13 +42,13 @@ function groupPhotosByMonth(photos: Photo[]): Map<string, Photo[]> {
   );
 }
 
-export function TimelineGrid({ projectId }: TimelineGridProps) {
+export function TimelineGrid({ projectId, folderId, folderScope = "subtree" }: TimelineGridProps) {
   const [dateFrom, setDateFrom] = useState<string | null>(null);
   const [dateTo, setDateTo] = useState<string | null>(null);
   const [activeKey, setActiveKey] = useState<string | null>(null);
 
   const { data, fetchNextPage, hasNextPage, isFetchingNextPage, isLoading, isError } =
-    usePhotos({ projectId, dateFrom, dateTo });
+    usePhotos({ projectId, dateFrom, dateTo, folderId, folderScope });
 
   const sentinelRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -161,6 +163,8 @@ export function TimelineGrid({ projectId }: TimelineGridProps) {
       {/* Right-side timeline rail */}
       <TimelineRail
         projectId={projectId}
+        folderId={folderId}
+        folderScope={folderScope}
         activeKey={activeKey}
         onSelect={handleMonthSelect}
       />
