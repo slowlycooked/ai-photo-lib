@@ -10,6 +10,7 @@ router = APIRouter(prefix="/settings", tags=["settings"])
 
 class SettingsResponse(BaseModel):
     photo_library_path: str
+    host_photo_library_path: str
     thumbnail_path: str
     thumbnail_size: int
     openai_base_url: str
@@ -23,6 +24,7 @@ class SettingsResponse(BaseModel):
 def get_settings():
     return SettingsResponse(
         photo_library_path=settings.photo_library_path,
+        host_photo_library_path=settings.host_photo_library_path,
         thumbnail_path=settings.thumbnail_path,
         thumbnail_size=settings.thumbnail_size,
         openai_base_url=settings.openai_base_url,

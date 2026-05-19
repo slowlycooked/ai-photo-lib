@@ -10,6 +10,7 @@ class SearchResultItem(BaseModel):
     photo_id: int
     file_name: str
     thumbnail_url: str
+    updated_at: datetime
     taken_at: Optional[datetime] = None
     width: Optional[int] = None
     height: Optional[int] = None

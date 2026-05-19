@@ -17,17 +17,33 @@ from .thumbnail import SUPPORTED_SUFFIXES, generate_thumbnail
 
 logger = logging.getLogger(__name__)
 
-# Mutable dict shared between scan thread and API — reads are safe without locks
-# because only one scan can run at a time (enforced by the router).
-scan_state: dict[str, Any] = {
-    "running": False,
-    "scanned": 0,
-    "inserted": 0,
-    "updated": 0,
-    "errors": 0,
-    "current_path": None,
-    "message": "idle",
-}
+# ---------------------------------------------------------------------------
+# Scan state management
+# ---------------------------------------------------------------------------
+
+def _empty_state() -> dict[str, Any]:
+    return {
+        "running": False,
+        "scanned": 0,
+        "inserted": 0,
+        "updated": 0,
+        "errors": 0,
+        "current_path": None,
+        "message": "idle",
+    }
+
+
+# Global state for the legacy /scan/* endpoints (default project)
+scan_state: dict[str, Any] = _empty_state()
+
+# Per-project state keyed by project_id
+_project_scan_states: dict[int, dict[str, Any]] = {}
+
+
+def get_project_scan_state(project_id: int) -> dict[str, Any]:
+    if project_id not in _project_scan_states:
+        _project_scan_states[project_id] = _empty_state()
+    return _project_scan_states[project_id]
 
 
 # ---------------------------------------------------------------------------
@@ -76,23 +92,43 @@ def _image_size(path: str) -> Tuple[Optional[int], Optional[int]]:
 # Core processing
 # ---------------------------------------------------------------------------
 
-def _process_file(db: Session, file_path: Path) -> None:
+def _process_file(
+    db: Session,
+    file_path: Path,
+    state: dict[str, Any],
+    project_id: Optional[int] = None,
+) -> None:
     path_str = str(file_path)
     stat = file_path.stat()
 
     existing: Optional[Photo] = db.query(Photo).filter(Photo.file_path == path_str).first()
-    # Fast-path: photos in a library are immutable — if size is unchanged and a
-    # hash is already stored, skip the expensive hash recomputation entirely.
-    if existing and existing.file_size == stat.st_size and existing.file_hash is not None:
-        return  # unchanged — nothing to do
-
     file_hash = _compute_hash(path_str)
     if existing and existing.file_hash == file_hash:
-        return  # confirmed unchanged by hash
+        dirty = False
+        if not existing.thumbnail_path or not Path(existing.thumbnail_path).exists():
+            new_thumb = generate_thumbnail(path_str)
+            if new_thumb:
+                existing.thumbnail_path = new_thumb
+                dirty = True
+        if project_id is not None and existing.project_id is None:
+            existing.project_id = project_id
+            dirty = True
+        if dirty:
+            existing.updated_at = datetime.now()
+            db.commit()
+        return
+
     mime_type, _ = mimetypes.guess_type(path_str)
+    # mimetypes may not know HEIC/HEIF on all platforms
+    if mime_type is None:
+        suffix = file_path.suffix.lower()
+        if suffix in (".heic", ".heif"):
+            mime_type = "image/heic"
     width, height = _image_size(path_str)
     exif_data, taken_at = _extract_exif(path_str)
-    thumbnail_path = generate_thumbnail(path_str)
+    # File content has changed (hash differs) — force thumbnail regeneration so
+    # the displayed thumbnail always matches the current file on disk.
+    thumbnail_path = generate_thumbnail(path_str, force=True)
 
     if existing:
         existing.file_hash = file_hash
@@ -103,9 +139,11 @@ def _process_file(db: Session, file_path: Path) -> None:
         existing.taken_at = taken_at
         existing.exif = exif_data
         existing.thumbnail_path = thumbnail_path
+        if project_id is not None:
+            existing.project_id = project_id
         existing.updated_at = datetime.now()
         db.commit()
-        scan_state["updated"] += 1
+        state["updated"] += 1
     else:
         db.add(
             Photo(
@@ -120,10 +158,11 @@ def _process_file(db: Session, file_path: Path) -> None:
                 exif=exif_data,
                 thumbnail_path=thumbnail_path,
                 status="pending",
+                project_id=project_id,
             )
         )
         db.commit()
-        scan_state["inserted"] += 1
+        state["inserted"] += 1
 
 
 # ---------------------------------------------------------------------------
@@ -132,10 +171,12 @@ def _process_file(db: Session, file_path: Path) -> None:
 
 def scan_directory(db: Session) -> None:
     """
-    Recursively scan PHOTO_LIBRARY_PATH and upsert photo records.
+    Legacy scan using settings.photo_library_path.
+    Resolves the default project if available and tags new photos with it.
     Designed to be run in a background thread; updates scan_state in place.
-    Safe to restart: unchanged files (same hash) are skipped.
     """
+    from ..models.project import Project
+
     scan_state.update(
         running=True,
         scanned=0,
@@ -145,6 +186,13 @@ def scan_directory(db: Session) -> None:
         current_path=None,
         message="scanning",
     )
+
+    default_project = (
+        db.query(Project)
+        .filter(Project.is_default.is_(True), Project.deleted_at.is_(None))
+        .first()
+    )
+    project_id = default_project.id if default_project else None
 
     library = Path(settings.photo_library_path)
     if not library.exists():
@@ -172,7 +220,7 @@ def scan_directory(db: Session) -> None:
             scan_state["scanned"] += 1
 
             try:
-                _process_file(db, entry)
+                _process_file(db, entry, scan_state, project_id)
             except Exception as exc:
                 logger.error("Failed to process %s: %s", entry, exc)
                 scan_state["errors"] += 1
@@ -184,4 +232,74 @@ def scan_directory(db: Session) -> None:
             scan_state["inserted"],
             scan_state["updated"],
             scan_state["errors"],
+        )
+
+
+def scan_project(db: Session, project_id: int) -> None:
+    """
+    Scan photos for a specific project using its photo_library_path.
+    Updates per-project scan state. Designed to be run in a background thread.
+    """
+    from ..models.project import Project
+
+    state = get_project_scan_state(project_id)
+
+    project = (
+        db.query(Project)
+        .filter(Project.id == project_id, Project.deleted_at.is_(None))
+        .first()
+    )
+    if not project:
+        state.update(running=False, message=f"Project {project_id} not found")
+        logger.error("scan_project: project %d not found", project_id)
+        return
+
+    state.update(
+        running=True,
+        scanned=0,
+        inserted=0,
+        updated=0,
+        errors=0,
+        current_path=None,
+        message="scanning",
+    )
+
+    library = Path(project.photo_library_path)
+    if not library.exists():
+        state.update(running=False, message=f"Directory not found: {library}")
+        logger.error("Project library path does not exist: %s", library)
+        return
+
+    thumb_path = project.thumbnail_path or settings.thumbnail_path
+    thumb_root = Path(thumb_path).resolve()
+
+    try:
+        for entry in library.rglob("*"):
+            if not entry.is_file():
+                continue
+            if entry.suffix.lower() not in SUPPORTED_SUFFIXES:
+                continue
+            try:
+                entry.resolve().relative_to(thumb_root)
+                continue
+            except ValueError:
+                pass
+
+            state["current_path"] = str(entry)
+            state["scanned"] += 1
+
+            try:
+                _process_file(db, entry, state, project_id)
+            except Exception as exc:
+                logger.error("Failed to process %s: %s", entry, exc)
+                state["errors"] += 1
+    finally:
+        state.update(running=False, current_path=None, message="done")
+        logger.info(
+            "Project %d scan complete — scanned=%d inserted=%d updated=%d errors=%d",
+            project_id,
+            state["scanned"],
+            state["inserted"],
+            state["updated"],
+            state["errors"],
         )

@@ -1,10 +1,12 @@
 import { useSearchParams } from "react-router-dom";
 import { SearchResultGrid } from "@/components/SearchResultGrid";
 import { SearchX } from "lucide-react";
+import { useProjectContext } from "@/contexts/ProjectContext";
 
 export function SearchPage() {
   const [params] = useSearchParams();
   const query = params.get("q") ?? "";
+  const { currentProjectId } = useProjectContext();
 
   if (!query) {
     return (
@@ -17,7 +19,7 @@ export function SearchPage() {
 
   return (
     <main className="max-w-[1440px] mx-auto px-4 sm:px-6 py-6">
-      <SearchResultGrid query={query} />
+      <SearchResultGrid query={query} projectId={currentProjectId} />
     </main>
   );
 }

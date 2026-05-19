@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import BigInteger, Integer, JSON, Text, TIMESTAMP, func
+from sqlalchemy import BigInteger, ForeignKey, Integer, JSON, Text, TIMESTAMP, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from ..database import Base
@@ -11,6 +11,9 @@ class Photo(Base):
     __tablename__ = "photos"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    project_id: Mapped[Optional[int]] = mapped_column(
+        BigInteger, ForeignKey("projects.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     file_path: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
     file_name: Mapped[str] = mapped_column(Text, nullable=False)
     file_hash: Mapped[Optional[str]] = mapped_column(Text, nullable=True)

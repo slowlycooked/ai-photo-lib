@@ -23,7 +23,10 @@ router = APIRouter(prefix="/ai", tags=["ai"])
 
 
 @router.post("/analyze/start", response_model=StartAnalysisResponse)
-def start_analysis(db: Session = Depends(get_db)):
+def start_analysis(
+    project_id: Optional[int] = None,
+    db: Session = Depends(get_db),
+):
     """Create queued AI jobs for photos that have no analysis yet."""
     # Sub-query: photo_ids that already have a queued or running job
     active_photo_ids = (
@@ -36,15 +39,15 @@ def start_analysis(db: Session = Depends(get_db)):
         db.query(PhotoAIAnalysis.photo_id).subquery()
     )
 
-    photos_to_process = (
-        db.query(Photo)
-        .filter(
-            Photo.deleted_at.is_(None),
-            Photo.id.not_in(active_photo_ids),
-            Photo.id.not_in(analyzed_photo_ids),
-        )
-        .all()
+    photos_query = db.query(Photo).filter(
+        Photo.deleted_at.is_(None),
+        Photo.id.not_in(active_photo_ids),
+        Photo.id.not_in(analyzed_photo_ids),
     )
+    if project_id is not None:
+        photos_query = photos_query.filter(Photo.project_id == project_id)
+
+    photos_to_process = photos_query.all()
 
     count = 0
     for photo in photos_to_process:
@@ -131,3 +134,13 @@ def retry_failed_jobs(db: Session = Depends(get_db)):
 
     db.commit()
     return RetryFailedResponse(retried_jobs=count, message="Failed jobs re-queued")
+
+
+@router.delete("/jobs/clear-failed", response_model=dict)
+def clear_failed_jobs(db: Session = Depends(get_db)):
+    """Delete all failed AI jobs from the database."""
+    failed_jobs = db.query(AIJob).filter(AIJob.status == "failed")
+    count = failed_jobs.count()
+    failed_jobs.delete(synchronize_session=False)
+    db.commit()
+    return {"deleted_jobs": count, "message": "Failed jobs cleared successfully"}

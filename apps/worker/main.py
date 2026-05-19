@@ -35,8 +35,10 @@ from sqlalchemy.orm import sessionmaker, Session
 from app.config import settings
 from app.models.ai import AIJob, PhotoAIAnalysis
 from app.models.photo import Photo
-from app.services.vlm_client import analyze_image
+from app.models.project import Project  # noqa: F401 — registers 'projects' table in metadata
+from app.services.vlm_client import VLMRequestError, analyze_image
 from app.services.json_parser import parse_model_json_output
+from app.services.thumbnail import generate_thumbnail
 
 # ---------------------------------------------------------------------------
 logging.basicConfig(
@@ -65,12 +67,45 @@ signal.signal(signal.SIGTERM, _handle_signal)
 # Core processing
 # ---------------------------------------------------------------------------
 
-def _pick_image_path(photo: Photo) -> str:
-    """Return the original photo path for AI analysis; thumbnail is only a fallback."""
-    if Path(photo.file_path).exists():
-        return photo.file_path
+def _pick_image_path(photo: Photo, db: Session) -> str:
+    """Return the path to send to the VLM.
+
+    Preference order:
+    1. Existing JPEG thumbnail (fast, universal).
+    2. On-the-fly thumbnail generation — used when the thumbnail was never
+       created (e.g. HEIC file scanned before pillow-heif support was added).
+       Persists the result so future jobs skip this step.
+    3. Original file path as a last resort (non-HEIC formats only).
+    """
     if photo.thumbnail_path and Path(photo.thumbnail_path).exists():
         return photo.thumbnail_path
+
+    # Attempt to generate the thumbnail now (covers HEIC without thumbnails).
+    # force=True: if a stale thumbnail file exists for this path it gets overwritten.
+    new_thumb = generate_thumbnail(photo.file_path, force=True)
+    if new_thumb:
+        logger.info(
+            "Photo %d: generated missing thumbnail on-the-fly: %s",
+            photo.id, new_thumb,
+        )
+        photo.thumbnail_path = new_thumb
+        db.commit()
+        return new_thumb
+
+    # Thumbnail generation failed. For HEIC/HEIF we cannot send the raw file
+    # to the model — raise a clear, non-retryable error.
+    suffix = Path(photo.file_path).suffix.lower()
+    if suffix in (".heic", ".heif"):
+        raise VLMRequestError(
+            f"无法为 HEIC 文件生成缩略图，AI 分析跳过该照片（photo_id={photo.id}）。"
+            " 请检查 pillow-heif 安装是否正常后重新扫描。",
+            retryable=False,
+            code="heic_thumbnail_failed",
+        )
+
+    if Path(photo.file_path).exists():
+        return photo.file_path
+
     raise FileNotFoundError(
         f"No accessible image for photo {photo.id}: "
         f"original={photo.file_path!r}, thumbnail={photo.thumbnail_path!r}"
@@ -96,7 +131,7 @@ def _process_job(db: Session, job: AIJob) -> None:
         return
 
     try:
-        image_path = _pick_image_path(photo)
+        image_path = _pick_image_path(photo, db)
         logger.info("Analyzing photo %d (%s) via %s…", photo.id, photo.file_name, image_path)
 
         raw_text = analyze_image(image_path)
@@ -140,12 +175,13 @@ def _process_job(db: Session, job: AIJob) -> None:
 
     except Exception as exc:  # noqa: BLE001
         db.rollback()
+        is_retryable = not isinstance(exc, VLMRequestError) or exc.retryable
         job.retry_count = (job.retry_count or 0) + 1
         job.error_message = str(exc)[:2000]
         job.finished_at = datetime.now(timezone.utc)
         job.updated_at = job.finished_at
 
-        if job.retry_count < settings.ai_max_retries:
+        if is_retryable and job.retry_count < settings.ai_max_retries:
             job.status = "queued"
             logger.warning(
                 "Photo %d failed (attempt %d/%d): %s — will retry.",
@@ -156,12 +192,19 @@ def _process_job(db: Session, job: AIJob) -> None:
             )
         else:
             job.status = "failed"
-            logger.error(
-                "Photo %d permanently failed after %d attempts: %s",
-                photo.id if photo else job.photo_id,
-                job.retry_count,
-                exc,
-            )
+            if is_retryable:
+                logger.error(
+                    "Photo %d permanently failed after %d attempts: %s",
+                    photo.id if photo else job.photo_id,
+                    job.retry_count,
+                    exc,
+                )
+            else:
+                logger.error(
+                    "Photo %d failed with a non-retryable error: %s",
+                    photo.id if photo else job.photo_id,
+                    exc,
+                )
 
         db.commit()
 

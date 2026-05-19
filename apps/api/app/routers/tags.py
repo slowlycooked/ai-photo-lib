@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+from typing import Optional
+
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
-from sqlalchemy import func, text
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..models.ai import PhotoAIAnalysis
 
 router = APIRouter(prefix="/tags", tags=["tags"])
 
@@ -24,25 +25,41 @@ class TagsResponse(BaseModel):
     search_keywords: list[TagCount]
 
 
-def _count_array_field(db: Session, field_name: str, limit: int = 100) -> list[TagCount]:
-    """Unnest an array column and count occurrences."""
-    rows = db.execute(
-        text(
+def _count_array_field(
+    db: Session,
+    field_name: str,
+    limit: int = 100,
+    project_id: Optional[int] = None,
+) -> list[TagCount]:
+    """Unnest an array column and count occurrences, optionally filtered by project."""
+    if project_id is not None:
+        sql = text(
+            f"SELECT unnest(paa.{field_name}) AS tag, COUNT(*) AS cnt "
+            f"FROM photo_ai_analysis paa "
+            f"JOIN photos p ON paa.photo_id = p.id "
+            f"WHERE paa.{field_name} IS NOT NULL AND p.project_id = :project_id "
+            f"GROUP BY tag ORDER BY cnt DESC LIMIT :limit"
+        )
+        rows = db.execute(sql, {"limit": limit, "project_id": project_id}).fetchall()
+    else:
+        sql = text(
             f"SELECT unnest({field_name}) AS tag, COUNT(*) AS cnt "
             f"FROM photo_ai_analysis WHERE {field_name} IS NOT NULL "
             f"GROUP BY tag ORDER BY cnt DESC LIMIT :limit"
-        ),
-        {"limit": limit},
-    ).fetchall()
+        )
+        rows = db.execute(sql, {"limit": limit}).fetchall()
     return [TagCount(tag=row[0], count=row[1]) for row in rows]
 
 
 @router.get("", response_model=TagsResponse)
-def list_tags(db: Session = Depends(get_db)):
+def list_tags(
+    project_id: Optional[int] = None,
+    db: Session = Depends(get_db),
+):
     return TagsResponse(
-        scene_tags=_count_array_field(db, "scene_tags"),
-        object_tags=_count_array_field(db, "object_tags"),
-        activity_tags=_count_array_field(db, "activity_tags"),
-        quality_tags=_count_array_field(db, "quality_tags"),
-        search_keywords=_count_array_field(db, "search_keywords"),
+        scene_tags=_count_array_field(db, "scene_tags", project_id=project_id),
+        object_tags=_count_array_field(db, "object_tags", project_id=project_id),
+        activity_tags=_count_array_field(db, "activity_tags", project_id=project_id),
+        quality_tags=_count_array_field(db, "quality_tags", project_id=project_id),
+        search_keywords=_count_array_field(db, "search_keywords", project_id=project_id),
     )

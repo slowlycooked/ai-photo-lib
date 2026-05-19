@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { X, Calendar, Ruler, Tag, ImageIcon, Brain, Loader2 } from "lucide-react";
+import { X, Calendar, Ruler, Tag, ImageIcon, Brain, Loader2, Download } from "lucide-react";
 import type { Photo } from "@/lib/api";
 import { api } from "@/lib/api";
 
@@ -57,7 +57,7 @@ function DetailModal({ photo, onClose }: DetailModalProps) {
             </div>
           )}
           <img
-            src={api.photos.thumbnailUrl(photo.id)}
+            src={api.photos.thumbnailUrl(photo.id, photo.updated_at)}
             alt={photo.file_name}
             className="w-full object-cover"
             style={{ maxHeight: "40vh", opacity: loaded ? 1 : 0, transition: "opacity 0.2s" }}
@@ -71,6 +71,17 @@ function DetailModal({ photo, onClose }: DetailModalProps) {
           >
             <X className="w-4 h-4 text-ink" />
           </button>
+          {/* Download button */}
+          <a
+            href={api.photos.originalUrl(photo.id)}
+            download={photo.file_name}
+            onClick={(e) => e.stopPropagation()}
+            className="absolute top-3 right-14 w-9 h-9 rounded-full bg-canvas flex items-center justify-center shadow-md hover:bg-surface-card transition-colors"
+            aria-label="下载原图"
+            title="下载原图"
+          >
+            <Download className="w-4 h-4 text-ink" />
+          </a>
         </div>
 
         {/* Info */}
@@ -237,7 +248,7 @@ export function PhotoCard({ photo }: PhotoCardProps) {
             )}
             {/* img is always in the DOM (not display:none) so onLoad fires with lazy loading */}
             <img
-              src={api.photos.thumbnailUrl(photo.id)}
+              src={api.photos.thumbnailUrl(photo.id, photo.updated_at)}
               alt={photo.file_name}
               className="w-full block"
               style={{ opacity: loaded ? 1 : 0, transition: "opacity 0.2s" }}

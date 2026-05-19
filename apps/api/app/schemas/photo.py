@@ -10,6 +10,7 @@ class PhotoResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
+    project_id: Optional[int] = None
     file_name: str
     mime_type: Optional[str] = None
     width: Optional[int] = None

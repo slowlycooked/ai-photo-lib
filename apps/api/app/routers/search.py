@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Optional
+
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
@@ -15,9 +17,12 @@ def search(
     q: str = Query(..., min_length=1, description="搜索关键词"),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=100),
+    project_id: Optional[int] = None,
     db: Session = Depends(get_db),
 ):
-    total, items = search_photos(db, q, page=page, page_size=page_size)
+    total, items = search_photos(
+        db, q, page=page, page_size=page_size, project_id=project_id
+    )
     return SearchResponse(
         query=q,
         total=total,

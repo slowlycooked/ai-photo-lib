@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Camera, Search, X, Images, Tag, ListTodo, Settings } from "lucide-react";
 import { NavLink, useNavigate, useSearchParams, useLocation } from "react-router-dom";
+import { ProjectSelector } from "./ProjectSelector";
 
 const navItems = [
   { to: "/photos", label: "照片", icon: Images },
@@ -48,6 +49,9 @@ export function Header() {
           AI Photo Library
         </span>
       </NavLink>
+
+      {/* Project selector */}
+      <ProjectSelector />
 
       {/* Nav links */}
       <nav className="hidden sm:flex items-center gap-1">

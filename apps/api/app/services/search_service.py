@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
@@ -105,6 +105,7 @@ def search_photos(
     query: str,
     page: int = 1,
     page_size: int = 50,
+    project_id: Optional[int] = None,
 ) -> Tuple[int, list]:
     """Lightweight keyword search with in-Python scoring.
 
@@ -126,6 +127,7 @@ def search_photos(
         .join(PhotoAIAnalysis, PhotoAIAnalysis.photo_id == Photo.id)
         .filter(Photo.deleted_at.is_(None))
         .filter(_build_any_match_filter(terms))
+        .filter(*([Photo.project_id == project_id] if project_id is not None else []))
         .order_by(Photo.taken_at.desc().nullslast(), Photo.created_at.desc())
         .limit(MAX_CANDIDATES)
         .all()
@@ -140,7 +142,8 @@ def search_photos(
                 {
                     "photo_id": photo.id,
                     "file_name": photo.file_name,
-                    "thumbnail_url": f"/api/photos/{photo.id}/thumbnail",
+                    "thumbnail_url": f"/api/photos/{photo.id}/thumbnail?v={int(photo.updated_at.timestamp()) if photo.updated_at else 0}",
+                    "updated_at": photo.updated_at,
                     "taken_at": photo.taken_at,
                     "width": photo.width,
                     "height": photo.height,

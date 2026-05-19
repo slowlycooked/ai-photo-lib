@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { Loader2, Tag, AlertCircle } from "lucide-react";
 import { api, type TagCount } from "@/lib/api";
+import { useProjectContext } from "@/contexts/ProjectContext";
 
 const SECTIONS = [
   { key: "scene_tags" as const, label: "场景标签", color: "bg-blue-50 text-blue-700 hover:bg-blue-100" },
@@ -72,9 +73,10 @@ function TagSection({
 
 export function TagsPage() {
   const navigate = useNavigate();
+  const { currentProjectId } = useProjectContext();
   const { data, isLoading, isError } = useQuery({
-    queryKey: ["tags"],
-    queryFn: api.tags.list,
+    queryKey: ["tags", currentProjectId],
+    queryFn: () => api.tags.list(currentProjectId),
     staleTime: 60_000,
   });
 

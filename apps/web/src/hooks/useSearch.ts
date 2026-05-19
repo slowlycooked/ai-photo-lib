@@ -3,11 +3,11 @@ import { api } from "@/lib/api";
 
 const PAGE_SIZE = 50;
 
-export function useSearch(query: string) {
+export function useSearch(query: string, projectId?: number | null) {
   return useInfiniteQuery({
-    queryKey: ["search", query],
+    queryKey: ["search", query, projectId],
     queryFn: ({ pageParam = 1 }) =>
-      api.search.query(query, pageParam as number, PAGE_SIZE),
+      api.search.query(query, pageParam as number, PAGE_SIZE, projectId),
     initialPageParam: 1,
     enabled: query.trim().length > 0,
     getNextPageParam: (last) => {

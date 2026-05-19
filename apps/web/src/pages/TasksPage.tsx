@@ -13,6 +13,7 @@ import {
 import { ScanPanel } from "@/components/ScanPanel";
 import { api, type AIJob } from "@/lib/api";
 import { useScanStatus, useStartScan } from "@/hooks/useScan";
+import { useProjectContext } from "@/contexts/ProjectContext";
 
 // ─── Stat tile ───────────────────────────────────────────────────────────────
 
@@ -38,6 +39,7 @@ function StatTile({
 function FailedJobsSection() {
   const queryClient = useQueryClient();
   const [showAll, setShowAll] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const { data } = useQuery({
     queryKey: ["ai-jobs-failed"],
@@ -50,6 +52,18 @@ function FailedJobsSection() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["ai-status"] });
       queryClient.invalidateQueries({ queryKey: ["ai-jobs-failed"] });
+    },
+  });
+
+  const clearFailedJobsMutation = useMutation({
+    mutationFn: api.ai.clearFailedJobs,
+    onSuccess: () => {
+      setError(null);
+      queryClient.invalidateQueries({ queryKey: ["ai-status"] });
+      queryClient.invalidateQueries({ queryKey: ["ai-jobs-failed"] });
+    },
+    onError: (err: Error) => {
+      setError(`清除失败记录失败：${err.message}`);
     },
   });
 
@@ -66,14 +80,23 @@ function FailedJobsSection() {
           <h2 className="text-body-sm font-semibold text-ink">失败任务</h2>
           <span className="text-caption-sm text-mute">{items.length} 个</span>
         </div>
-        <button
-          onClick={() => retryMutation.mutate()}
-          disabled={retryMutation.isPending}
-          className="flex items-center gap-1 text-btn-sm font-bold text-primary hover:text-primary-pressed disabled:text-stone transition-colors"
-        >
-          <RefreshCw className="w-3.5 h-3.5" />
-          {retryMutation.isPending ? "重试中…" : "全部重试"}
-        </button>
+        <div className="flex gap-2">
+          <button
+            onClick={() => retryMutation.mutate()}
+            disabled={retryMutation.isPending}
+            className="flex items-center gap-1 text-btn-sm font-bold text-primary hover:text-primary-pressed disabled:text-stone transition-colors"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+            {retryMutation.isPending ? "重试中…" : "全部重试"}
+          </button>
+          <button
+            onClick={() => clearFailedJobsMutation.mutate()}
+            disabled={clearFailedJobsMutation.isPending}
+            className="flex items-center gap-1 text-btn-sm font-bold text-danger hover:text-danger-pressed disabled:text-stone transition-colors"
+          >
+            清除失败记录
+          </button>
+        </div>
       </div>
 
       <div className="space-y-1.5">
@@ -81,6 +104,8 @@ function FailedJobsSection() {
           <FailedJobRow key={job.id} job={job} />
         ))}
       </div>
+
+      {error && <p className="text-caption-sm text-danger">{error}</p>}
 
       {items.length > 5 && (
         <button
@@ -94,14 +119,55 @@ function FailedJobsSection() {
   );
 }
 
+/** Extract the human-readable message from an error string that may contain embedded JSON. */
+function parseErrorMessage(raw: string): { summary: string; detail: string | null } {
+  // Try to find a JSON object in the string and extract its message field
+  const jsonMatch = raw.match(/\{[\s\S]*\}/);
+  if (jsonMatch) {
+    try {
+      const parsed = JSON.parse(jsonMatch[0]);
+      const msg: string | undefined =
+        parsed?.error?.message ?? parsed?.message ?? parsed?.detail;
+      if (msg) {
+        // Prefix before the JSON is the summary context (e.g. "API returned HTTP 400: ")
+        const prefix = raw.slice(0, jsonMatch.index).replace(/:\s*$/, "").trim();
+        return {
+          summary: prefix ? `${prefix}: ${msg}` : msg,
+          detail: raw,
+        };
+      }
+    } catch {
+      // Not valid JSON — fall through
+    }
+  }
+  return { summary: raw, detail: null };
+}
+
 function FailedJobRow({ job }: { job: AIJob }) {
+  const [expanded, setExpanded] = useState(false);
+
+  const errorInfo = job.error_message ? parseErrorMessage(job.error_message) : null;
+  const hasDetail = !!errorInfo?.detail;
+
   return (
     <div className="bg-canvas border border-hairline rounded-md px-4 py-2.5 flex items-start gap-3">
       <AlertCircle className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" />
-      <div className="min-w-0 flex-1">
+      <div className="min-w-0 flex-1 space-y-1">
         <p className="text-body-sm text-ink truncate">{job.file_name ?? `#${job.photo_id}`}</p>
-        {job.error_message && (
-          <p className="text-caption-sm text-mute truncate mt-0.5">{job.error_message}</p>
+        {errorInfo && (
+          <>
+            <p className={`text-caption-sm text-mute mt-0.5 ${expanded ? "whitespace-pre-wrap break-all" : "truncate"}`}>
+              {expanded && hasDetail ? errorInfo.detail : errorInfo.summary}
+            </p>
+            {hasDetail && (
+              <button
+                onClick={() => setExpanded((v) => !v)}
+                className="text-caption-sm text-primary hover:text-primary-pressed"
+              >
+                {expanded ? "收起" : "展开详情"}
+              </button>
+            )}
+          </>
         )}
       </div>
       <span className="text-caption-sm text-stone flex-shrink-0">
@@ -113,7 +179,7 @@ function FailedJobRow({ job }: { job: AIJob }) {
 
 // ─── AI section ───────────────────────────────────────────────────────────────
 
-function AISection() {
+function AISection({ projectId }: { projectId: number | null }) {
   const queryClient = useQueryClient();
   const [message, setMessage] = useState<string | null>(null);
   const wasActiveRef = useRef(false);
@@ -138,7 +204,7 @@ function AISection() {
   }, [status, queryClient]);
 
   const startMutation = useMutation({
-    mutationFn: api.ai.startAnalysis,
+    mutationFn: () => api.ai.startAnalysis(projectId),
     onSuccess: (data) => {
       setMessage(
         data.created_jobs > 0
@@ -209,8 +275,9 @@ function AISection() {
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export function TasksPage() {
-  const { data: scanStatus, isLoading: scanLoading } = useScanStatus();
-  const { mutate: startScan, isPending } = useStartScan();
+  const { currentProjectId } = useProjectContext();
+  const { data: scanStatus, isLoading: scanLoading } = useScanStatus(currentProjectId);
+  const { mutate: startScan, isPending } = useStartScan(currentProjectId);
 
   return (
     <main className="max-w-3xl mx-auto px-4 sm:px-6 py-6 space-y-8">
@@ -236,7 +303,7 @@ export function TasksPage() {
       <div className="border-t border-hairline" />
 
       {/* AI section */}
-      <AISection />
+      <AISection projectId={currentProjectId} />
     </main>
   );
 }

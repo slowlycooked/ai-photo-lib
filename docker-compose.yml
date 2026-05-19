@@ -72,6 +72,7 @@ services:
       REDIS_URL: redis://redis:6379/0
 
       PHOTO_LIBRARY_PATH: /photos
+      HOST_PHOTO_LIBRARY_PATH: ${PHOTO_LIBRARY_PATH:-/volume1/photo}
       THUMBNAIL_PATH: /data/thumbs
       THUMBNAIL_SIZE: ${THUMBNAIL_SIZE:-512}
 

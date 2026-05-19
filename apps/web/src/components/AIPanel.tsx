@@ -3,14 +3,14 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Brain, Loader2, RefreshCw, Play } from "lucide-react";
 import { api } from "@/lib/api";
 
-export function AIPanel() {
+export function AIPanel({ projectId }: { projectId?: number | null }) {
   const queryClient = useQueryClient();
   const [message, setMessage] = useState<string | null>(null);
 
   const wasActiveRef = useRef(false);
 
   const { data: status, isLoading } = useQuery({
-    queryKey: ["ai-status"],
+    queryKey: ["ai-status", projectId],
     queryFn: api.ai.status,
     refetchInterval: (query) => {
       const d = query.state.data;
@@ -23,14 +23,14 @@ export function AIPanel() {
   useEffect(() => {
     const isActive = !!status && (status.queued > 0 || status.running > 0);
     if (wasActiveRef.current && !isActive && status) {
-      queryClient.invalidateQueries({ queryKey: ["photos"] });
+      queryClient.invalidateQueries({ queryKey: ["photos", projectId] });
       queryClient.invalidateQueries({ queryKey: ["photo-ai"] });
     }
     wasActiveRef.current = isActive;
-  }, [status, queryClient]);
+  }, [status, queryClient, projectId]);
 
   const startMutation = useMutation({
-    mutationFn: () => api.ai.startAnalysis(),
+    mutationFn: () => api.ai.startAnalysis(projectId),
     onSuccess: (data) => {
       if (data.created_jobs > 0) {
         setMessage(`已创建 ${data.created_jobs} 个分析任务`);

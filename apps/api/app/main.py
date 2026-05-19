@@ -3,11 +3,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import OperationalError
 
-from .routers import health, photos, scan, ai, search, tags, settings
+from .routers import health, photos, scan, ai, search, tags, settings, projects
 
 app = FastAPI(
     title="AI Photo Library API",
-    version="0.4.0",
+    version="0.6.0",
     description="Private AI-powered photo library for Synology NAS",
 )
 
@@ -29,6 +29,7 @@ async def db_unavailable_handler(request: Request, exc: OperationalError) -> JSO
 
 
 app.include_router(health.router)
+app.include_router(projects.router)
 app.include_router(photos.router)
 app.include_router(scan.router)
 app.include_router(ai.router)

@@ -6,6 +6,7 @@ import type { SearchResultItem } from "@/lib/api";
 
 interface SearchResultGridProps {
   query: string;
+  projectId?: number | null;
 }
 
 function SearchCard({ item }: { item: SearchResultItem }) {
@@ -22,7 +23,7 @@ function SearchCard({ item }: { item: SearchResultItem }) {
             </div>
           )}
           <img
-            src={api.photos.thumbnailUrl(item.photo_id)}
+            src={item.thumbnail_url}
             alt={item.file_name}
             className="w-full object-cover"
             style={{ opacity: loaded ? 1 : 0, transition: "opacity 0.2s" }}
@@ -57,7 +58,7 @@ function SearchCard({ item }: { item: SearchResultItem }) {
   );
 }
 
-export function SearchResultGrid({ query }: SearchResultGridProps) {
+export function SearchResultGrid({ query, projectId }: SearchResultGridProps) {
   const {
     data,
     fetchNextPage,
@@ -66,7 +67,7 @@ export function SearchResultGrid({ query }: SearchResultGridProps) {
     isLoading,
     isError,
     error,
-  } = useSearch(query);
+  } = useSearch(query, projectId);
 
   const sentinelRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
