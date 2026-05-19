@@ -5,6 +5,7 @@ import { SearchPage } from "@/pages/SearchPage";
 import { TagsPage } from "@/pages/TagsPage";
 import { TasksPage } from "@/pages/TasksPage";
 import { SettingsPage } from "@/pages/SettingsPage";
+import { ProjectAISettingsPage } from "@/pages/ProjectAISettingsPage";
 import { ProjectProvider } from "@/contexts/ProjectContext";
 
 export default function App() {
@@ -20,6 +21,9 @@ export default function App() {
             <Route path="/tags" element={<TagsPage />} />
             <Route path="/tasks" element={<TasksPage />} />
             <Route path="/settings" element={<SettingsPage />} />
+            <Route path="/project/settings/ai" element={<ProjectAISettingsPage />} />
+            <Route path="/project/:projectId/settings/ai" element={<ProjectAISettingsPage />} />
+            <Route path="/projects/:projectId/settings/ai" element={<ProjectAISettingsPage />} />
           </Routes>
         </div>
       </ProjectProvider>

@@ -79,6 +79,13 @@ def _normalize(data: dict) -> dict:
     return result
 
 
+def validate_image_analysis_result(data: dict) -> dict:
+    """Validate/normalize parsed image-analysis payload into required schema."""
+    if not isinstance(data, dict):
+        raise ValueError("Model output root must be a JSON object")
+    return _normalize(data)
+
+
 def build_relative_paths(library_path: str, entry: Path) -> Tuple[str, str]:
     """
     计算照片的 relative_path 和 folder_path
@@ -95,8 +102,14 @@ def build_relative_paths(library_path: str, entry: Path) -> Tuple[str, str]:
     return rel_path, folder_path
 
 
-def parse_model_json_output(raw_text: str) -> dict:
-    """Parse JSON from model output, with progressive fallback strategies."""
+def parse_model_json_output(raw_text: str, strategy: str = "auto_extract") -> dict:
+    """Parse JSON from model output, with selectable fallback strategies.
+
+    Supported strategies:
+    - strict_json: only direct JSON parsing
+    - strip_markdown: direct parse + markdown fence stripping
+    - auto_extract: full fallback pipeline including object extraction (default)
+    """
     if not raw_text or not raw_text.strip():
         logger.warning("Model returned empty output, using defaults.")
         return dict(_DEFAULTS)
@@ -107,17 +120,31 @@ def parse_model_json_output(raw_text: str) -> dict:
     # Attempt 1: direct parse
     try:
         data = json.loads(raw_text)
-        return _normalize(data)
+        return validate_image_analysis_result(data)
     except json.JSONDecodeError:
         pass
+
+    if strategy == "strict_json":
+        raise ValueError(
+            "Cannot parse model output as strict JSON. "
+            f"First 300 chars: {raw_text[:300]!r}. "
+            f"Raw output:\n{raw_text}"
+        )
 
     # Attempt 2: strip Markdown code fences
     stripped = re.sub(r"```(?:json)?\s*", "", raw_text).replace("```", "").strip()
     try:
         data = json.loads(stripped)
-        return _normalize(data)
+        return validate_image_analysis_result(data)
     except json.JSONDecodeError:
         pass
+
+    if strategy == "strip_markdown":
+        raise ValueError(
+            "Cannot parse model output as JSON after markdown stripping. "
+            f"First 300 chars: {raw_text[:300]!r}. "
+            f"Raw output:\n{raw_text}"
+        )
 
     # Attempt 3: extract first { ... } block
     start = raw_text.find("{")
@@ -126,7 +153,7 @@ def parse_model_json_output(raw_text: str) -> dict:
         fragment = raw_text[start : end + 1]
         try:
             data = json.loads(fragment)
-            return _normalize(data)
+            return validate_image_analysis_result(data)
         except json.JSONDecodeError:
             pass
 
@@ -140,7 +167,7 @@ def parse_model_json_output(raw_text: str) -> dict:
         except json.JSONDecodeError:
             continue
         if isinstance(data, dict):
-            return _normalize(data)
+            return validate_image_analysis_result(data)
 
     raise ValueError(
         "Cannot parse model output as JSON. "

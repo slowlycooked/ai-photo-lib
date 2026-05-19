@@ -51,7 +51,12 @@ def start_analysis(
 
     count = 0
     for photo in photos_to_process:
-        job = AIJob(photo_id=photo.id, job_type="analyze", status="queued")
+        job = AIJob(
+            photo_id=photo.id,
+            project_id=photo.project_id,
+            job_type="analyze",
+            status="queued",
+        )
         db.add(job)
         count += 1
 
@@ -103,6 +108,12 @@ def list_ai_jobs(
             status=job.status,
             retry_count=job.retry_count,
             error_message=job.error_message,
+            prompt_template_id=job.prompt_template_id,
+            prompt_version=job.prompt_version,
+            model_name=job.model_name,
+            model_params=job.model_params,
+            raw_model_output=job.raw_model_output,
+            parse_error=job.parse_error,
             started_at=job.started_at,
             finished_at=job.finished_at,
             created_at=job.created_at,

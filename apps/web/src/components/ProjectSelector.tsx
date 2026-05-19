@@ -1,5 +1,6 @@
 import { useRef, useState } from "react";
-import { ChevronDown, FolderOpen, Plus, Check } from "lucide-react";
+import { ChevronDown, FolderOpen, Check, Bot } from "lucide-react";
+import { Link } from "react-router-dom";
 import { useProjectContext } from "@/contexts/ProjectContext";
 
 export function ProjectSelector() {
@@ -89,6 +90,16 @@ export function ProjectSelector() {
                 )}
               </button>
             ))}
+            <div className="border-t border-hairline mt-1 pt-1 px-1 pb-1">
+              <Link
+                to={`/project/${currentProject.id}/settings/ai`}
+                onClick={() => setOpen(false)}
+                className="w-full flex items-center gap-2 px-2 py-2 rounded-md text-body-sm text-primary hover:bg-secondary-bg"
+              >
+                <Bot className="w-3.5 h-3.5" />
+                项目设置 / AI 配置
+              </Link>
+            </div>
           </div>
         </>
       )}

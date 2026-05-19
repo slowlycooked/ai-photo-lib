@@ -17,30 +17,7 @@ pillow_heif.register_heif_opener()
 
 logger = logging.getLogger(__name__)
 
-_PROMPT = """\
-你是一个只返回 JSON 的图片分析 API。
-只输出一个 JSON 对象，不要任何解释、思考过程、前后缀、Markdown 或代码块。
-所有文本字段必须为中文；若无法判断请用空数组、空字符串或较低 confidence。
-不得推断人物身份，不得编造地点。
-
-严格输出以下字段（不可缺失，字段名不可改）：
-{
-    "caption": string,
-    "scene_tags": string[],
-    "object_tags": string[],
-    "activity_tags": string[],
-    "people_count": number,
-    "ocr_text": string[],
-    "location_clues": string[],
-    "quality_tags": string[],
-    "search_keywords": string[],
-    "confidence": number
-}
-
-额外约束：
-- people_count 必须是数字，不得是数组或字符串。
-- confidence 必须是 0 到 1 之间的数字。
-"""
+_DEFAULT_PROMPT = """请分析图片内容并只返回 JSON。"""
 
 
 class VLMRequestError(RuntimeError):
@@ -119,7 +96,27 @@ def _send_chat_completion(
             raise
 
 
-def analyze_image(image_path: str) -> str:
+def _normalize_chat_url(endpoint_url: str) -> str:
+    url = endpoint_url.strip().rstrip("/")
+    if not url:
+        return f"{settings.openai_base_url.rstrip('/')}/chat/completions"
+    if url.endswith("/chat/completions"):
+        return url
+    if url.endswith("/v1"):
+        return f"{url}/chat/completions"
+    return url
+
+
+def analyze_image(
+    image_path: str,
+    *,
+    endpoint_url: str | None = None,
+    model_name: str | None = None,
+    prompt_text: str | None = None,
+    temperature: float | None = None,
+    top_p: float | None = None,
+    max_tokens: int | None = None,
+) -> str:
     """Call OpenAI-compatible /v1/chat/completions with the image encoded as a
     base64 data URL and return raw text.
 
@@ -158,7 +155,7 @@ def analyze_image(image_path: str) -> str:
     data_url = f"data:{mime};base64,{img_b64}"
 
     payload = {
-        "model": settings.openai_vision_model,
+        "model": model_name or settings.openai_vision_model,
         "messages": [
             {
                 "role": "system",
@@ -167,19 +164,20 @@ def analyze_image(image_path: str) -> str:
             {
                 "role": "user",
                 "content": [
-                    {"type": "text", "text": _PROMPT},
+                    {"type": "text", "text": prompt_text or _DEFAULT_PROMPT},
                     {"type": "image_url", "image_url": {"url": data_url}},
                 ],
             }
         ],
-        "max_tokens": settings.ai_vision_max_tokens,
-        "temperature": settings.ai_vision_temperature,
+        "max_tokens": max_tokens if max_tokens is not None else settings.ai_vision_max_tokens,
+        "temperature": temperature if temperature is not None else settings.ai_vision_temperature,
+        "top_p": top_p if top_p is not None else 0.8,
         # Most OpenAI-compatible servers honor this and suppress non-JSON text.
         "response_format": {"type": "json_object"},
         "stream": False,
     }
 
-    url = f"{settings.openai_base_url.rstrip('/')}/chat/completions"
+    url = _normalize_chat_url(endpoint_url or settings.openai_base_url)
     headers = {"Authorization": f"Bearer {settings.openai_api_key}"}
 
     try:

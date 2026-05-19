@@ -39,6 +39,12 @@ from app.models.folder import ProjectFolder  # noqa: F401 — registers 'project
 from app.models.project import Project  # noqa: F401 — registers 'projects' table in metadata
 from app.services.vlm_client import VLMRequestError, analyze_image
 from app.services.json_parser import parse_model_json_output
+from app.services.project_ai_service import (
+    TASK_IMAGE_ANALYSIS,
+    get_active_prompt_template,
+    get_or_create_project_ai_settings,
+    render_analysis_prompt,
+)
 from app.services.thumbnail import generate_thumbnail
 
 # ---------------------------------------------------------------------------
@@ -133,11 +139,50 @@ def _process_job(db: Session, job: AIJob) -> None:
         return
 
     try:
+        project_id = job.project_id or photo.project_id
+        if project_id is None:
+            raise ValueError(f"Photo {photo.id} has no project_id")
+
+        ai_settings = get_or_create_project_ai_settings(db, project_id)
+        prompt_template = get_active_prompt_template(
+            db,
+            project_id,
+            task_type=TASK_IMAGE_ANALYSIS,
+        )
+        prompt_text = render_analysis_prompt(
+            photo=photo,
+            prompt_template=prompt_template,
+            output_language=ai_settings.output_language,
+        )
+
+        job.prompt_template_id = prompt_template.id
+        job.prompt_version = prompt_template.version
+        job.model_name = ai_settings.model_name
+        job.model_params = {
+            "endpoint_url": ai_settings.endpoint_url,
+            "temperature": ai_settings.temperature,
+            "top_p": ai_settings.top_p,
+            "max_tokens": ai_settings.max_tokens,
+            "json_parse_strategy": ai_settings.json_parse_strategy,
+        }
+
         image_path = _pick_image_path(photo, db)
         logger.info("Analyzing photo %d (%s) via %s…", photo.id, photo.file_name, image_path)
 
-        raw_text = analyze_image(image_path)
-        parsed = parse_model_json_output(raw_text)
+        raw_text = analyze_image(
+            image_path,
+            endpoint_url=ai_settings.endpoint_url,
+            model_name=ai_settings.model_name,
+            prompt_text=prompt_text,
+            temperature=ai_settings.temperature,
+            top_p=ai_settings.top_p,
+            max_tokens=ai_settings.max_tokens,
+        )
+        job.raw_model_output = raw_text[:_MAX_ERROR_MESSAGE_LEN]
+        parsed = parse_model_json_output(
+            raw_text,
+            strategy=ai_settings.json_parse_strategy,
+        )
 
         # Delete previous analysis for this photo (upsert via delete+insert)
         db.query(PhotoAIAnalysis).filter(
@@ -146,7 +191,7 @@ def _process_job(db: Session, job: AIJob) -> None:
 
         analysis = PhotoAIAnalysis(
             photo_id=photo.id,
-            model_name=settings.openai_vision_model,
+            model_name=ai_settings.model_name,
             model_version=None,
             caption=parsed.get("caption", ""),
             ocr_text="\n".join(parsed.get("ocr_text", [])),
@@ -171,6 +216,7 @@ def _process_job(db: Session, job: AIJob) -> None:
         job.finished_at = datetime.now(timezone.utc)
         job.updated_at = job.finished_at
         job.error_message = None
+        job.parse_error = None
 
         db.commit()
         logger.info("Photo %d analyzed successfully.", photo.id)
@@ -181,6 +227,7 @@ def _process_job(db: Session, job: AIJob) -> None:
         job.retry_count = (job.retry_count or 0) + 1
         error_detail = f"{type(exc).__name__}: {exc}"
         job.error_message = error_detail[:_MAX_ERROR_MESSAGE_LEN]
+        job.parse_error = error_detail[:_MAX_ERROR_MESSAGE_LEN]
         job.finished_at = datetime.now(timezone.utc)
         job.updated_at = job.finished_at
 

@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 import {
   Brain,
   FolderSearch,
@@ -43,18 +44,13 @@ function FailedJobsSection({ projectId }: { projectId: number | null }) {
 
   const { data } = useQuery({
     queryKey: ["ai-jobs-failed", projectId],
-    queryFn: () =>
-      projectId != null
-        ? api.projects.aiJobs(projectId, "failed", 50)
-        : api.ai.jobs("failed", 50),
+    queryFn: () => api.projects.aiJobs(projectId!, "failed", 50),
+    enabled: projectId != null,
     staleTime: 10_000,
   });
 
   const retryMutation = useMutation({
-    mutationFn: () =>
-      projectId != null
-        ? api.projects.retryFailedAiJobs(projectId)
-        : api.ai.retryFailed(),
+    mutationFn: () => api.projects.retryFailedAiJobs(projectId!),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["ai-status", projectId] });
       queryClient.invalidateQueries({ queryKey: ["ai-jobs-failed", projectId] });
@@ -62,10 +58,7 @@ function FailedJobsSection({ projectId }: { projectId: number | null }) {
   });
 
   const clearFailedJobsMutation = useMutation({
-    mutationFn: () =>
-      projectId != null
-        ? api.projects.clearFailedAiJobs(projectId)
-        : api.ai.clearFailedJobs(),
+    mutationFn: () => api.projects.clearFailedAiJobs(projectId!),
     onSuccess: () => {
       setError(null);
       queryClient.invalidateQueries({ queryKey: ["ai-status", projectId] });
@@ -163,11 +156,20 @@ function FailedJobRow({ job }: { job: AIJob }) {
 
   const errorInfo = job.error_message ? parseErrorMessage(job.error_message) : null;
 
+  const handleCopy = (text: string) => {
+    navigator.clipboard.writeText(text).catch(() => {
+      // Ignore clipboard permission errors in non-secure contexts.
+    });
+  };
+
   return (
     <div className="bg-canvas border border-hairline rounded-md px-4 py-2.5 flex items-start gap-3">
       <AlertCircle className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" />
       <div className="min-w-0 flex-1 space-y-1">
         <p className="text-body-sm text-ink truncate">{job.file_name ?? `#${job.photo_id}`}</p>
+        <p className="text-caption-sm text-mute">
+          prompt v{job.prompt_version ?? "-"} · model {job.model_name ?? "-"}
+        </p>
         {errorInfo && (
           <>
             <p className={`text-caption-sm text-mute mt-0.5 ${expanded ? "whitespace-pre-wrap break-all" : "truncate"}`}>
@@ -180,6 +182,43 @@ function FailedJobRow({ job }: { job: AIJob }) {
               >
                 {expanded ? "收起" : "展开详情"}
               </button>
+            )}
+            {expanded && (
+              <div className="mt-2 space-y-2">
+                <div className="bg-surface-soft border border-hairline rounded-md p-2">
+                  <div className="flex items-center justify-between gap-2 mb-1">
+                    <p className="text-caption-sm text-mute">parse_error</p>
+                    {job.parse_error && (
+                      <button
+                        onClick={() => handleCopy(job.parse_error || "")}
+                        className="text-caption-sm text-primary hover:text-primary-pressed"
+                      >
+                        复制
+                      </button>
+                    )}
+                  </div>
+                  <pre className="text-caption-sm whitespace-pre-wrap break-all">
+                    {job.parse_error || "(空)"}
+                  </pre>
+                </div>
+
+                <div className="bg-surface-soft border border-hairline rounded-md p-2">
+                  <div className="flex items-center justify-between gap-2 mb-1">
+                    <p className="text-caption-sm text-mute">raw_model_output</p>
+                    {job.raw_model_output && (
+                      <button
+                        onClick={() => handleCopy(job.raw_model_output || "")}
+                        className="text-caption-sm text-primary hover:text-primary-pressed"
+                      >
+                        复制
+                      </button>
+                    )}
+                  </div>
+                  <pre className="text-caption-sm whitespace-pre-wrap break-all max-h-48 overflow-auto">
+                    {job.raw_model_output || "(空)"}
+                  </pre>
+                </div>
+              </div>
             )}
           </>
         )}
@@ -200,10 +239,8 @@ function AISection({ projectId }: { projectId: number | null }) {
 
   const { data: status, isLoading } = useQuery({
     queryKey: ["ai-status", projectId],
-    queryFn: () =>
-      projectId != null
-        ? api.projects.aiStatus(projectId)
-        : api.ai.status(),
+    queryFn: () => api.projects.aiStatus(projectId!),
+    enabled: projectId != null,
     refetchInterval: (query) => {
       const d = query.state.data;
       return d && (d.queued > 0 || d.running > 0) ? 3000 : 15000;
@@ -221,7 +258,7 @@ function AISection({ projectId }: { projectId: number | null }) {
   }, [status, queryClient]);
 
   const startMutation = useMutation({
-    mutationFn: () => api.ai.startAnalysis(projectId),
+    mutationFn: () => api.projects.startAI(projectId!),
     onSuccess: (data) => {
       setMessage(
         data.created_jobs > 0
@@ -235,6 +272,7 @@ function AISection({ projectId }: { projectId: number | null }) {
   });
 
   const isRunning = status && status.running > 0;
+  const canRun = projectId != null;
 
   // Rough speed: success / (age of oldest running job in hours) — simplified
   const speed = status && status.success > 0 ? status.success : null;
@@ -254,10 +292,18 @@ function AISection({ projectId }: { projectId: number | null }) {
           <h2 className="text-body-sm font-semibold text-ink">
             {isRunning ? "AI 分析进行中…" : "AI 图片分析"}
           </h2>
+          {projectId != null && (
+            <Link
+              to={`/project/${projectId}/settings/ai`}
+              className="text-caption-sm text-primary hover:text-primary-pressed"
+            >
+              项目 AI 配置
+            </Link>
+          )}
         </div>
         <button
           onClick={() => startMutation.mutate()}
-          disabled={startMutation.isPending}
+          disabled={startMutation.isPending || !canRun}
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-primary text-white text-btn-sm font-bold hover:bg-primary-pressed disabled:bg-stone transition-colors"
         >
           <Play className="w-3.5 h-3.5" />
@@ -283,6 +329,8 @@ function AISection({ projectId }: { projectId: number | null }) {
       )}
 
       {message && <p className="text-caption-sm text-mute">{message}</p>}
+
+      {!canRun && <p className="text-caption-sm text-mute">请先选择项目后再执行 AI 分析。</p>}
 
       <FailedJobsSection projectId={projectId} />
     </section>

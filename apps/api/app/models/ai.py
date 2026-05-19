@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import List, Optional
 
-from sqlalchemy import BigInteger, Float, ForeignKey, Integer, JSON, Text, TIMESTAMP, func
+from sqlalchemy import BigInteger, Boolean, Float, ForeignKey, Integer, JSON, Text, TIMESTAMP, func
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -72,8 +72,75 @@ class AIJob(Base):
     status: Mapped[str] = mapped_column(Text, server_default="queued", nullable=False)
     retry_count: Mapped[int] = mapped_column(Integer, server_default="0", nullable=False)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    prompt_template_id: Mapped[Optional[int]] = mapped_column(
+        BigInteger,
+        ForeignKey("project_prompt_templates.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    prompt_version: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    model_name: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    model_params: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    raw_model_output: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    parse_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     started_at: Mapped[Optional[datetime]] = mapped_column(TIMESTAMP, nullable=True)
     finished_at: Mapped[Optional[datetime]] = mapped_column(TIMESTAMP, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP, server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP, server_default=func.now(), nullable=False
+    )
+
+
+class ProjectPromptTemplate(Base):
+    __tablename__ = "project_prompt_templates"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    project_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    task_type: Mapped[str] = mapped_column(Text, server_default="image_analysis", nullable=False)
+    system_prompt: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    user_prompt: Mapped[str] = mapped_column(Text, nullable=False)
+    output_schema: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, server_default="false", nullable=False)
+    version: Mapped[int] = mapped_column(Integer, server_default="1", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP, server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP, server_default=func.now(), nullable=False
+    )
+
+
+class ProjectAISettings(Base):
+    __tablename__ = "project_ai_settings"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    project_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+    provider: Mapped[str] = mapped_column(Text, server_default="llama-server", nullable=False)
+    endpoint_url: Mapped[str] = mapped_column(Text, nullable=False)
+    model_name: Mapped[str] = mapped_column(Text, nullable=False)
+    temperature: Mapped[float] = mapped_column(Float, server_default="0", nullable=False)
+    top_p: Mapped[float] = mapped_column(Float, server_default="0.8", nullable=False)
+    max_tokens: Mapped[int] = mapped_column(Integer, server_default="1024", nullable=False)
+    retry_count: Mapped[int] = mapped_column(Integer, server_default="1", nullable=False)
+    output_language: Mapped[str] = mapped_column(Text, server_default="zh-CN", nullable=False)
+    json_parse_strategy: Mapped[str] = mapped_column(
+        Text, server_default="auto_extract", nullable=False
+    )
+    active_prompt_template_id: Mapped[Optional[int]] = mapped_column(
+        BigInteger,
+        ForeignKey("project_prompt_templates.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP, server_default=func.now(), nullable=False
     )

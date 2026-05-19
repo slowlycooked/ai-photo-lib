@@ -161,6 +161,12 @@ export interface AIJob {
   status: string;
   retry_count: number;
   error_message: string | null;
+  prompt_template_id: number | null;
+  prompt_version: number | null;
+  model_name: string | null;
+  model_params: Record<string, unknown> | null;
+  raw_model_output: string | null;
+  parse_error: string | null;
   file_name: string | null;
   started_at: string | null;
   finished_at: string | null;
@@ -223,6 +229,86 @@ export interface AppSettings {
   openai_vision_model: string;
   ai_worker_concurrency: number;
   ai_max_retries: number;
+}
+
+export interface ProjectAISettings {
+  id: number;
+  project_id: number;
+  provider: string;
+  endpoint_url: string;
+  model_name: string;
+  temperature: number;
+  top_p: number;
+  max_tokens: number;
+  retry_count: number;
+  output_language: string;
+  json_parse_strategy: string;
+  active_prompt_template_id: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ProjectAISettingsUpdate {
+  provider: string;
+  endpoint_url: string;
+  model_name: string;
+  temperature: number;
+  top_p: number;
+  max_tokens: number;
+  retry_count: number;
+  output_language: string;
+  json_parse_strategy: string;
+  active_prompt_template_id?: number | null;
+}
+
+export interface PromptTemplate {
+  id: number;
+  project_id: number;
+  name: string;
+  task_type: string;
+  system_prompt: string | null;
+  user_prompt: string;
+  output_schema: Record<string, unknown> | null;
+  is_active: boolean;
+  version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PromptTemplateListResponse {
+  total: number;
+  items: PromptTemplate[];
+}
+
+export interface PromptTemplateCreate {
+  name: string;
+  task_type?: string;
+  system_prompt?: string | null;
+  user_prompt: string;
+  output_schema?: Record<string, unknown> | null;
+  is_active?: boolean;
+}
+
+export interface PromptTemplateUpdate {
+  name?: string;
+  system_prompt?: string | null;
+  user_prompt: string;
+  output_schema?: Record<string, unknown> | null;
+  is_active?: boolean;
+}
+
+export interface PromptTemplateTestRequest {
+  image_id: number;
+  prompt_template_id?: number;
+  override_prompt?: string;
+}
+
+export interface PromptTemplateTestResponse {
+  success: boolean;
+  raw_output: string;
+  parsed_json: Record<string, unknown> | null;
+  error: string | null;
+  duration_ms: number;
 }
 
 // ─── HTTP helper ──────────────────────────────────────────────────────────────
@@ -314,6 +400,40 @@ export const api = {
         `/projects/${id}/ai/jobs/failed`,
         { method: "DELETE" }
       ),
+    getAiSettings: (id: number) =>
+      request<ProjectAISettings>(`/projects/${id}/ai-settings`),
+    updateAiSettings: (id: number, body: ProjectAISettingsUpdate) =>
+      request<ProjectAISettings>(`/projects/${id}/ai-settings`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      }),
+    promptTemplates: (id: number, taskType = "image_analysis") =>
+      request<PromptTemplateListResponse>(
+        `/projects/${id}/prompt-templates${qs({ task_type: taskType })}`
+      ),
+    createPromptTemplate: (id: number, body: PromptTemplateCreate) =>
+      request<PromptTemplate>(`/projects/${id}/prompt-templates`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      }),
+    updatePromptTemplate: (id: number, templateId: number, body: PromptTemplateUpdate) =>
+      request<PromptTemplate>(`/projects/${id}/prompt-templates/${templateId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      }),
+    resetDefaultPromptTemplate: (id: number) =>
+      request<PromptTemplate>(`/projects/${id}/prompt-templates/reset-default`, {
+        method: "POST",
+      }),
+    testPromptTemplate: (id: number, body: PromptTemplateTestRequest) =>
+      request<PromptTemplateTestResponse>(`/projects/${id}/prompt-templates/test`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      }),
   },
 
   photos: {

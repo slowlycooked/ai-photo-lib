@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
-import { Camera, Search, X, Images, Tag, ListTodo, Settings } from "lucide-react";
+import { Camera, Search, X, Images, Tag, ListTodo, Settings, Bot } from "lucide-react";
 import { NavLink, useNavigate, useSearchParams, useLocation } from "react-router-dom";
 import { ProjectSelector } from "./ProjectSelector";
+import { useProjectContext } from "@/contexts/ProjectContext";
 
 const navItems = [
   { to: "/photos", label: "照片", icon: Images },
@@ -11,6 +12,7 @@ const navItems = [
 ];
 
 export function Header() {
+  const { currentProjectId } = useProjectContext();
   const [params] = useSearchParams();
   const location = useLocation();
   const navigate = useNavigate();
@@ -52,6 +54,23 @@ export function Header() {
 
       {/* Project selector */}
       <ProjectSelector />
+
+      {currentProjectId != null && (
+        <NavLink
+          to={`/project/${currentProjectId}/settings/ai`}
+          className={({ isActive }) =>
+            [
+              "hidden md:flex items-center gap-1.5 px-3 py-1.5 rounded-md text-btn-sm transition-colors",
+              isActive
+                ? "bg-secondary-bg text-ink font-bold"
+                : "text-mute hover:text-ink hover:bg-surface-card",
+            ].join(" ")
+          }
+        >
+          <Bot className="w-3.5 h-3.5" />
+          项目AI配置
+        </NavLink>
+      )}
 
       {/* Nav links */}
       <nav className="hidden sm:flex items-center gap-1">

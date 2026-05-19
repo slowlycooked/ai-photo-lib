@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import {
   Loader2,
@@ -19,6 +20,7 @@ import {
   useUpdateProject,
   useDeleteProject,
 } from "@/hooks/useProjects";
+import { useProjectContext } from "@/contexts/ProjectContext";
 
 // ─── Path helpers ────────────────────────────────────────────────────────────
 
@@ -396,6 +398,7 @@ function LibraryManagementCard() {
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export function SettingsPage() {
+  const { currentProjectId } = useProjectContext();
   const { data, isLoading, isError } = useQuery({
     queryKey: ["settings"],
     queryFn: api.settings.get,
@@ -410,6 +413,20 @@ export function SettingsPage() {
       </div>
 
       <LibraryManagementCard />
+
+      {currentProjectId != null && (
+        <SettingsCard title="项目 AI 设置">
+          <div className="py-3 flex items-center justify-between gap-3">
+            <p className="text-body-sm text-mute">进入当前项目的模型配置、Prompt 版本与测试区。</p>
+            <Link
+              to={`/project/${currentProjectId}/settings/ai`}
+              className="px-3 py-1.5 text-body-sm rounded-md border border-hairline text-ink hover:bg-secondary-bg transition-colors"
+            >
+              打开项目 AI 配置
+            </Link>
+          </div>
+        </SettingsCard>
+      )}
 
       {isLoading && (
         <div className="flex items-center gap-2 text-mute py-12 justify-center">

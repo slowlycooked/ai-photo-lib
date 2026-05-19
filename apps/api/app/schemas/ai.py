@@ -40,6 +40,12 @@ class AIJobResponse(BaseModel):
     status: str
     retry_count: int
     error_message: Optional[str] = None
+    prompt_template_id: Optional[int] = None
+    prompt_version: Optional[int] = None
+    model_name: Optional[str] = None
+    model_params: Optional[Dict] = None
+    raw_model_output: Optional[str] = None
+    parse_error: Optional[str] = None
     started_at: Optional[datetime] = None
     finished_at: Optional[datetime] = None
     created_at: datetime
