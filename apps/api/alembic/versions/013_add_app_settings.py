@@ -1,7 +1,7 @@
 """Add app_settings table for global debug config
 
 Revision ID: 013_add_app_settings
-Revises: 012_embedding_status_meta
+Revises: 012_fix_photo_embeddings_schema
 Create Date: 2026-05-20
 """
 
@@ -14,7 +14,7 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision: str = "013_add_app_settings"
-down_revision: Union[str, None] = "012_embedding_status_meta"
+down_revision: Union[str, None] = "012_fix_photo_embeddings_schema"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

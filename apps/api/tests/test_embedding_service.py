@@ -16,6 +16,7 @@ os.environ.setdefault("OPENAI_VISION_MODEL", "test-model")
 
 from app.models.ai import PhotoEmbedding  # noqa: E402
 from app.services.embedding_service import (  # noqa: E402
+    _REQUIRED_PHOTO_EMBEDDING_COLUMNS,
     build_embedding_inputs,
     is_embedding_stale,
     upsert_photo_embeddings,
@@ -47,7 +48,50 @@ class _FakeDB:
             self.row = obj
 
 
+class _FakeSchemaDB:
+    def __init__(self):
+        self.query_called = False
+
+    def get_bind(self):
+        return object()
+
+    def query(self, model):
+        self.query_called = True
+        raise AssertionError("query should not be called for incompatible schema")
+
+
+class _FakeInspector:
+    def __init__(self, columns):
+        self._columns = columns
+
+    def get_columns(self, table_name):
+        if table_name != "photo_embeddings":
+            raise AssertionError(f"unexpected table_name: {table_name}")
+        return [{"name": name} for name in self._columns]
+
+
 class EmbeddingServiceTest(unittest.TestCase):
+    def test_required_photo_embeddings_columns_match_model_contract(self) -> None:
+        expected_columns = {
+            "id",
+            "project_id",
+            "photo_id",
+            "caption_embedding",
+            "tag_embedding",
+            "ocr_embedding",
+            "caption_text_hash",
+            "tag_text_hash",
+            "ocr_text_hash",
+            "embedding_model",
+            "embedding_dimension",
+            "embedding_status",
+            "embedding_error",
+            "embedded_at",
+            "updated_at",
+        }
+
+        self.assertSetEqual(_REQUIRED_PHOTO_EMBEDDING_COLUMNS, expected_columns)
+
     def test_build_embedding_inputs_merges_and_dedups_tags(self) -> None:
         ai = SimpleNamespace(
             caption="  mountain trail  ",
@@ -135,6 +179,37 @@ class EmbeddingServiceTest(unittest.TestCase):
                 ocr_text_hash="h3",
             )
             self.assertTrue(is_embedding_stale(ai, embedding, model_name="new-model", dimension=1024))
+
+    def test_upsert_photo_embeddings_old_schema_raises_runtime_error(self) -> None:
+        ai = SimpleNamespace(
+            caption="cat",
+            ocr_text="invoice",
+            scene_tags=["home"],
+            object_tags=[],
+            activity_tags=[],
+            quality_tags=[],
+            location_clues=[],
+            search_keywords=["pet"],
+        )
+        old_schema_columns = {
+            "photo_id",
+            "caption_embedding",
+            "tag_embedding",
+            "ocr_embedding",
+            "updated_at",
+        }
+        db = _FakeSchemaDB()
+
+        with patch(
+            "app.services.embedding_service.inspect",
+            return_value=_FakeInspector(old_schema_columns),
+        ):
+            with self.assertRaises(RuntimeError) as cm:
+                upsert_photo_embeddings(db, project_id=1, photo_id=10, ai=ai, model_name="embed-model")
+
+        self.assertIn("Incompatible table schema", str(cm.exception))
+        self.assertIn("alembic upgrade head", str(cm.exception))
+        self.assertFalse(db.query_called)
 
 
 if __name__ == "__main__":
