@@ -11,7 +11,7 @@ import type { FolderScope } from "@/lib/api";
 export function PhotosPage() {
   const { currentProjectId } = useProjectContext();
   const { data: scanStatus, isLoading: scanLoading } = useScanStatus(currentProjectId);
-  const { mutate: startScan, isPending } = useStartScan(currentProjectId);
+  const { mutate: startScan, isPending, error: scanError } = useStartScan(currentProjectId);
   
   const [searchParams, setSearchParams] = useSearchParams();
   const selectedFolderId = searchParams.get("folder_id") ? Number(searchParams.get("folder_id")) : null;
@@ -36,8 +36,11 @@ export function PhotosPage() {
           isLoading={scanLoading}
           onStart={() => startScan()}
           isPending={isPending}
+          mutationError={scanError?.message ?? null}
         />
-        <AIPanel projectId={currentProjectId} />
+        {currentProjectId != null ? (
+          <AIPanel projectId={currentProjectId} />
+        ) : null}
       </div>
       
       <div>

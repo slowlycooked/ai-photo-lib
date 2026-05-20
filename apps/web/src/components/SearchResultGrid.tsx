@@ -67,7 +67,7 @@ export function SearchResultGrid({ query, projectId }: SearchResultGridProps) {
     isLoading,
     isError,
     error,
-  } = useSearch(query, projectId);
+  } = useSearch(query, projectId ?? null);
 
   const sentinelRef = useRef<HTMLDivElement>(null);
   useEffect(() => {

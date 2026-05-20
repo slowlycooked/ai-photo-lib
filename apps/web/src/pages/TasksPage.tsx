@@ -342,7 +342,7 @@ function AISection({ projectId }: { projectId: number | null }) {
 export function TasksPage() {
   const { currentProjectId } = useProjectContext();
   const { data: scanStatus, isLoading: scanLoading } = useScanStatus(currentProjectId);
-  const { mutate: startScan, isPending } = useStartScan(currentProjectId);
+  const { mutate: startScan, isPending, error: scanError } = useStartScan(currentProjectId);
 
   return (
     <main className="max-w-3xl mx-auto px-4 sm:px-6 py-6 space-y-8">
@@ -362,6 +362,7 @@ export function TasksPage() {
           isLoading={scanLoading}
           onStart={() => startScan()}
           isPending={isPending}
+          mutationError={scanError?.message ?? null}
         />
       </section>
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import List, Optional
 
+import sqlalchemy as sa
 from sqlalchemy import BigInteger, Boolean, Float, ForeignKey, Integer, JSON, Text, TIMESTAMP, func
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import Mapped, mapped_column
@@ -12,8 +13,15 @@ from ..database import Base
 
 class PhotoAIAnalysis(Base):
     __tablename__ = "photo_ai_analysis"
+    __table_args__ = (
+        sa.UniqueConstraint("project_id", "photo_id", name="uq_photo_ai_analysis_project_photo"),
+        sa.Index("ix_photo_ai_analysis_project_created_at", "project_id", "created_at"),
+    )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    project_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True
+    )
     photo_id: Mapped[int] = mapped_column(
         BigInteger, ForeignKey("photos.id", ondelete="CASCADE"), nullable=False
     )
@@ -65,8 +73,8 @@ class AIJob(Base):
     photo_id: Mapped[int] = mapped_column(
         BigInteger, ForeignKey("photos.id", ondelete="CASCADE"), nullable=False
     )
-    project_id: Mapped[Optional[int]] = mapped_column(
-        BigInteger, ForeignKey("projects.id", ondelete="CASCADE"), nullable=True, index=True
+    project_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True
     )
     job_type: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(Text, server_default="queued", nullable=False)

@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import mimetypes
+import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -196,6 +197,17 @@ def _image_size(path: str) -> Tuple[Optional[int], Optional[int]]:
         return None, None
 
 
+def _is_writable_directory(path: Path) -> bool:
+    """Best-effort check whether a directory is writable by this process."""
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(dir=path, delete=True):
+            pass
+        return True
+    except Exception:
+        return False
+
+
 # ---------------------------------------------------------------------------
 # Core processing
 # ---------------------------------------------------------------------------
@@ -204,37 +216,52 @@ def _process_file(
     db: Session,
     file_path: Path,
     state: dict[str, Any],
-    project_id: Optional[int] = None,
+    project_id: int,
+    thumbnail_root: Optional[str] = None,
+    library_root: Optional[Path] = None,
 ) -> None:
+    """Process one image file within the scope of a specific project.
+
+    All reads and writes are strictly scoped to `project_id`.
+    The same physical file path in two different projects results in two
+    independent Photo rows — no cross-project ownership transfer.
+    """
     path_str = str(file_path)
     stat = file_path.stat()
 
-    # 计算 relative_path 和 folder_path
+    # Compute project-relative folder info.
     relative_path = None
     folder_path = None
     folder_id = None
-    if project_id is not None:
-        from ..models.project import Project
-        project = db.query(Project).filter(Project.id == project_id).first()
-        if project:
-            relative_path, folder_path = build_relative_paths(project.photo_library_path, file_path)
-            folder_cache = state.setdefault("_folder_cache", {})
-            folder = ensure_folder_path(db, project_id, folder_path, folder_cache)
-            folder_id = folder.id
+    from ..models.project import Project
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if project:
+        relative_base = str(library_root) if library_root else project.photo_library_path
+        relative_path, folder_path = build_relative_paths(relative_base, file_path)
+        folder_cache = state.setdefault("_folder_cache", {})
+        folder = ensure_folder_path(db, project_id, folder_path, folder_cache)
+        folder_id = folder.id
 
-    existing: Optional[Photo] = db.query(Photo).filter(Photo.file_path == path_str).first()
+    # Scope the lookup to this project — the same path is allowed in multiple
+    # projects; we must never touch a row owned by a different project.
+    existing: Optional[Photo] = (
+        db.query(Photo)
+        .filter(
+            Photo.project_id == project_id,
+            Photo.file_path == path_str,
+            Photo.deleted_at.is_(None),
+        )
+        .first()
+    )
     file_hash = _compute_hash(path_str)
     if existing and existing.file_hash == file_hash:
         dirty = False
         if not existing.thumbnail_path or not Path(existing.thumbnail_path).exists():
-            new_thumb = generate_thumbnail(path_str)
+            new_thumb = generate_thumbnail(path_str, thumbnail_root=thumbnail_root, project_id=project_id)
             if new_thumb:
                 existing.thumbnail_path = new_thumb
                 dirty = True
-        if project_id is not None and existing.project_id is None:
-            existing.project_id = project_id
-            dirty = True
-        # 新增：补齐 folder 字段
+        # Update folder fields if stale (e.g. file was moved within the library).
         if folder_id and (existing.folder_id != folder_id or existing.relative_path != relative_path or existing.folder_path != folder_path):
             existing.folder_id = folder_id
             existing.relative_path = relative_path
@@ -255,7 +282,7 @@ def _process_file(
     exif = _extract_exif(path_str)
     # File content has changed (hash differs) — force thumbnail regeneration so
     # the displayed thumbnail always matches the current file on disk.
-    thumbnail_path = generate_thumbnail(path_str, force=True)
+    thumbnail_path = generate_thumbnail(path_str, force=True, thumbnail_root=thumbnail_root, project_id=project_id)
 
     common_fields: dict[str, Any] = {
         "file_hash": file_hash,
@@ -282,9 +309,6 @@ def _process_file(
     if existing:
         for k, v in common_fields.items():
             setattr(existing, k, v)
-        if project_id is not None:
-            existing.project_id = project_id
-        # 新增：补齐 folder 字段
         if folder_id:
             existing.folder_id = folder_id
             existing.relative_path = relative_path
@@ -375,7 +399,7 @@ def scan_directory(db: Session) -> None:
             from .folder_service import recompute_project_folder_counts
             from ..models.project import Project
 
-            # 重新计算所有项目的文件夹计数，确保数据一致性
+            # Legacy scan touches all projects — recompute all.
             all_projects = db.query(Project).filter(Project.deleted_at.is_(None)).all()
             for proj in all_projects:
                 try:
@@ -431,6 +455,39 @@ def scan_project(db: Session, project_id: int) -> None:
     )
 
     library = Path(project.photo_library_path)
+    resolved_library = False
+    if not library.exists() and project.is_default:
+        # Compatibility fallback for local runs where DB still stores container
+        # path (/photos) while runtime config points to host path.
+        configured_default = Path(settings.photo_library_path)
+        if configured_default.exists():
+            logger.warning(
+                "Project %d library path %s not found; fallback to settings.photo_library_path=%s",
+                project_id,
+                library,
+                configured_default,
+            )
+            library = configured_default
+            resolved_library = True
+
+    if not library.exists() and project.is_default:
+        configured_host = Path(settings.host_photo_library_path)
+        if configured_host.exists():
+            logger.warning(
+                "Project %d library path %s not found; fallback to settings.host_photo_library_path=%s",
+                project_id,
+                library,
+                configured_host,
+            )
+            library = configured_host
+            resolved_library = True
+
+    if resolved_library and str(library) != project.photo_library_path:
+        # Persist the resolved path so future scans do not rely on fallback.
+        project.photo_library_path = str(library)
+        project.updated_at = datetime.now()
+        db.commit()
+
     if not library.exists():
         state.update(running=False, message=f"Directory not found: {library}")
         logger.error("Project library path does not exist: %s", library)
@@ -438,6 +495,20 @@ def scan_project(db: Session, project_id: int) -> None:
 
     thumb_path = project.thumbnail_path or settings.thumbnail_path
     thumb_root = Path(thumb_path).resolve()
+    if project.is_default and not _is_writable_directory(thumb_root):
+        configured_thumb = Path(settings.thumbnail_path).resolve()
+        if _is_writable_directory(configured_thumb):
+            logger.warning(
+                "Project %d thumbnail path %s is not writable; fallback to settings.thumbnail_path=%s",
+                project_id,
+                thumb_root,
+                configured_thumb,
+            )
+            thumb_root = configured_thumb
+            if str(configured_thumb) != (project.thumbnail_path or ""):
+                project.thumbnail_path = str(configured_thumb)
+                project.updated_at = datetime.now()
+                db.commit()
 
     try:
         for entry in library.rglob("*"):
@@ -455,7 +526,14 @@ def scan_project(db: Session, project_id: int) -> None:
             state["scanned"] += 1
 
             try:
-                _process_file(db, entry, state, project_id)
+                _process_file(
+                    db,
+                    entry,
+                    state,
+                    project_id,
+                    thumbnail_root=str(thumb_root),
+                    library_root=library,
+                )
             except Exception as exc:
                 logger.error("Failed to process %s: %s", entry, exc)
                 state["errors"] += 1

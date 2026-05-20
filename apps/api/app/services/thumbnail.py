@@ -18,23 +18,47 @@ logger = logging.getLogger(__name__)
 SUPPORTED_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif"}
 
 
-def _thumb_path(file_path: str) -> Path:
-    """Derive a stable thumbnail path from the source file path."""
-    digest = hashlib.sha1(file_path.encode()).hexdigest()
+def _thumb_path(
+    file_path: str,
+    *,
+    project_id: Optional[int] = None,
+    thumbnail_root: Optional[str] = None,
+) -> Path:
+    """Derive a stable thumbnail path from the source file path.
+
+    When ``project_id`` is supplied the hash key includes it, so the same
+    physical file can be thumbnailed independently per project.  When
+    ``thumbnail_root`` is supplied it overrides the global setting, allowing
+    per-project thumbnail directories.
+    """
+    hash_key = f"{project_id}:{file_path}" if project_id is not None else file_path
+    digest = hashlib.sha1(hash_key.encode()).hexdigest()
     sub = digest[:2]
-    thumb_dir = Path(settings.thumbnail_path) / sub
+    root = Path(thumbnail_root) if thumbnail_root else Path(settings.thumbnail_path)
+    thumb_dir = root / sub
     thumb_dir.mkdir(parents=True, exist_ok=True)
     return thumb_dir / f"{digest}.jpg"
 
 
-def generate_thumbnail(file_path: str, *, force: bool = False) -> Optional[str]:
+def generate_thumbnail(
+    file_path: str,
+    *,
+    force: bool = False,
+    project_id: Optional[int] = None,
+    thumbnail_root: Optional[str] = None,
+) -> Optional[str]:
     """
     Generate a JPEG thumbnail with the long edge capped at THUMBNAIL_SIZE.
     Returns the thumbnail path on success, None on failure.
     Idempotent by default: skips generation if thumbnail already exists.
     Pass force=True to overwrite an existing (potentially stale) thumbnail.
+
+    ``project_id`` is incorporated into the hash key so that two projects
+    sharing the same physical file get independent thumbnail entries.
+    ``thumbnail_root`` overrides the global thumbnail directory, allowing
+    per-project thumbnail isolation.
     """
-    thumb_path = _thumb_path(file_path)
+    thumb_path = _thumb_path(file_path, project_id=project_id, thumbnail_root=thumbnail_root)
     if thumb_path.exists() and not force:
         return str(thumb_path)
 

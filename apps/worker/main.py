@@ -123,26 +123,47 @@ def _pick_image_path(photo: Photo, db: Session) -> str:
 def _process_job(db: Session, job: AIJob) -> None:
     now = datetime.now(timezone.utc)
 
+    # Reject jobs without project context — they cannot be processed safely.
+    if job.project_id is None:
+        job.status = "failed"
+        job.error_message = (
+            f"Job {job.id} has no project_id and cannot be processed. "
+            "Re-queue the job with a valid project_id."
+        )
+        job.finished_at = now
+        job.updated_at = now
+        db.commit()
+        logger.error(
+            "Job %d rejected: missing project_id (photo_id=%d)",
+            job.id,
+            job.photo_id,
+        )
+        return
+
+    project_id: int = job.project_id
+
     # Mark running
     job.status = "running"
     job.started_at = now
     job.updated_at = now
     db.commit()
 
-    photo = db.query(Photo).filter(Photo.id == job.photo_id).first()
+    photo = (
+        db.query(Photo)
+        .filter(Photo.id == job.photo_id, Photo.project_id == project_id)
+        .first()
+    )
     if not photo:
         job.status = "failed"
-        job.error_message = f"Photo {job.photo_id} not found in database"
+        job.error_message = (
+            f"Photo {job.photo_id} not found in project {project_id}"
+        )
         job.finished_at = datetime.now(timezone.utc)
         job.updated_at = job.finished_at
         db.commit()
         return
 
     try:
-        project_id = job.project_id or photo.project_id
-        if project_id is None:
-            raise ValueError(f"Photo {photo.id} has no project_id")
-
         ai_settings = get_or_create_project_ai_settings(db, project_id)
         prompt_template = get_active_prompt_template(
             db,
@@ -184,12 +205,15 @@ def _process_job(db: Session, job: AIJob) -> None:
             strategy=ai_settings.json_parse_strategy,
         )
 
-        # Delete previous analysis for this photo (upsert via delete+insert)
+        # Delete previous analysis for this photo in this project (upsert via delete+insert).
+        # Scope by both project_id and photo_id to avoid touching other projects.
         db.query(PhotoAIAnalysis).filter(
-            PhotoAIAnalysis.photo_id == photo.id
+            PhotoAIAnalysis.project_id == project_id,
+            PhotoAIAnalysis.photo_id == photo.id,
         ).delete()
 
         analysis = PhotoAIAnalysis(
+            project_id=project_id,
             photo_id=photo.id,
             model_name=ai_settings.model_name,
             model_version=None,

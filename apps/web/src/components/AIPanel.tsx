@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Brain, Loader2, RefreshCw, Play } from "lucide-react";
 import { api } from "@/lib/api";
 
-export function AIPanel({ projectId }: { projectId?: number | null }) {
+export function AIPanel({ projectId }: { projectId: number }) {
   const queryClient = useQueryClient();
   const [message, setMessage] = useState<string | null>(null);
 
@@ -11,7 +11,7 @@ export function AIPanel({ projectId }: { projectId?: number | null }) {
 
   const { data: status, isLoading } = useQuery({
     queryKey: ["ai-status", projectId],
-    queryFn: api.ai.status,
+    queryFn: () => api.projects.aiStatus(projectId),
     refetchInterval: (query) => {
       const d = query.state.data;
       return d && (d.queued > 0 || d.running > 0) ? 3000 : 15000;
@@ -30,24 +30,24 @@ export function AIPanel({ projectId }: { projectId?: number | null }) {
   }, [status, queryClient, projectId]);
 
   const startMutation = useMutation({
-    mutationFn: () => api.ai.startAnalysis(projectId),
+    mutationFn: () => api.projects.startAI(projectId),
     onSuccess: (data) => {
       if (data.created_jobs > 0) {
         setMessage(`已创建 ${data.created_jobs} 个分析任务`);
       } else {
         setMessage("所有照片已在分析队列中，无需重复创建");
       }
-      queryClient.invalidateQueries({ queryKey: ["ai-status"] });
+      queryClient.invalidateQueries({ queryKey: ["ai-status", projectId] });
       setTimeout(() => setMessage(null), 5000);
     },
     onError: (err: Error) => setMessage(`启动失败：${err.message}`),
   });
 
   const retryMutation = useMutation({
-    mutationFn: () => api.ai.retryFailed(),
+    mutationFn: () => api.projects.retryFailedAiJobs(projectId),
     onSuccess: (data) => {
       setMessage(`已重新排队 ${data.retried_jobs} 个失败任务`);
-      queryClient.invalidateQueries({ queryKey: ["ai-status"] });
+      queryClient.invalidateQueries({ queryKey: ["ai-status", projectId] });
       setTimeout(() => setMessage(null), 4000);
     },
     onError: (err: Error) => setMessage(`重试失败：${err.message}`),

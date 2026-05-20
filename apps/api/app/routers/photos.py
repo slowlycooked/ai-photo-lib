@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 from datetime import date, datetime, time
 from typing import Optional
@@ -17,18 +18,30 @@ from ..schemas.ai import AIAnalysisResponse
 from ..schemas.photo import PhotoDetailResponse, PhotoListResponse, PhotoResponse
 from ..services.folder_service import apply_folder_filter
 
+logger = logging.getLogger(__name__)
+
+# DEPRECATED: /photos and /photos/timeline are superseded by project-scoped
+# endpoints under /projects/{project_id}/photos[/timeline].
+# The per-photo endpoints (/photos/{id}/*) remain active.
 router = APIRouter(prefix="/photos", tags=["photos"])
+
+_LIST_DEPRECATION_MSG = (
+    "Global /photos and /photos/timeline endpoints are deprecated. "
+    "Use /projects/{project_id}/photos[/timeline] instead."
+)
 
 
 # ─── Timeline ────────────────────────────────────────────────────────────────
 
-@router.get("/timeline")
+@router.get("/timeline", deprecated=True)
 def get_timeline(
     project_id: Optional[int] = None,
     folder_id: Optional[int] = None,
     folder_scope: str = "subtree",
     db: Session = Depends(get_db),
 ):
+    """[DEPRECATED] Use GET /projects/{project_id}/photos/timeline instead."""
+    logger.warning(_LIST_DEPRECATION_MSG)
     base_query = db.query(Photo).filter(Photo.deleted_at.is_(None), Photo.taken_at.is_not(None))
     if project_id is not None:
         base_query = base_query.filter(Photo.project_id == project_id)
@@ -67,7 +80,7 @@ def get_timeline(
 
 # ─── List ─────────────────────────────────────────────────────────────────────
 
-@router.get("", response_model=PhotoListResponse)
+@router.get("", response_model=PhotoListResponse, deprecated=True)
 def list_photos(
     page: int = 1,
     page_size: int = 50,
@@ -82,6 +95,8 @@ def list_photos(
     folder_scope: str = "subtree",
     db: Session = Depends(get_db),
 ):
+    """[DEPRECATED] Use GET /projects/{project_id}/photos instead."""
+    logger.warning(_LIST_DEPRECATION_MSG)
     page_size = max(1, min(page_size, 100))
     offset = (page - 1) * page_size
 

@@ -3,11 +3,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import OperationalError
 
+from ._version import APP_VERSION
 from .routers import health, photos, scan, ai, search, tags, settings, projects, folders
 
 app = FastAPI(
     title="AI Photo Library API",
-    version="0.6.0",
+    version=APP_VERSION,
     description="Private AI-powered photo library for Synology NAS",
 )
 

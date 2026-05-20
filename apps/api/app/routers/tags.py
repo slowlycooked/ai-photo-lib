@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import Optional
 
 from fastapi import APIRouter, Depends
@@ -9,7 +10,15 @@ from sqlalchemy.orm import Session
 
 from ..database import get_db
 
-router = APIRouter(prefix="/tags", tags=["tags"])
+logger = logging.getLogger(__name__)
+
+# DEPRECATED: Use /projects/{project_id}/tags instead.
+router = APIRouter(prefix="/tags", tags=["tags [deprecated]"])
+
+_DEPRECATION_MSG = (
+    "Global /tags endpoint is deprecated. "
+    "Use /projects/{project_id}/tags instead."
+)
 
 
 class TagCount(BaseModel):
@@ -51,11 +60,13 @@ def _count_array_field(
     return [TagCount(tag=row[0], count=row[1]) for row in rows]
 
 
-@router.get("", response_model=TagsResponse)
+@router.get("", response_model=TagsResponse, deprecated=True)
 def list_tags(
     project_id: Optional[int] = None,
     db: Session = Depends(get_db),
 ):
+    """[DEPRECATED] Use GET /projects/{project_id}/tags instead."""
+    logger.warning(_DEPRECATION_MSG)
     return TagsResponse(
         scene_tags=_count_array_field(db, "scene_tags", project_id=project_id),
         object_tags=_count_array_field(db, "object_tags", project_id=project_id),

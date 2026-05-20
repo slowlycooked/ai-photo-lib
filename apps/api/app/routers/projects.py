@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import threading
 import time
-from datetime import datetime
+from datetime import date, datetime, time as time_
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import func
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import extract, func
 from sqlalchemy.orm import Session
 
 from ..config import settings
@@ -35,6 +35,7 @@ from ..services.json_parser import parse_model_json_output
 from ..services.project_ai_service import (
     TASK_IMAGE_ANALYSIS,
     activate_prompt_template,
+    build_default_template,
     default_output_schema,
     get_active_prompt_template,
     get_or_create_project_ai_settings,
@@ -47,8 +48,12 @@ from ..schemas.project import (
     ProjectResponse,
     ProjectUpdate,
 )
+from ..schemas.photo import PhotoListResponse
 from ..schemas.scan import ScanStatus
+from ..schemas.search import SearchResponse
+from ..services.folder_service import apply_folder_filter
 from ..services.scanner import get_project_scan_state, scan_project
+from ..services.search_service import search_photos
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
@@ -501,16 +506,17 @@ def reset_project_prompt_template_default(
         or 0
     ) + 1
 
+    # Build the template from the shared default in project_ai_service so that
+    # the reset-default operation always reflects the service-level default and
+    # not any business-specific text hardcoded in this router.
+    base = build_default_template(project_id)
     template = ProjectPromptTemplate(
         project_id=project_id,
         name=f"默认图片分析模板 v{next_version}",
         task_type=TASK_IMAGE_ANALYSIS,
-        system_prompt=None,
-        user_prompt=(
-            "请重点识别旅行、户外、家庭聚会、城市地标，"
-            "并尽量从文件夹路径和拍摄信息中提取地点线索。"
-        ),
-        output_schema=default_output_schema(),
+        system_prompt=base.system_prompt,
+        user_prompt=base.user_prompt,
+        output_schema=base.output_schema,
         is_active=False,
         version=next_version,
     )
@@ -607,6 +613,160 @@ def test_project_prompt_template(
             error_code="parse_error",
             duration_ms=duration_ms,
         )
+
+
+# ─── Photos ───────────────────────────────────────────────────────────────────
+
+@router.get("/{project_id}/photos", response_model=PhotoListResponse)
+def list_project_photos(
+    project_id: int,
+    page: int = 1,
+    page_size: int = Query(50, ge=1, le=100),
+    date_from: Optional[date] = Query(None),
+    date_to: Optional[date] = Query(None),
+    folder_id: Optional[int] = None,
+    folder_scope: str = "subtree",
+    db: Session = Depends(get_db),
+):
+    """List photos for a specific project."""
+    _get_or_404(db, project_id)
+    page_size = max(1, min(page_size, 100))
+    offset = (page - 1) * page_size
+
+    base_query = db.query(Photo).filter(
+        Photo.project_id == project_id, Photo.deleted_at.is_(None)
+    )
+    if date_from is not None:
+        base_query = base_query.filter(
+            Photo.taken_at >= datetime.combine(date_from, time_.min)
+        )
+    if date_to is not None:
+        base_query = base_query.filter(
+            Photo.taken_at < datetime.combine(date_to, time_.min)
+        )
+    if folder_id is not None:
+        base_query = apply_folder_filter(base_query, db, project_id, folder_id, folder_scope)
+
+    total = base_query.count()
+    photos = (
+        base_query
+        .order_by(Photo.taken_at.desc().nullslast(), Photo.created_at.desc())
+        .offset(offset)
+        .limit(page_size)
+        .all()
+    )
+    return PhotoListResponse(total=total, page=page, page_size=page_size, items=photos)
+
+
+@router.get("/{project_id}/photos/timeline")
+def get_project_timeline(
+    project_id: int,
+    folder_id: Optional[int] = None,
+    folder_scope: str = "subtree",
+    db: Session = Depends(get_db),
+):
+    """Get monthly photo count timeline for a specific project."""
+    _get_or_404(db, project_id)
+    base_query = db.query(Photo).filter(
+        Photo.project_id == project_id,
+        Photo.deleted_at.is_(None),
+        Photo.taken_at.is_not(None),
+    )
+    if folder_id is not None:
+        base_query = apply_folder_filter(base_query, db, project_id, folder_id, folder_scope)
+
+    rows = (
+        base_query
+        .with_entities(
+            extract("year", Photo.taken_at).label("year"),
+            extract("month", Photo.taken_at).label("month"),
+            func.count(Photo.id).label("count"),
+        )
+        .group_by("year", "month")
+        .order_by(
+            extract("year", Photo.taken_at).desc(),
+            extract("month", Photo.taken_at).desc(),
+        )
+        .all()
+    )
+    return {
+        "items": [
+            {
+                "key": f"{int(r.year)}-{str(int(r.month)).zfill(2)}",
+                "year": int(r.year),
+                "month": int(r.month),
+                "count": r.count,
+            }
+            for r in rows
+        ]
+    }
+
+
+# ─── Search ──────────────────────────────────────────────────────────────────
+
+@router.get("/{project_id}/search", response_model=SearchResponse)
+def project_search(
+    project_id: int,
+    q: str,
+    page: int = 1,
+    page_size: int = 50,
+    folder_id: Optional[int] = None,
+    folder_scope: str = "subtree",
+    db: Session = Depends(get_db),
+):
+    """Search photos within a specific project."""
+    _get_or_404(db, project_id)
+    total, items = search_photos(
+        db, q, page=page, page_size=page_size,
+        project_id=project_id, folder_id=folder_id, folder_scope=folder_scope,
+    )
+    return SearchResponse(query=q, total=total, page=page, page_size=page_size, items=items)
+
+
+# ─── Tags ─────────────────────────────────────────────────────────────────────
+
+from sqlalchemy import text as _sa_text
+from pydantic import BaseModel as _BaseModel
+
+
+class _TagCount(_BaseModel):
+    tag: str
+    count: int
+
+
+class _TagsResponse(_BaseModel):
+    scene_tags: list[_TagCount]
+    object_tags: list[_TagCount]
+    activity_tags: list[_TagCount]
+    quality_tags: list[_TagCount]
+    search_keywords: list[_TagCount]
+
+
+def _count_tags(db: Session, field: str, project_id: int, limit: int = 100) -> list[_TagCount]:
+    sql = _sa_text(
+        f"SELECT unnest(paa.{field}) AS tag, COUNT(*) AS cnt "
+        f"FROM photo_ai_analysis paa "
+        f"WHERE paa.project_id = :pid AND paa.{field} IS NOT NULL "
+        f"GROUP BY tag ORDER BY cnt DESC LIMIT :limit"
+    )
+    rows = db.execute(sql, {"pid": project_id, "limit": limit}).fetchall()
+    return [_TagCount(tag=r[0], count=r[1]) for r in rows]
+
+
+@router.get("/{project_id}/tags", response_model=_TagsResponse)
+def project_tags(
+    project_id: int,
+    db: Session = Depends(get_db),
+):
+    """Get tag counts for a specific project."""
+    _get_or_404(db, project_id)
+    return _TagsResponse(
+        scene_tags=_count_tags(db, "scene_tags", project_id),
+        object_tags=_count_tags(db, "object_tags", project_id),
+        activity_tags=_count_tags(db, "activity_tags", project_id),
+        quality_tags=_count_tags(db, "quality_tags", project_id),
+        search_keywords=_count_tags(db, "search_keywords", project_id),
+    )
 
 
 # ─── Helper ──────────────────────────────────────────────────────────────────

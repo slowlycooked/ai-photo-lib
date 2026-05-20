@@ -1,7 +1,8 @@
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import BigInteger, Double, ForeignKey, Integer, JSON, Text, TIMESTAMP, func
+import sqlalchemy as sa
+from sqlalchemy import BigInteger, Double, ForeignKey, Index, Integer, JSON, Text, TIMESTAMP, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from ..database import Base
@@ -9,12 +10,18 @@ from ..database import Base
 
 class Photo(Base):
     __tablename__ = "photos"
+    __table_args__ = (
+        sa.UniqueConstraint("project_id", "file_path", name="uq_photos_project_file_path"),
+        Index("ix_photos_project_taken_at", "project_id", "taken_at"),
+        Index("ix_photos_project_status", "project_id", "status"),
+        Index("ix_photos_project_folder_taken_at", "project_id", "folder_id", "taken_at"),
+    )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    project_id: Mapped[Optional[int]] = mapped_column(
-        BigInteger, ForeignKey("projects.id", ondelete="SET NULL"), nullable=True, index=True
+    project_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    file_path: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
+    file_path: Mapped[str] = mapped_column(Text, nullable=False)
     file_name: Mapped[str] = mapped_column(Text, nullable=False)
     file_hash: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     file_size: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)

@@ -434,6 +434,34 @@ export const api = {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       }),
+    search: (id: number, q: string, page = 1, pageSize = 50, folderId?: number | null, folderScope: FolderScope = "subtree") =>
+      request<SearchResponse>(
+        `/projects/${id}/search${qs({ q, page, page_size: pageSize, folder_id: folderId, folder_scope: folderScope })}`
+      ),
+    tags: (id: number) => request<TagsResponse>(`/projects/${id}/tags`),
+    photos: (
+      id: number,
+      page = 1,
+      pageSize = 50,
+      dateFrom?: string | null,
+      dateTo?: string | null,
+      folderId?: number | null,
+      folderScope: FolderScope = "subtree",
+    ) =>
+      request<PhotoListResponse>(
+        `/projects/${id}/photos${qs({
+          page,
+          page_size: pageSize,
+          date_from: dateFrom,
+          date_to: dateTo,
+          folder_id: folderId,
+          folder_scope: folderScope,
+        })}`
+      ),
+    timeline: (id: number, folderId?: number | null, folderScope: FolderScope = "subtree") =>
+      request<TimelineResponse>(
+        `/projects/${id}/photos/timeline${qs({ folder_id: folderId, folder_scope: folderScope })}`
+      ),
   },
 
   photos: {

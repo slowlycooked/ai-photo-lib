@@ -45,9 +45,9 @@ services:
       - "127.0.0.1:${LLAMA_HOST_PORT:-18082}:8082"
 
     command: >
-      -m /models/MiniCPM-V-4_6-Q4_K_M.gguf
-      --mmproj /models/mmproj-model-f16.gguf
-      --alias MiniCPM-V-4.6
+      -m ${LLAMA_MODEL_PATH}
+      --mmproj ${LLAMA_MMPROJ_PATH}
+      --alias ${LLAMA_MODEL_ALIAS}
       --host 0.0.0.0
       --port 8082
       -c ${LLAMA_CTX:-2048}

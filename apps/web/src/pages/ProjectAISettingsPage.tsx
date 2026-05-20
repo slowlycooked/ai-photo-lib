@@ -175,7 +175,7 @@ export function ProjectAISettingsPage() {
 
   const { data: photosData } = useQuery({
     queryKey: ["project-test-photos", selectedProjectId],
-    queryFn: () => api.photos.list(1, 200, selectedProjectId),
+    queryFn: () => api.projects.photos(selectedProjectId!, 1, 200),
     enabled: selectedProjectId !== null,
     staleTime: 30_000,
   });

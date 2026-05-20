@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -19,15 +20,30 @@ from ..schemas.ai import (
     StartAnalysisResponse,
 )
 
-router = APIRouter(prefix="/ai", tags=["ai"])
+logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# DEPRECATED: All endpoints in this router are superseded by the project-scoped
+# equivalents under /projects/{project_id}/ai/...  These routes will be removed
+# in a future release.  Do NOT add new features here.
+# ---------------------------------------------------------------------------
+
+router = APIRouter(prefix="/ai", tags=["ai [deprecated]"])
+
+_DEPRECATION_MSG = (
+    "Global /ai/* endpoints are deprecated. "
+    "Use /projects/{project_id}/ai/* instead."
+)
 
 
-@router.post("/analyze/start", response_model=StartAnalysisResponse)
+@router.post("/analyze/start", response_model=StartAnalysisResponse,
+             deprecated=True)
 def start_analysis(
     project_id: Optional[int] = None,
     db: Session = Depends(get_db),
 ):
-    """Create queued AI jobs for photos that have no analysis yet."""
+    """[DEPRECATED] Use POST /projects/{project_id}/ai/analyze/start instead."""
+    logger.warning(_DEPRECATION_MSG)
     # Sub-query: photo_ids that already have a queued or running job
     active_photo_ids = (
         db.query(AIJob.photo_id)
@@ -64,8 +80,10 @@ def start_analysis(
     return StartAnalysisResponse(created_jobs=count, message="AI analysis jobs created")
 
 
-@router.get("/status", response_model=AIStatusResponse)
+@router.get("/status", response_model=AIStatusResponse, deprecated=True)
 def get_ai_status(db: Session = Depends(get_db)):
+    """[DEPRECATED] Use GET /projects/{project_id}/ai/status instead."""
+    logger.warning(_DEPRECATION_MSG)
     rows = (
         db.query(AIJob.status, func.count(AIJob.id))
         .group_by(AIJob.status)
@@ -82,13 +100,15 @@ def get_ai_status(db: Session = Depends(get_db)):
     )
 
 
-@router.get("/jobs", response_model=AIJobListResponse)
+@router.get("/jobs", response_model=AIJobListResponse, deprecated=True)
 def list_ai_jobs(
     status: Optional[str] = None,
     limit: int = 50,
     offset: int = 0,
     db: Session = Depends(get_db),
 ):
+    """[DEPRECATED] Use GET /projects/{project_id}/ai/jobs instead."""
+    logger.warning(_DEPRECATION_MSG)
     limit = max(1, min(limit, 200))
     query = db.query(AIJob, Photo.file_name).join(
         Photo, AIJob.photo_id == Photo.id
@@ -125,8 +145,10 @@ def list_ai_jobs(
     return AIJobListResponse(total=total, items=items)
 
 
-@router.post("/jobs/retry-failed", response_model=RetryFailedResponse)
+@router.post("/jobs/retry-failed", response_model=RetryFailedResponse, deprecated=True)
 def retry_failed_jobs(db: Session = Depends(get_db)):
+    """[DEPRECATED] Use POST /projects/{project_id}/ai/jobs/retry-failed instead."""
+    logger.warning(_DEPRECATION_MSG)
     jobs = (
         db.query(AIJob)
         .filter(
@@ -147,9 +169,10 @@ def retry_failed_jobs(db: Session = Depends(get_db)):
     return RetryFailedResponse(retried_jobs=count, message="Failed jobs re-queued")
 
 
-@router.delete("/jobs/clear-failed", response_model=dict)
+@router.delete("/jobs/clear-failed", response_model=dict, deprecated=True)
 def clear_failed_jobs(db: Session = Depends(get_db)):
-    """Delete all failed AI jobs from the database."""
+    """[DEPRECATED] Use DELETE /projects/{project_id}/ai/jobs/failed instead."""
+    logger.warning(_DEPRECATION_MSG)
     failed_jobs = db.query(AIJob).filter(AIJob.status == "failed")
     count = failed_jobs.count()
     failed_jobs.delete(synchronize_session=False)
