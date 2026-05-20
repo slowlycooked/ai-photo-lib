@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { Header } from "@/components/Header";
 import { PhotosPage } from "@/pages/PhotosPage";
@@ -7,8 +8,34 @@ import { TasksPage } from "@/pages/TasksPage";
 import { SettingsPage } from "@/pages/SettingsPage";
 import { ProjectAISettingsPage } from "@/pages/ProjectAISettingsPage";
 import { ProjectProvider } from "@/contexts/ProjectContext";
+import { api } from "@/lib/api";
+import { configureFrontendLogger, logger } from "@/lib/logger";
 
 export default function App() {
+  useEffect(() => {
+    let cancelled = false;
+
+    api.settings
+      .getDebug()
+      .then((cfg) => {
+        if (cancelled) return;
+        configureFrontendLogger(cfg);
+        logger.debug("frontend logger configured", {
+          frontend_log_level: cfg.frontend_log_level,
+        });
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return;
+        logger.warn("failed to load debug settings for frontend logger", {
+          error,
+        });
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   return (
     <BrowserRouter>
       <ProjectProvider>

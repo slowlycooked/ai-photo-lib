@@ -1,7 +1,11 @@
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy.orm import Session
+from ..schemas.debug_config import DebugConfig
+from ..services.runtime_settings_service import RuntimeSettingsService
+from ..database import get_db
 
 from ..config import settings
 
@@ -33,3 +37,15 @@ def get_settings():
         ai_worker_concurrency=settings.ai_worker_concurrency,
         ai_max_retries=settings.ai_max_retries,
     )
+
+
+@router.get("/debug", response_model=DebugConfig)
+def get_debug_config(db: Session = Depends(get_db)):
+    config = RuntimeSettingsService.get_debug_config(db)
+    return config
+
+@router.put("/debug", response_model=DebugConfig)
+def update_debug_config(cfg: DebugConfig, db: Session = Depends(get_db)):
+    RuntimeSettingsService.set_debug_config(db, cfg)
+    RuntimeSettingsService.clear_cache()
+    return cfg

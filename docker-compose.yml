@@ -1,7 +1,7 @@
 services:
   postgres:
     image: pgvector/pgvector:pg16
-    container_name: ai-photo-lib-postgres
+    container_name: ai-photo-postgres
     restart: unless-stopped
     environment:
       POSTGRES_DB: photo
@@ -19,7 +19,7 @@ services:
 
   redis:
     image: redis:7-alpine
-    container_name: ai-photo-lib-redis
+    container_name: ai-photo-redis
     restart: unless-stopped
     volumes:
       - ${DATA_DIR:-/volume1/docker/ai-photo-lib}/redis:/data
@@ -33,7 +33,7 @@ services:
 
   llama:
     image: ai-photo-lib-llama:ds916-cpu
-    container_name: ai-photo-lib-llama
+    container_name: ai-photo-llama
     restart: unless-stopped
 
     volumes:
@@ -67,7 +67,7 @@ services:
 
   api:
     image: ai-photo-lib-api:ds916
-    container_name: ai-photo-lib-api
+    container_name: ai-photo-api
     restart: unless-stopped
     environment:
       DATABASE_URL: postgresql+psycopg://photo:${POSTGRES_PASSWORD:-photo}@postgres:5432/photo
@@ -98,7 +98,7 @@ services:
 
   web:
     image: ai-photo-lib-web:ds916
-    container_name: ai-photo-lib-web
+    container_name: ai-photo-web
     restart: unless-stopped
     ports:
       - "${WEB_PORT:-18088}:80"
@@ -107,7 +107,7 @@ services:
 
   worker:
     image: ai-photo-lib-worker:ds916
-    container_name: ai-photo-lib-worker
+    container_name: ai-photo-worker
     restart: unless-stopped
     environment:
       DATABASE_URL: postgresql+psycopg://photo:${POSTGRES_PASSWORD:-photo}@postgres:5432/photo

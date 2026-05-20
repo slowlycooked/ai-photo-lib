@@ -9,7 +9,7 @@ from typing import List, Literal, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
-from sqlalchemy import and_, extract, func
+from sqlalchemy import and_, extract, func, inspect
 from sqlalchemy.orm import Session
 
 from ..config import settings
@@ -66,6 +66,7 @@ from ..services.folder_service import apply_folder_filter
 from ..services.scanner import get_project_scan_state, scan_project
 from ..services.search_service import search_photos
 from ..services.thumbnail import generate_thumbnail
+from ..services.embedding_service import is_embedding_stale
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
@@ -219,22 +220,31 @@ def start_project_ai(project_id: int, db: Session = Depends(get_db)):
     return StartAnalysisResponse(created_jobs=count, message="AI analysis jobs created")
 
 
-@router.post("/{project_id}/ai/embeddings/rebuild", response_model=StartAnalysisResponse)
-def rebuild_project_embeddings(project_id: int, db: Session = Depends(get_db)):
+@router.post("/{project_id}/ai/embeddings/rebuild", response_model=dict)
+def rebuild_project_embeddings(
+    project_id: int,
+    force: bool = False,
+    only_failed: bool = False,
+    db: Session = Depends(get_db),
+):
     _get_or_404(db, project_id)
 
-    active_embed_photo_ids = (
+    ai_settings = get_or_create_project_ai_settings(db, project_id)
+    active_embed_photo_ids = {
+        photo_id
+        for (photo_id,) in (
         db.query(AIJob.photo_id)
         .filter(
             AIJob.project_id == project_id,
             AIJob.job_type == "embed",
             AIJob.status.in_(["queued", "running"]),
         )
-        .subquery()
-    )
+        .all()
+        )
+    }
 
     rows = (
-        db.query(PhotoAIAnalysis.photo_id)
+        db.query(PhotoAIAnalysis, PhotoEmbedding)
         .outerjoin(
             PhotoEmbedding,
             and_(
@@ -244,14 +254,43 @@ def rebuild_project_embeddings(project_id: int, db: Session = Depends(get_db)):
         )
         .filter(
             PhotoAIAnalysis.project_id == project_id,
-            PhotoEmbedding.photo_id.is_(None),
-            PhotoAIAnalysis.photo_id.not_in(active_embed_photo_ids),
         )
         .all()
     )
 
-    count = 0
-    for (photo_id,) in rows:
+    created_jobs = 0
+    skipped_existing_jobs = 0
+    skipped_up_to_date = 0
+    total_checked = len(rows)
+
+    resolved_model = (
+        settings.embedding_model
+        or ai_settings.model_name
+        or settings.openai_model
+    )
+
+    for analysis, embedding in rows:
+        photo_id = analysis.photo_id
+        if photo_id in active_embed_photo_ids:
+            skipped_existing_jobs += 1
+            continue
+
+        if force:
+            should_enqueue = True
+        elif only_failed:
+            should_enqueue = embedding is not None and embedding.embedding_status == "failed"
+        else:
+            should_enqueue = is_embedding_stale(
+                analysis,
+                embedding,
+                model_name=resolved_model,
+                dimension=settings.embedding_dimension,
+            )
+
+        if not should_enqueue:
+            skipped_up_to_date += 1
+            continue
+
         db.add(
             AIJob(
                 project_id=project_id,
@@ -260,10 +299,16 @@ def rebuild_project_embeddings(project_id: int, db: Session = Depends(get_db)):
                 status="queued",
             )
         )
-        count += 1
+        created_jobs += 1
 
     db.commit()
-    return StartAnalysisResponse(created_jobs=count, message="Embedding rebuild jobs created")
+    return {
+        "created_jobs": created_jobs,
+        "skipped_existing_jobs": skipped_existing_jobs,
+        "skipped_up_to_date": skipped_up_to_date,
+        "total_checked": total_checked,
+        "message": "Embedding rebuild jobs processed",
+    }
 
 
 # ─── AI restart ──────────────────────────────────────────────────────────────
@@ -373,13 +418,146 @@ def get_project_ai_status(project_id: int, db: Session = Depends(get_db)):
     )
     counts: dict[str, int] = {status: cnt for status, cnt in rows}
     total = sum(counts.values())
+
+    analyzed_count = (
+        db.query(func.count(PhotoAIAnalysis.id))
+        .filter(PhotoAIAnalysis.project_id == project_id)
+        .scalar()
+        or 0
+    )
+    embedding_ready_count, embedding_failed_count, embedding_stale_count = _get_project_embedding_counts(
+        db, project_id
+    )
+    embedding_missing_count = max(
+        0,
+        analyzed_count - (embedding_ready_count + embedding_failed_count + embedding_stale_count),
+    )
+
     return AIStatusResponse(
         queued=counts.get("queued", 0),
         running=counts.get("running", 0),
         success=counts.get("success", 0),
         failed=counts.get("failed", 0),
         total=total,
+        analyzed_count=analyzed_count,
+        embedding_ready_count=embedding_ready_count,
+        embedding_missing_count=embedding_missing_count,
+        embedding_failed_count=embedding_failed_count,
+        embedding_stale_count=embedding_stale_count,
     )
+
+
+def _get_project_embedding_counts(db: Session, project_id: int) -> tuple[int, int, int]:
+    """Return (ready, failed, stale) with compatibility for legacy schemas.
+
+    Older databases may not have `photo_embeddings.id`, `project_id`, or
+    `embedding_status`. In those cases we keep project isolation by joining
+    through photos and treat legacy rows as "ready" only.
+    """
+    embedding_columns = _get_photo_embeddings_columns(db)
+    if not embedding_columns:
+        return 0, 0, 0
+
+    has_project_id = "project_id" in embedding_columns
+    has_embedding_status = "embedding_status" in embedding_columns
+
+    if has_embedding_status:
+        if has_project_id:
+            ready_count = (
+                db.query(func.count())
+                .select_from(PhotoEmbedding)
+                .filter(
+                    PhotoEmbedding.project_id == project_id,
+                    PhotoEmbedding.embedding_status == "ready",
+                )
+                .scalar()
+                or 0
+            )
+            failed_count = (
+                db.query(func.count())
+                .select_from(PhotoEmbedding)
+                .filter(
+                    PhotoEmbedding.project_id == project_id,
+                    PhotoEmbedding.embedding_status == "failed",
+                )
+                .scalar()
+                or 0
+            )
+            stale_count = (
+                db.query(func.count())
+                .select_from(PhotoEmbedding)
+                .filter(
+                    PhotoEmbedding.project_id == project_id,
+                    PhotoEmbedding.embedding_status == "stale",
+                )
+                .scalar()
+                or 0
+            )
+        else:
+            ready_count = (
+                db.query(func.count())
+                .select_from(PhotoEmbedding)
+                .join(Photo, PhotoEmbedding.photo_id == Photo.id)
+                .filter(
+                    Photo.project_id == project_id,
+                    PhotoEmbedding.embedding_status == "ready",
+                )
+                .scalar()
+                or 0
+            )
+            failed_count = (
+                db.query(func.count())
+                .select_from(PhotoEmbedding)
+                .join(Photo, PhotoEmbedding.photo_id == Photo.id)
+                .filter(
+                    Photo.project_id == project_id,
+                    PhotoEmbedding.embedding_status == "failed",
+                )
+                .scalar()
+                or 0
+            )
+            stale_count = (
+                db.query(func.count())
+                .select_from(PhotoEmbedding)
+                .join(Photo, PhotoEmbedding.photo_id == Photo.id)
+                .filter(
+                    Photo.project_id == project_id,
+                    PhotoEmbedding.embedding_status == "stale",
+                )
+                .scalar()
+                or 0
+            )
+        return ready_count, failed_count, stale_count
+
+    # Legacy schema has no status column; rows are treated as ready embeddings.
+    if has_project_id:
+        ready_count = (
+            db.query(func.count())
+            .select_from(PhotoEmbedding)
+            .filter(PhotoEmbedding.project_id == project_id)
+            .scalar()
+            or 0
+        )
+    else:
+        ready_count = (
+            db.query(func.count())
+            .select_from(PhotoEmbedding)
+            .join(Photo, PhotoEmbedding.photo_id == Photo.id)
+            .filter(Photo.project_id == project_id)
+            .scalar()
+            or 0
+        )
+    return ready_count, 0, 0
+
+
+def _get_photo_embeddings_columns(db: Session) -> set[str]:
+    try:
+        return {
+            column["name"]
+            for column in inspect(db.get_bind()).get_columns("photo_embeddings")
+        }
+    except Exception:
+        return set()
 
 
 @router.get("/{project_id}/ai/jobs", response_model=AIJobListResponse)
@@ -987,6 +1165,7 @@ def project_search(
     page: int = 1,
     page_size: int = 50,
     mode: str = Query("hybrid", pattern="^(keyword|vector|hybrid)$"),
+    debug: bool = False,
     folder_id: Optional[int] = None,
     folder_scope: str = "subtree",
     db: Session = Depends(get_db),
@@ -995,7 +1174,7 @@ def project_search(
     _get_or_404(db, project_id)
     total, items = search_photos(
         db, q, page=page, page_size=page_size,
-        project_id=project_id, folder_id=folder_id, folder_scope=folder_scope, mode=mode,
+        project_id=project_id, folder_id=folder_id, folder_scope=folder_scope, mode=mode, debug=debug,
     )
     return SearchResponse(query=q, total=total, page=page, page_size=page_size, items=items)
 

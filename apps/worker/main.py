@@ -328,9 +328,7 @@ def _process_embedding_job(db: Session, job: AIJob, photo: Photo, project_id: in
     )
     if not analysis:
         job.status = "failed"
-        job.error_message = (
-            f"Cannot build embedding: no analysis found for photo {photo.id} in project {project_id}"
-        )
+        job.error_message = "No AI analysis found"
         job.finished_at = datetime.now(timezone.utc)
         job.updated_at = job.finished_at
         db.commit()
@@ -353,7 +351,10 @@ def _process_embedding_job(db: Session, job: AIJob, photo: Photo, project_id: in
         db.commit()
     except Exception as exc:  # noqa: BLE001
         db.rollback()
-        is_retryable = not isinstance(exc, EmbeddingRequestError) or exc.retryable
+        if isinstance(exc, EmbeddingRequestError):
+            is_retryable = exc.retryable
+        else:
+            is_retryable = True
         job.retry_count = (job.retry_count or 0) + 1
         error_detail = f"{type(exc).__name__}: {exc}"
         job.error_message = error_detail[:_MAX_ERROR_MESSAGE_LEN]

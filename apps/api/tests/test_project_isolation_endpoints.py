@@ -123,12 +123,33 @@ CREATE TABLE ai_jobs (
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE photo_embeddings (
+    id INTEGER PRIMARY KEY,
+    project_id INTEGER NOT NULL,
+    photo_id INTEGER NOT NULL,
+    caption_embedding TEXT,
+    tag_embedding TEXT,
+    ocr_embedding TEXT,
+    caption_text_hash TEXT,
+    tag_text_hash TEXT,
+    ocr_text_hash TEXT,
+    embedding_model TEXT,
+    embedding_dimension INTEGER,
+    embedding_status TEXT NOT NULL DEFAULT 'ready',
+    embedding_error TEXT,
+    embedded_at TEXT,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(project_id, photo_id)
+);
+
 CREATE TABLE project_prompt_templates (
     id INTEGER PRIMARY KEY,
     project_id INTEGER NOT NULL,
     name TEXT NOT NULL,
     task_type TEXT NOT NULL DEFAULT 'image_analysis',
+    system_prompt TEXT,
     user_prompt TEXT NOT NULL,
+    output_schema TEXT,
     is_active BOOLEAN NOT NULL DEFAULT 0,
     version INTEGER NOT NULL DEFAULT 1,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -139,8 +160,17 @@ CREATE TABLE project_prompt_templates (
 CREATE TABLE project_ai_settings (
     id INTEGER PRIMARY KEY,
     project_id INTEGER NOT NULL UNIQUE,
+    provider TEXT NOT NULL DEFAULT 'llama-server',
     endpoint_url TEXT NOT NULL,
     model_name TEXT NOT NULL,
+    temperature REAL NOT NULL DEFAULT 0,
+    top_p REAL NOT NULL DEFAULT 0.8,
+    max_tokens INTEGER NOT NULL DEFAULT 1024,
+    retry_count INTEGER NOT NULL DEFAULT 1,
+    output_language TEXT NOT NULL DEFAULT 'zh-CN',
+    json_parse_strategy TEXT NOT NULL DEFAULT 'auto_extract',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     active_prompt_template_id INTEGER,
     CONSTRAINT fk_project_ai_settings_active_prompt_same_project
         FOREIGN KEY (project_id, active_prompt_template_id)
@@ -163,6 +193,9 @@ VALUES (1, 2, 202, 'from project b');
 INSERT INTO project_prompt_templates (id, project_id, name, user_prompt, is_active, version)
 VALUES (1001, 1, 'Prompt A', 'A prompt', 1, 1),
        (2002, 2, 'Prompt B', 'B prompt', 1, 1);
+
+INSERT INTO photo_embeddings (id, project_id, photo_id, embedding_model, embedding_dimension, embedding_status)
+VALUES (1, 2, 202, 'test-model', 1024, 'ready');
 """
 
 
@@ -257,6 +290,30 @@ class ProjectIsolationEndpointsTest(unittest.TestCase):
                         """
                     )
                 )
+
+    def test_rebuild_embeddings_skips_existing_queued_job(self) -> None:
+        with self._engine.begin() as conn:
+            conn.execute(
+                sa.text(
+                    """
+                    INSERT INTO ai_jobs (id, photo_id, project_id, job_type, status)
+                    VALUES (9001, 202, 2, 'embed', 'queued')
+                    """
+                )
+            )
+
+        res = self.client.post("/projects/2/ai/embeddings/rebuild")
+        self.assertEqual(res.status_code, 200)
+        body = res.json()
+        self.assertEqual(body["created_jobs"], 0)
+        self.assertEqual(body["skipped_existing_jobs"], 1)
+
+    def test_rebuild_embeddings_force_true_creates_jobs_for_ready_embeddings(self) -> None:
+        res = self.client.post("/projects/2/ai/embeddings/rebuild?force=true")
+        self.assertEqual(res.status_code, 200)
+        body = res.json()
+        self.assertEqual(body["created_jobs"], 1)
+        self.assertEqual(body["total_checked"], 1)
 
 
 if __name__ == "__main__":

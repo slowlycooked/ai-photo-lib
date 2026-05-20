@@ -231,6 +231,25 @@ export interface AppSettings {
   ai_max_retries: number;
 }
 
+export type DebugMode = "off" | "basic" | "debug" | "trace";
+export type LogLevel = "ERROR" | "WARNING" | "INFO" | "DEBUG";
+
+export interface DebugSettings {
+  debug_mode: DebugMode;
+  backend_log_level: LogLevel;
+  frontend_log_level: LogLevel;
+  ai_log_level: LogLevel;
+  search_log_level: LogLevel;
+  db_log_level: LogLevel;
+  task_log_level: LogLevel;
+  log_request_body: boolean;
+  log_ai_prompt: boolean;
+  log_ai_response: boolean;
+  log_sql: boolean;
+  log_stacktrace: boolean;
+  max_log_text_length: number;
+}
+
 export interface ProjectAISettings {
   id: number;
   project_id: number;
@@ -591,5 +610,12 @@ export const api = {
 
   settings: {
     get: () => request<AppSettings>("/settings"),
+    getDebug: () => request<DebugSettings>("/settings/debug"),
+    updateDebug: (body: DebugSettings) =>
+      request<DebugSettings>("/settings/debug", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      }),
   },
 };

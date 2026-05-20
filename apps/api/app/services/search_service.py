@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import Literal, Optional, Tuple
 
@@ -17,12 +18,6 @@ from ..services.folder_service import apply_folder_filter
 logger = logging.getLogger(__name__)
 
 SearchMode = Literal["keyword", "vector", "hybrid"]
-
-_VECTOR_FIELD_WEIGHTS = {
-    "caption_embedding": 0.45,
-    "tag_embedding": 0.40,
-    "ocr_embedding": 0.15,
-}
 
 _WEIGHTS = {
     "caption": 3,
@@ -41,12 +36,22 @@ _DB_EMBEDDING_DIMENSION = 1024
 
 
 @dataclass
+class VectorMatchScores:
+    caption_score: float = 0.0
+    tag_score: float = 0.0
+    ocr_score: float = 0.0
+    total_score: float = 0.0
+
+
+@dataclass
 class SearchCandidate:
     photo_id: int
     keyword_score: float = 0.0
     vector_score: float = 0.0
     final_score: float = 0.0
+    rrf_score: float = 0.0
     matched_tags: list[str] = field(default_factory=list)
+    match_source: list[str] = field(default_factory=list)
 
 
 def _build_any_match_filter(terms: list[str]):
@@ -165,6 +170,7 @@ def _keyword_search(
                 photo_id=photo.id,
                 keyword_score=score,
                 matched_tags=matched_tags,
+                match_source=["keyword"],
             )
         )
 
@@ -176,6 +182,76 @@ def _query_vector_literal(query_vector: list[float]) -> str:
     return "[" + ",".join(f"{x:.8f}" for x in query_vector) + "]"
 
 
+def _is_ocr_like_query(query: str) -> bool:
+    has_order_token = bool(re.search(r"(order|invoice|id|sn|单号|订单|发票|金额)", query, flags=re.IGNORECASE))
+    digit_count = sum(1 for ch in query if ch.isdigit())
+    ascii_count = sum(1 for ch in query if ch.isascii() and ch.isalnum())
+    return has_order_token or digit_count >= 4 or ascii_count >= max(6, len(query) // 2)
+
+
+def _vector_field_weights(query: str) -> dict[str, float]:
+    caption_weight = settings.search_caption_vector_weight
+    tag_weight = settings.search_tag_vector_weight
+    ocr_weight = settings.search_ocr_vector_weight
+
+    if _is_ocr_like_query(query):
+        ocr_weight = ocr_weight + 0.2
+
+    total = caption_weight + tag_weight + ocr_weight
+    if total <= 0:
+        return {
+            "caption_embedding": 0.35,
+            "tag_embedding": 0.50,
+            "ocr_embedding": 0.15,
+        }
+
+    return {
+        "caption_embedding": caption_weight / total,
+        "tag_embedding": tag_weight / total,
+        "ocr_embedding": ocr_weight / total,
+    }
+
+
+def _vector_field_search(
+    db: Session,
+    *,
+    project_id: int,
+    query_vector_literal: str,
+    field_name: str,
+    folder_photo_ids: set[int] | None,
+    limit: int,
+) -> dict[int, float]:
+    params: dict[str, object] = {
+        "project_id": project_id,
+        "query_vector": query_vector_literal,
+        "limit": limit,
+    }
+    folder_filter = ""
+    if folder_photo_ids is not None:
+        if not folder_photo_ids:
+            return {}
+        params["photo_ids"] = list(folder_photo_ids)
+        folder_filter = " AND pe.photo_id = ANY(:photo_ids)"
+
+    sql = text(
+        f"""
+        SELECT pe.photo_id,
+               (1 - (pe.{field_name} <=> CAST(:query_vector AS vector))) AS similarity
+        FROM photo_embeddings pe
+        WHERE pe.project_id = :project_id
+          AND pe.{field_name} IS NOT NULL
+          {folder_filter}
+        ORDER BY pe.{field_name} <=> CAST(:query_vector AS vector)
+        LIMIT :limit
+        """
+    )
+    rows = db.execute(sql, params).fetchall()
+    result: dict[int, float] = {}
+    for row in rows:
+        result[int(row.photo_id)] = float(row.similarity)
+    return result
+
+
 def _vector_search(
     db: Session,
     *,
@@ -183,7 +259,7 @@ def _vector_search(
     project_id: int,
     folder_photo_ids: set[int] | None,
     limit: int,
-) -> dict[int, float]:
+) -> dict[int, VectorMatchScores]:
     if settings.embedding_dimension != _DB_EMBEDDING_DIMENSION:
         raise RuntimeError(
             f"Config mismatch: embedding_dimension must be {_DB_EMBEDDING_DIMENSION}, got {settings.embedding_dimension}"
@@ -195,92 +271,69 @@ def _vector_search(
         .first()
     )
     endpoint_url = settings_row.endpoint_url if settings_row else None
+    embedding_model = settings.embedding_model or (settings_row.model_name if settings_row else "") or settings.openai_model
+
     query_embedding = embed_text(
         query,
         endpoint_url=endpoint_url,
-        model=settings.embedding_model or settings.openai_model,
+        model=embedding_model,
         expected_dim=settings.embedding_dimension,
     )
 
-    params: dict[str, object] = {
-        "project_id": project_id,
-        "query_vector": _query_vector_literal(query_embedding),
-        "limit": limit,
-    }
+    vector_literal = _query_vector_literal(query_embedding)
+    field_weights = _vector_field_weights(query)
 
-    folder_filter = ""
-    if folder_photo_ids is not None:
-        if not folder_photo_ids:
-            return {}
-        params["photo_ids"] = list(folder_photo_ids)
-        folder_filter = " AND pe.photo_id = ANY(:photo_ids)"
-
-    sql = text(
-        """
-        WITH caption AS (
-            SELECT pe.photo_id,
-                   (1 - (pe.caption_embedding <=> CAST(:query_vector AS vector))) * :caption_weight AS score
-            FROM photo_embeddings pe
-            WHERE pe.project_id = :project_id
-              AND pe.caption_embedding IS NOT NULL
-        """
-        + folder_filter
-        +
-        """
-            ORDER BY pe.caption_embedding <=> CAST(:query_vector AS vector)
-            LIMIT :limit
-        ),
-        tags AS (
-            SELECT pe.photo_id,
-                   (1 - (pe.tag_embedding <=> CAST(:query_vector AS vector))) * :tag_weight AS score
-            FROM photo_embeddings pe
-            WHERE pe.project_id = :project_id
-              AND pe.tag_embedding IS NOT NULL
-        """
-        + folder_filter
-        +
-        """
-            ORDER BY pe.tag_embedding <=> CAST(:query_vector AS vector)
-            LIMIT :limit
-        ),
-        ocr AS (
-            SELECT pe.photo_id,
-                   (1 - (pe.ocr_embedding <=> CAST(:query_vector AS vector))) * :ocr_weight AS score
-            FROM photo_embeddings pe
-            WHERE pe.project_id = :project_id
-              AND pe.ocr_embedding IS NOT NULL
-        """
-        + folder_filter
-        +
-        """
-            ORDER BY pe.ocr_embedding <=> CAST(:query_vector AS vector)
-            LIMIT :limit
-        )
-        SELECT photo_id, MAX(score) AS score
-        FROM (
-            SELECT * FROM caption
-            UNION ALL
-            SELECT * FROM tags
-            UNION ALL
-            SELECT * FROM ocr
-        ) s
-        GROUP BY photo_id
-        ORDER BY score DESC
-        LIMIT :limit
-        """
+    caption_scores = _vector_field_search(
+        db,
+        project_id=project_id,
+        query_vector_literal=vector_literal,
+        field_name="caption_embedding",
+        folder_photo_ids=folder_photo_ids,
+        limit=limit,
+    )
+    tag_scores = _vector_field_search(
+        db,
+        project_id=project_id,
+        query_vector_literal=vector_literal,
+        field_name="tag_embedding",
+        folder_photo_ids=folder_photo_ids,
+        limit=limit,
+    )
+    ocr_scores = _vector_field_search(
+        db,
+        project_id=project_id,
+        query_vector_literal=vector_literal,
+        field_name="ocr_embedding",
+        folder_photo_ids=folder_photo_ids,
+        limit=limit,
     )
 
-    params["caption_weight"] = _VECTOR_FIELD_WEIGHTS["caption_embedding"]
-    params["tag_weight"] = _VECTOR_FIELD_WEIGHTS["tag_embedding"]
-    params["ocr_weight"] = _VECTOR_FIELD_WEIGHTS["ocr_embedding"]
+    merged: dict[int, VectorMatchScores] = {}
+    photo_ids = set(caption_scores.keys()) | set(tag_scores.keys()) | set(ocr_scores.keys())
+    for photo_id in photo_ids:
+        c = max(0.0, caption_scores.get(photo_id, 0.0))
+        t = max(0.0, tag_scores.get(photo_id, 0.0))
+        o = max(0.0, ocr_scores.get(photo_id, 0.0))
+        total = (
+            c * field_weights["caption_embedding"]
+            + t * field_weights["tag_embedding"]
+            + o * field_weights["ocr_embedding"]
+        )
+        if total < settings.search_vector_min_score:
+            continue
+        merged[photo_id] = VectorMatchScores(
+            caption_score=c,
+            tag_score=t,
+            ocr_score=o,
+            total_score=total,
+        )
 
-    rows = db.execute(sql, params).fetchall()
-    return {int(r.photo_id): float(r.score) for r in rows}
+    return merged
 
 
 def _rrf_merge(
     keyword_results: list[SearchCandidate],
-    vector_scores: dict[int, float],
+    vector_scores: dict[int, VectorMatchScores],
 ) -> list[SearchCandidate]:
     merged: dict[int, SearchCandidate] = {}
 
@@ -292,10 +345,13 @@ def _rrf_merge(
             merged[candidate.photo_id] = row
         row.keyword_score = candidate.keyword_score
         row.matched_tags = candidate.matched_tags
-        row.final_score = row.final_score + fused
+        row.rrf_score += fused
+        row.final_score = row.rrf_score
+        if "keyword" not in row.match_source:
+            row.match_source.append("keyword")
 
-    for rank, (photo_id, vector_score) in enumerate(
-        sorted(vector_scores.items(), key=lambda x: x[1], reverse=True),
+    for rank, (photo_id, vector_match) in enumerate(
+        sorted(vector_scores.items(), key=lambda x: x[1].total_score, reverse=True),
         start=1,
     ):
         fused = settings.search_vector_weight / (settings.search_rrf_k + rank)
@@ -303,14 +359,18 @@ def _rrf_merge(
         if row is None:
             row = SearchCandidate(photo_id=photo_id)
             merged[photo_id] = row
-        row.vector_score = vector_score
-        row.final_score = row.final_score + fused
+        row.vector_score = vector_match.total_score
+        row.rrf_score += fused
+        row.final_score = row.rrf_score
+        for source_name, score in (
+            ("vector_caption", vector_match.caption_score),
+            ("vector_tag", vector_match.tag_score),
+            ("vector_ocr", vector_match.ocr_score),
+        ):
+            if score > 0 and source_name not in row.match_source:
+                row.match_source.append(source_name)
 
-    return sorted(
-        merged.values(),
-        key=lambda item: item.final_score,
-        reverse=True,
-    )
+    return sorted(merged.values(), key=lambda item: item.final_score, reverse=True)
 
 
 def _build_result_items(
@@ -321,6 +381,7 @@ def _build_result_items(
     mode: SearchMode,
     page: int,
     page_size: int,
+    debug: bool,
 ) -> tuple[int, list[dict]]:
     total = len(candidates)
     if total == 0:
@@ -351,6 +412,7 @@ def _build_result_items(
         if row is None:
             continue
         photo, ai = row
+
         if project_id is not None:
             thumb = (
                 f"/api/projects/{project_id}/photos/{photo.id}/thumbnail"
@@ -369,20 +431,26 @@ def _build_result_items(
         else:
             score = candidate.keyword_score
 
-        items.append(
-            {
-                "photo_id": photo.id,
-                "file_name": photo.file_name,
-                "thumbnail_url": thumb,
-                "updated_at": photo.updated_at,
-                "taken_at": photo.taken_at,
-                "width": photo.width,
-                "height": photo.height,
-                "caption": ai.caption,
-                "matched_tags": candidate.matched_tags,
-                "score": round(float(score), 6),
-            }
-        )
+        item = {
+            "photo_id": photo.id,
+            "file_name": photo.file_name,
+            "thumbnail_url": thumb,
+            "updated_at": photo.updated_at,
+            "taken_at": photo.taken_at,
+            "width": photo.width,
+            "height": photo.height,
+            "caption": ai.caption,
+            "matched_tags": candidate.matched_tags,
+            "score": round(float(score), 6),
+        }
+
+        if debug and settings.search_debug_enabled:
+            item["keyword_score"] = round(float(candidate.keyword_score), 6)
+            item["vector_score"] = round(float(candidate.vector_score), 6)
+            item["rrf_score"] = round(float(candidate.rrf_score), 6)
+            item["match_source"] = list(candidate.match_source)
+
+        items.append(item)
 
     return total, items
 
@@ -396,6 +464,7 @@ def search_photos(
     folder_id: Optional[int] = None,
     folder_scope: str = "subtree",
     mode: SearchMode = "hybrid",
+    debug: bool = False,
 ) -> Tuple[int, list]:
     query = query.strip()
     if not query:
@@ -424,9 +493,10 @@ def search_photos(
             mode="keyword",
             page=page,
             page_size=page_size,
+            debug=debug,
         )
 
-    vector_scores: dict[int, float] = {}
+    vector_scores: dict[int, VectorMatchScores] = {}
     try:
         vector_scores = _vector_search(
             db,
@@ -451,12 +521,26 @@ def search_photos(
             mode="keyword",
             page=page,
             page_size=page_size,
+            debug=debug,
         )
 
     if mode == "vector":
         vector_only = [
-            SearchCandidate(photo_id=photo_id, vector_score=score, final_score=score)
-            for photo_id, score in sorted(vector_scores.items(), key=lambda x: x[1], reverse=True)
+            SearchCandidate(
+                photo_id=photo_id,
+                vector_score=scores.total_score,
+                final_score=scores.total_score,
+                match_source=[
+                    source
+                    for source, value in (
+                        ("vector_caption", scores.caption_score),
+                        ("vector_tag", scores.tag_score),
+                        ("vector_ocr", scores.ocr_score),
+                    )
+                    if value > 0
+                ],
+            )
+            for photo_id, scores in sorted(vector_scores.items(), key=lambda x: x[1].total_score, reverse=True)
         ]
         return _build_result_items(
             db,
@@ -465,6 +549,7 @@ def search_photos(
             mode="vector",
             page=page,
             page_size=page_size,
+            debug=debug,
         )
 
     merged = _rrf_merge(keyword_results, vector_scores)
@@ -475,4 +560,5 @@ def search_photos(
         mode="hybrid",
         page=page,
         page_size=page_size,
+        debug=debug,
     )

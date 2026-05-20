@@ -17,6 +17,7 @@ os.environ.setdefault("OPENAI_VISION_MODEL", "test-model")
 from app.models.ai import PhotoEmbedding  # noqa: E402
 from app.services.embedding_service import (  # noqa: E402
     build_embedding_inputs,
+    is_embedding_stale,
     upsert_photo_embeddings,
 )
 
@@ -91,6 +92,49 @@ class EmbeddingServiceTest(unittest.TestCase):
             row2 = upsert_photo_embeddings(db, project_id=1, photo_id=10, ai=ai, model_name="embed-model")
             self.assertEqual(db.add_calls, 1)
             self.assertIs(row2, row)
+
+    def test_is_embedding_stale_true_when_text_hash_changes(self) -> None:
+        ai = SimpleNamespace(
+            caption="cat",
+            ocr_text="invoice",
+            scene_tags=["home"],
+            object_tags=[],
+            activity_tags=[],
+            quality_tags=[],
+            location_clues=[],
+            search_keywords=["pet"],
+        )
+        embedding = SimpleNamespace(
+            embedding_status="ready",
+            embedding_model="embed-model",
+            embedding_dimension=1024,
+            caption_text_hash="x",
+            tag_text_hash="y",
+            ocr_text_hash="z",
+        )
+        self.assertTrue(is_embedding_stale(ai, embedding, model_name="embed-model", dimension=1024))
+
+    def test_is_embedding_stale_true_when_model_changes(self) -> None:
+        ai = SimpleNamespace(
+            caption="cat",
+            ocr_text="invoice",
+            scene_tags=["home"],
+            object_tags=[],
+            activity_tags=[],
+            quality_tags=[],
+            location_clues=[],
+            search_keywords=["pet"],
+        )
+        with patch("app.services.embedding_service._hash_text", side_effect=["h1", "h2", "h3"]):
+            embedding = SimpleNamespace(
+                embedding_status="ready",
+                embedding_model="old-model",
+                embedding_dimension=1024,
+                caption_text_hash="h1",
+                tag_text_hash="h2",
+                ocr_text_hash="h3",
+            )
+            self.assertTrue(is_embedding_stale(ai, embedding, model_name="new-model", dimension=1024))
 
 
 if __name__ == "__main__":

@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import Optional, List
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 class FolderNode(BaseModel):
     id: int
@@ -11,9 +11,7 @@ class FolderNode(BaseModel):
     photo_count_recursive: int
     children: Optional[List['FolderNode']] = None
 
-    class Config:
-        orm_mode = True
-        arbitrary_types_allowed = True
+    model_config = ConfigDict(from_attributes=True, arbitrary_types_allowed=True)
 
 class FolderTreeResponse(BaseModel):
     project_id: int

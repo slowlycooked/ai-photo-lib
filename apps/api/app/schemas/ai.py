@@ -65,6 +65,11 @@ class AIStatusResponse(BaseModel):
     success: int
     failed: int
     total: int
+    analyzed_count: int = 0
+    embedding_ready_count: int = 0
+    embedding_missing_count: int = 0
+    embedding_failed_count: int = 0
+    embedding_stale_count: int = 0
 
 
 class StartAnalysisResponse(BaseModel):

@@ -17,6 +17,10 @@ class SearchResultItem(BaseModel):
     caption: Optional[str] = None
     matched_tags: List[str]
     score: float
+    keyword_score: Optional[float] = None
+    vector_score: Optional[float] = None
+    rrf_score: Optional[float] = None
+    match_source: Optional[List[str]] = None
 
 
 class SearchResponse(BaseModel):

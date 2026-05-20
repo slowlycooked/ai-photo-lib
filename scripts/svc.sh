@@ -60,9 +60,59 @@ log_error()   { echo -e "${RED}✗${RESET} $*" >&2; }
 pid_file()    { echo "$RUN_DIR/$1.pid"; }
 log_file()    { echo "$LOG_DIR/$1.log"; }
 
+service_port() {
+  local name="$1"
+  case "$name" in
+    api) echo "$API_PORT" ;;
+    web) echo "$WEB_PORT" ;;
+    ai)  echo "$LLAMA_PORT" ;;
+    *)   echo "" ;;
+  esac
+}
+
+service_cmd_pattern() {
+  local name="$1"
+  case "$name" in
+    api) echo 'ai-photo-api|uvicorn .*(app\.main:app|main:app)' ;;
+    web) echo 'ai-photo-web|vite|npm run dev' ;;
+    ai)  echo 'ai-photo-llama|llama-server' ;;
+    worker) echo 'ai-photo-worker|python(3)? .*main\.py' ;;
+    *)   echo '' ;;
+  esac
+}
+
+sync_pid_from_port() {
+  local name="$1"
+  local pf; pf="$(pid_file "$name")"
+  local port=""
+  port="$(service_port "$name")"
+  [ -z "$port" ] && return 1
+
+  local listen_pid=""
+  listen_pid="$(get_listen_pid_by_port "$port")"
+  [ -z "$listen_pid" ] && return 1
+
+  local cmd=""
+  cmd="$(ps -p "$listen_pid" -o command= 2>/dev/null || true)"
+  local pattern=""
+  pattern="$(service_cmd_pattern "$name")"
+  if [ -n "$pattern" ] && ! echo "$cmd" | grep -qiE "$pattern"; then
+    return 1
+  fi
+
+  echo "$listen_pid" > "$pf"
+  return 0
+}
+
 is_running() {
   local name="$1"
   local pf; pf="$(pid_file "$name")"
+
+  # For port-based services, confirm by .env port first and sync pid file.
+  if sync_pid_from_port "$name"; then
+    return 0
+  fi
+
   if [ -f "$pf" ]; then
     local pid; pid="$(cat "$pf")"
     if kill -0 "$pid" 2>/dev/null; then
@@ -71,10 +121,88 @@ is_running() {
       rm -f "$pf"
     fi
   fi
+
+  # Worker has no fixed port; fall back to prefixed process scan.
+  if [ "$name" = "worker" ]; then
+    local pids=""
+    pids="$(find_prefixed_pids '(^| )ai-photo-worker( |$)' | tr '\n' ' ' | xargs 2>/dev/null || true)"
+    if [ -n "$pids" ]; then
+      local pid="${pids%% *}"
+      echo "$pid" > "$pf"
+      return 0
+    fi
+  fi
+
   return 1
 }
 
 save_pid() { echo "$!" > "$(pid_file "$1")"; }
+
+get_listen_pid_by_port() {
+  local port="$1"
+  { lsof -nP -iTCP:"$port" -sTCP:LISTEN 2>/dev/null || true; } | awk 'NR==2{print $2}'
+}
+
+run_named_process() {
+  local proc_name="$1"
+  shift
+  nohup "$ROOT/scripts/ai-photo-runner.sh" "$proc_name" "$@"
+}
+
+find_prefixed_pids() {
+  local pattern="$1"
+  ps ax -o pid=,command= \
+    | grep -E "$pattern" \
+    | grep -v grep \
+    | awk '{print $1}'
+}
+
+kill_prefixed_processes() {
+  local pattern="$1"
+  local label="$2"
+  local pids=""
+  pids="$(find_prefixed_pids "$pattern" | tr '\n' ' ' | xargs 2>/dev/null || true)"
+  if [ -z "$pids" ]; then
+    return 0
+  fi
+
+  log_warn "检测到残留 $label 进程，按 ai-photo- 前缀清理: $pids"
+  kill -TERM $pids 2>/dev/null || true
+  sleep 1
+
+  local remain=""
+  remain="$(find_prefixed_pids "$pattern" | tr '\n' ' ' | xargs 2>/dev/null || true)"
+  if [ -n "$remain" ]; then
+    log_warn "$label 仍未退出，发送 SIGKILL: $remain"
+    kill -KILL $remain 2>/dev/null || true
+  fi
+}
+
+kill_listener_by_service_port() {
+  local name="$1"
+  local port=""
+  port="$(service_port "$name")"
+  [ -z "$port" ] && return 0
+
+  local pid=""
+  pid="$(get_listen_pid_by_port "$port")"
+  [ -z "$pid" ] && return 0
+
+  local cmd=""
+  cmd="$(ps -p "$pid" -o command= 2>/dev/null || true)"
+  local pattern=""
+  pattern="$(service_cmd_pattern "$name")"
+  if [ -n "$pattern" ] && ! echo "$cmd" | grep -qiE "$pattern"; then
+    return 0
+  fi
+
+  log_warn "检测到 $name 仍监听端口 $port (PID $pid)，执行清理"
+  kill -TERM "$pid" 2>/dev/null || true
+  sleep 1
+  if kill -0 "$pid" 2>/dev/null; then
+    kill -KILL "$pid" 2>/dev/null || true
+  fi
+}
 
 # ── Docker Compose 健康等待 ────────────────────────────────────────────────────
 wait_healthy() {
@@ -142,7 +270,7 @@ start_api() {
   if [ "$API_RELOAD" = "1" ] || [ "$API_RELOAD" = "true" ]; then
     uvicorn_args+=(--reload)
   fi
-  nohup uvicorn \
+  run_named_process "ai-photo-api" uvicorn \
     "${uvicorn_args[@]}" \
     > "$(log_file api)" 2>&1 &
   save_pid api
@@ -173,7 +301,7 @@ start_web() {
     log_info "安装前端依赖 (npm install)..."
     npm install --silent
   fi
-  nohup npm run dev -- --port "$WEB_PORT" \
+  run_named_process "ai-photo-web" npm run dev -- --port "$WEB_PORT" \
     > "$(log_file web)" 2>&1 &
   save_pid web
   sleep 2
@@ -198,6 +326,8 @@ stop_api() {
   else
     log_warn "api 未在运行"
   fi
+  kill_prefixed_processes '(^| )ai-photo-api( |$)' 'api'
+  kill_listener_by_service_port api
 }
 
 stop_web() {
@@ -212,6 +342,8 @@ stop_web() {
   else
     log_warn "web 未在运行"
   fi
+  kill_prefixed_processes '(^| )ai-photo-web( |$)' 'web'
+  kill_listener_by_service_port web
 }
 
 stop_postgres() {
@@ -240,7 +372,7 @@ start_worker() {
     py_bin="$ROOT/apps/api/.venv/bin/python"
   fi
   cd "$ROOT/apps/worker"
-  nohup "$py_bin" main.py \
+  run_named_process "ai-photo-worker" "$py_bin" main.py \
     > "$(log_file worker)" 2>&1 &
   save_pid worker
   sleep 1
@@ -261,12 +393,27 @@ stop_worker() {
   else
     log_warn "worker 未在运行"
   fi
+  kill_prefixed_processes '(^| )ai-photo-worker( |$)' 'worker'
 }
 
 start_ai() {
   if is_running ai; then
     log_ok "llama-server 已在运行 (PID $(cat "$(pid_file ai)"), port $LLAMA_PORT)"
     return 0
+  fi
+
+  local listen_pid=""
+  listen_pid="$(get_listen_pid_by_port "$LLAMA_PORT")"
+  if [ -n "$listen_pid" ]; then
+    local listen_cmd=""
+    listen_cmd="$(ps -p "$listen_pid" -o command= 2>/dev/null || true)"
+    if echo "$listen_cmd" | grep -qiE 'ai-photo-llama|llama-server'; then
+      echo "$listen_pid" > "$(pid_file ai)"
+      log_ok "检测到已运行的 llama-server (PID $listen_pid, port $LLAMA_PORT)，已接管 PID"
+      return 0
+    fi
+    log_error "端口 $LLAMA_PORT 已被占用 (PID $listen_pid): $listen_cmd"
+    return 1
   fi
 
   if [ -z "$LLAMA_SERVER" ] || [ -z "$LLAMA_MODEL" ]; then
@@ -286,7 +433,7 @@ start_ai() {
   [ -n "$LLAMA_MEDIA_PATH" ] && args+=(--media-path "$LLAMA_MEDIA_PATH")
 
   log_info "启动 llama-server (port $LLAMA_PORT, media-path=${LLAMA_MEDIA_PATH:-未设置})..."
-  nohup "${args[@]}" > "$(log_file ai)" 2>&1 &
+  run_named_process "ai-photo-llama" "${args[@]}" > "$(log_file ai)" 2>&1 &
   save_pid ai
   sleep 2
   if is_running ai; then
@@ -324,9 +471,26 @@ stop_ai() {
 
     rm -f "$(pid_file ai)"
     log_ok "llama-server 已停止"
+    kill_prefixed_processes '(^| )ai-photo-llama( |$)' 'llama-server'
   else
+    local listen_pid=""
+    listen_pid="$(get_listen_pid_by_port "$LLAMA_PORT")"
+    if [ -n "$listen_pid" ]; then
+      local listen_cmd=""
+      listen_cmd="$(ps -p "$listen_pid" -o command= 2>/dev/null || true)"
+      if echo "$listen_cmd" | grep -qiE 'ai-photo-llama|llama-server'; then
+        log_info "发现监听端口的 llama-server (PID $listen_pid)，执行停止..."
+        kill -TERM "$listen_pid" 2>/dev/null || true
+        rm -f "$(pid_file ai)"
+        log_ok "llama-server 已停止"
+        kill_prefixed_processes '(^| )ai-photo-llama( |$)' 'llama-server'
+        return 0
+      fi
+    fi
     log_warn "llama-server 未在运行 (由 svc.sh 管理的实例)"
   fi
+  kill_prefixed_processes '(^| )ai-photo-llama( |$)' 'llama-server'
+  kill_listener_by_service_port ai
 }
 
 # ────────────────────────────────────────────────────────────────────────────

@@ -1,10 +1,12 @@
-import { useState, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Loader2,
   AlertCircle,
   Settings,
+  Bug,
+  Save,
   FolderOpen,
   Plus,
   Pencil,
@@ -13,7 +15,7 @@ import {
   X,
   Star,
 } from "lucide-react";
-import { api, type AppSettings, type Project } from "@/lib/api";
+import { api, type DebugSettings, type Project } from "@/lib/api";
 import {
   useProjects,
   useCreateProject,
@@ -21,6 +23,7 @@ import {
   useDeleteProject,
 } from "@/hooks/useProjects";
 import { useProjectContext } from "@/contexts/ProjectContext";
+import { configureFrontendLogger } from "@/lib/logger";
 
 // ─── Path helpers ────────────────────────────────────────────────────────────
 
@@ -395,9 +398,190 @@ function LibraryManagementCard() {
   );
 }
 
+const DEBUG_MODE_OPTIONS = ["off", "basic", "debug", "trace"] as const;
+const LOG_LEVEL_OPTIONS = ["ERROR", "WARNING", "INFO", "DEBUG"] as const;
+
+function DebugLogSettingsCard() {
+  const queryClient = useQueryClient();
+  const {
+    data,
+    isLoading,
+    isError,
+    error,
+  } = useQuery({
+    queryKey: ["settings", "debug"],
+    queryFn: api.settings.getDebug,
+    staleTime: 15_000,
+  });
+
+  const [form, setForm] = useState<DebugSettings | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string>("");
+
+  useEffect(() => {
+    if (!data) return;
+    setForm(data);
+  }, [data]);
+
+  const saveMutation = useMutation({
+    mutationFn: (payload: DebugSettings) => api.settings.updateDebug(payload),
+    onSuccess: (saved) => {
+      queryClient.setQueryData(["settings", "debug"], saved);
+      configureFrontendLogger(saved);
+      setSuccessMessage("Debug 与日志配置已保存");
+      setTimeout(() => setSuccessMessage(""), 1800);
+    },
+  });
+
+  function update<K extends keyof DebugSettings>(key: K, value: DebugSettings[K]) {
+    setForm((prev) => (prev ? { ...prev, [key]: value } : prev));
+  }
+
+  if (isLoading || !form) {
+    return (
+      <SettingsCard title="Debug 与日志">
+        <div className="flex items-center gap-2 text-mute py-6 justify-center">
+          <Loader2 className="w-4 h-4 animate-spin" />
+          <span className="text-body-sm">加载 Debug 配置中…</span>
+        </div>
+      </SettingsCard>
+    );
+  }
+
+  if (isError) {
+    return (
+      <SettingsCard title="Debug 与日志">
+        <div className="py-6 flex items-center gap-2 text-red-500">
+          <AlertCircle className="w-4 h-4" />
+          <span className="text-body-sm">加载失败：{(error as Error)?.message ?? "未知错误"}</span>
+        </div>
+      </SettingsCard>
+    );
+  }
+
+  const minLen = 200;
+  const maxLen = 10000;
+
+  return (
+    <SettingsCard
+      title="Debug 与日志"
+      action={
+        <button
+          onClick={() => saveMutation.mutate(form)}
+          disabled={saveMutation.isPending}
+          className="flex items-center gap-1.5 px-2.5 py-1 text-body-sm rounded-md border border-hairline text-ink hover:bg-secondary-bg disabled:opacity-50 transition-colors"
+        >
+          {saveMutation.isPending ? (
+            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+          ) : (
+            <Save className="w-3.5 h-3.5" />
+          )}
+          保存配置
+        </button>
+      }
+    >
+      <div className="py-4 space-y-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <label className="text-caption-sm text-mute">
+            Debug 模式
+            <select
+              value={form.debug_mode}
+              onChange={(e) => update("debug_mode", e.target.value as DebugSettings["debug_mode"])}
+              className="mt-1 w-full px-3 py-1.5 text-body-sm bg-surface-card border border-hairline rounded-md text-ink"
+            >
+              {DEBUG_MODE_OPTIONS.map((opt) => (
+                <option key={opt} value={opt}>{opt}</option>
+              ))}
+            </select>
+          </label>
+          <label className="text-caption-sm text-mute">
+            前端日志等级
+            <select
+              value={form.frontend_log_level}
+              onChange={(e) => update("frontend_log_level", e.target.value as DebugSettings["frontend_log_level"])}
+              className="mt-1 w-full px-3 py-1.5 text-body-sm bg-surface-card border border-hairline rounded-md text-ink"
+            >
+              {LOG_LEVEL_OPTIONS.map((opt) => (
+                <option key={opt} value={opt}>{opt}</option>
+              ))}
+            </select>
+          </label>
+          {([
+            "backend_log_level",
+            "ai_log_level",
+            "search_log_level",
+            "db_log_level",
+            "task_log_level",
+          ] as const).map((field) => (
+            <label key={field} className="text-caption-sm text-mute">
+              {field}
+              <select
+                value={form[field]}
+                onChange={(e) => update(field, e.target.value as DebugSettings[typeof field])}
+                className="mt-1 w-full px-3 py-1.5 text-body-sm bg-surface-card border border-hairline rounded-md text-ink"
+              >
+                {LOG_LEVEL_OPTIONS.map((opt) => (
+                  <option key={opt} value={opt}>{opt}</option>
+                ))}
+              </select>
+            </label>
+          ))}
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          {([
+            "log_request_body",
+            "log_ai_prompt",
+            "log_ai_response",
+            "log_sql",
+            "log_stacktrace",
+          ] as const).map((flag) => (
+            <label key={flag} className="flex items-center gap-2 text-body-sm text-ink">
+              <input
+                type="checkbox"
+                checked={form[flag]}
+                onChange={(e) => update(flag, e.target.checked as DebugSettings[typeof flag])}
+                className="accent-primary w-3.5 h-3.5"
+              />
+              {flag}
+            </label>
+          ))}
+        </div>
+
+        <label className="block text-caption-sm text-mute">
+          max_log_text_length ({minLen} - {maxLen})
+          <input
+            type="number"
+            min={minLen}
+            max={maxLen}
+            value={form.max_log_text_length}
+            onChange={(e) => update("max_log_text_length", Number(e.target.value || minLen))}
+            className="mt-1 w-full sm:w-56 px-3 py-1.5 text-body-sm bg-surface-card border border-hairline rounded-md text-ink"
+          />
+        </label>
+
+        {form.debug_mode === "trace" && (
+          <p className="text-caption-sm text-amber-600 bg-amber-50 border border-amber-200 rounded-md px-3 py-2">
+            风险提示：trace 模式会增加日志量，仅建议临时排查时开启。
+          </p>
+        )}
+
+        {successMessage && (
+          <p className="text-caption-sm text-green-600">{successMessage}</p>
+        )}
+        {saveMutation.isError && (
+          <p className="text-caption-sm text-red-500">
+            保存失败：{(saveMutation.error as Error)?.message ?? "未知错误"}
+          </p>
+        )}
+      </div>
+    </SettingsCard>
+  );
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export function SettingsPage() {
+  const [activeTab, setActiveTab] = useState<"general" | "debug">("general");
   const { currentProjectId } = useProjectContext();
   const { data, isLoading, isError } = useQuery({
     queryKey: ["settings"],
@@ -412,49 +596,86 @@ export function SettingsPage() {
         <h1 className="text-heading-md font-semibold text-ink">系统设置</h1>
       </div>
 
-      <LibraryManagementCard />
+      <div className="flex items-center gap-2 border-b border-hairline pb-2">
+        <button
+          type="button"
+          onClick={() => setActiveTab("general")}
+          className={`px-3 py-1.5 rounded-md text-body-sm border transition-colors ${
+            activeTab === "general"
+              ? "border-primary text-primary bg-primary/10"
+              : "border-hairline text-ink hover:bg-secondary-bg"
+          }`}
+        >
+          <span className="inline-flex items-center gap-1.5">
+            <Settings className="w-3.5 h-3.5" />
+            常规设置
+          </span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab("debug")}
+          className={`px-3 py-1.5 rounded-md text-body-sm border transition-colors ${
+            activeTab === "debug"
+              ? "border-primary text-primary bg-primary/10"
+              : "border-hairline text-ink hover:bg-secondary-bg"
+          }`}
+        >
+          <span className="inline-flex items-center gap-1.5">
+            <Bug className="w-3.5 h-3.5" />
+            Debug 与日志
+          </span>
+        </button>
+      </div>
 
-      {currentProjectId != null && (
-        <SettingsCard title="项目 AI 设置">
-          <div className="py-3 flex items-center justify-between gap-3">
-            <p className="text-body-sm text-mute">进入当前项目的模型配置、Prompt 版本与测试区。</p>
-            <Link
-              to={`/project/${currentProjectId}/settings/ai`}
-              className="px-3 py-1.5 text-body-sm rounded-md border border-hairline text-ink hover:bg-secondary-bg transition-colors"
-            >
-              打开项目 AI 配置
-            </Link>
-          </div>
-        </SettingsCard>
-      )}
+      {activeTab === "debug" && <DebugLogSettingsCard />}
 
-      {isLoading && (
-        <div className="flex items-center gap-2 text-mute py-12 justify-center">
-          <Loader2 className="w-5 h-5 animate-spin" />
-          <span className="text-body-sm">加载中…</span>
-        </div>
-      )}
+      {activeTab === "general" && (
+        <>
+          <LibraryManagementCard />
 
-      {isError && (
-        <div className="flex items-center gap-2 text-mute py-12 justify-center">
-          <AlertCircle className="w-5 h-5" />
-          <span className="text-body-sm">无法加载设置，请检查 API 服务</span>
-        </div>
-      )}
+          {currentProjectId != null && (
+            <SettingsCard title="项目 AI 设置">
+              <div className="py-3 flex items-center justify-between gap-3">
+                <p className="text-body-sm text-mute">进入当前项目的模型配置、Prompt 版本与测试区。</p>
+                <Link
+                  to={`/project/${currentProjectId}/settings/ai`}
+                  className="px-3 py-1.5 text-body-sm rounded-md border border-hairline text-ink hover:bg-secondary-bg transition-colors"
+                >
+                  打开项目 AI 配置
+                </Link>
+              </div>
+            </SettingsCard>
+          )}
 
-      {data && (
-        <div className="space-y-4">
-          <SettingsCard title="AI 模型 (llama-server)">
-            <SettingRow label="API Base URL" value={data.openai_base_url} />
-            <SettingRow label="文本模型" value={data.openai_model} />
-            <SettingRow label="视觉模型" value={data.openai_vision_model} />
-          </SettingsCard>
+          {isLoading && (
+            <div className="flex items-center gap-2 text-mute py-12 justify-center">
+              <Loader2 className="w-5 h-5 animate-spin" />
+              <span className="text-body-sm">加载中…</span>
+            </div>
+          )}
 
-          <SettingsCard title="Worker 配置">
-            <SettingRow label="并发数" value={data.ai_worker_concurrency} />
-            <SettingRow label="最大重试次数" value={data.ai_max_retries} />
-          </SettingsCard>
-        </div>
+          {isError && (
+            <div className="flex items-center gap-2 text-mute py-12 justify-center">
+              <AlertCircle className="w-5 h-5" />
+              <span className="text-body-sm">无法加载设置，请检查 API 服务</span>
+            </div>
+          )}
+
+          {data && (
+            <div className="space-y-4">
+              <SettingsCard title="AI 模型 (llama-server)">
+                <SettingRow label="API Base URL" value={data.openai_base_url} />
+                <SettingRow label="文本模型" value={data.openai_model} />
+                <SettingRow label="视觉模型" value={data.openai_vision_model} />
+              </SettingsCard>
+
+              <SettingsCard title="Worker 配置">
+                <SettingRow label="并发数" value={data.ai_worker_concurrency} />
+                <SettingRow label="最大重试次数" value={data.ai_max_retries} />
+              </SettingsCard>
+            </div>
+          )}
+        </>
       )}
     </main>
   );

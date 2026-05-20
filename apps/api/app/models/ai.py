@@ -54,6 +54,7 @@ class PhotoEmbedding(Base):
     __table_args__ = (
         sa.UniqueConstraint("project_id", "photo_id", name="uq_photo_embeddings_project_photo"),
         sa.Index("ix_photo_embeddings_project_id", "project_id"),
+        sa.Index("ix_photo_embeddings_project_status", "project_id", "embedding_status"),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
@@ -66,7 +67,14 @@ class PhotoEmbedding(Base):
     caption_embedding: Mapped[Optional[list[float]]] = mapped_column(Vector(1024), nullable=True)
     tag_embedding: Mapped[Optional[list[float]]] = mapped_column(Vector(1024), nullable=True)
     ocr_embedding: Mapped[Optional[list[float]]] = mapped_column(Vector(1024), nullable=True)
+    caption_text_hash: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    tag_text_hash: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    ocr_text_hash: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     embedding_model: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    embedding_dimension: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    embedding_status: Mapped[str] = mapped_column(Text, server_default="ready", nullable=False)
+    embedding_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    embedded_at: Mapped[Optional[datetime]] = mapped_column(TIMESTAMP, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
         TIMESTAMP, server_default=func.now(), nullable=False
     )
