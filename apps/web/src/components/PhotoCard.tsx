@@ -29,10 +29,12 @@ interface DetailModalProps {
 
 function DetailModal({ photo, onClose }: DetailModalProps) {
   const [loaded, setLoaded] = useState(false);
+  const projectId = photo.project_id;
 
   const { data: aiData, isLoading: aiLoading } = useQuery({
-    queryKey: ["photo-ai", photo.id],
-    queryFn: () => api.photos.getAI(photo.id),
+    queryKey: ["project-photo-ai", projectId, photo.id],
+    queryFn: () => api.projects.photoAI(projectId, photo.id),
+    enabled: projectId != null,
     retry: false,
   });
 
@@ -57,7 +59,7 @@ function DetailModal({ photo, onClose }: DetailModalProps) {
             </div>
           )}
           <img
-            src={api.photos.thumbnailUrl(photo.id, photo.updated_at)}
+            src={api.projects.thumbnailUrl(projectId, photo.id, photo.updated_at)}
             alt={photo.file_name}
             className="w-full object-cover"
             style={{ maxHeight: "40vh", opacity: loaded ? 1 : 0, transition: "opacity 0.2s" }}
@@ -73,7 +75,7 @@ function DetailModal({ photo, onClose }: DetailModalProps) {
           </button>
           {/* Download button */}
           <a
-            href={api.photos.originalUrl(photo.id)}
+            href={api.projects.originalUrl(projectId, photo.id)}
             download={photo.file_name}
             onClick={(e) => e.stopPropagation()}
             className="absolute top-3 right-14 w-9 h-9 rounded-full bg-canvas flex items-center justify-center shadow-md hover:bg-surface-card transition-colors"
@@ -248,7 +250,7 @@ export function PhotoCard({ photo }: PhotoCardProps) {
             )}
             {/* img is always in the DOM (not display:none) so onLoad fires with lazy loading */}
             <img
-              src={api.photos.thumbnailUrl(photo.id, photo.updated_at)}
+              src={api.projects.thumbnailUrl(photo.project_id, photo.id, photo.updated_at)}
               alt={photo.file_name}
               className="w-full block"
               style={{ opacity: loaded ? 1 : 0, transition: "opacity 0.2s" }}

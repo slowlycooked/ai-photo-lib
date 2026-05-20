@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import { ChevronDown, FolderOpen, Check, Bot } from "lucide-react";
-import { Link } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useProjectContext } from "@/contexts/ProjectContext";
 
 export function ProjectSelector() {
@@ -8,6 +8,21 @@ export function ProjectSelector() {
     useProjectContext();
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const location = useLocation();
+  const navigate = useNavigate();
+
+  const switchProject = (projectId: number) => {
+    setCurrentProjectId(projectId);
+    setOpen(false);
+
+    const isProjectAISettings =
+      /^\/projects?\/\d+\/settings\/ai$/.test(location.pathname) ||
+      location.pathname === "/project/settings/ai";
+
+    if (isProjectAISettings) {
+      navigate(`/project/${projectId}/settings/ai`, { replace: true });
+    }
+  };
 
   if (isLoading || !currentProject) {
     return (
@@ -64,10 +79,7 @@ export function ProjectSelector() {
                 key={project.id}
                 role="option"
                 aria-selected={project.id === currentProject.id}
-                onClick={() => {
-                  setCurrentProjectId(project.id);
-                  setOpen(false);
-                }}
+                onClick={() => switchProject(project.id)}
                 className={[
                   "w-full flex items-center gap-2.5 px-3 py-2 text-left text-body-sm",
                   "hover:bg-secondary-bg transition-colors",

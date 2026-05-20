@@ -37,7 +37,8 @@ services:
     restart: unless-stopped
 
     volumes:
-      - ${MODEL_DIR:-/volume1/docker/ai-photo-lib/models}:/models:ro
+      - ${LLAMA_MODEL}:${LLAMA_MODEL}:ro
+      - ${LLAMA_MMPROJ}:${LLAMA_MMPROJ}:ro
       - ${PHOTO_LIBRARY_PATH:-/volume1/photo}:/photos:ro
 
     ports:
@@ -45,8 +46,8 @@ services:
       - "127.0.0.1:${LLAMA_HOST_PORT:-18082}:8082"
 
     command: >
-      -m ${LLAMA_MODEL_PATH}
-      --mmproj ${LLAMA_MMPROJ_PATH}
+      -m ${LLAMA_MODEL}
+      --mmproj ${LLAMA_MMPROJ}
       --alias ${LLAMA_MODEL_ALIAS}
       --host 0.0.0.0
       --port 8082

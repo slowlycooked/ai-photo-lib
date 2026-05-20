@@ -124,6 +124,13 @@ class ProjectPromptTemplate(Base):
 
 class ProjectAISettings(Base):
     __tablename__ = "project_ai_settings"
+    __table_args__ = (
+        sa.ForeignKeyConstraint(
+            ["project_id", "active_prompt_template_id"],
+            ["project_prompt_templates.project_id", "project_prompt_templates.id"],
+            name="fk_project_ai_settings_active_prompt_same_project",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     project_id: Mapped[int] = mapped_column(
@@ -146,7 +153,6 @@ class ProjectAISettings(Base):
     )
     active_prompt_template_id: Mapped[Optional[int]] = mapped_column(
         BigInteger,
-        ForeignKey("project_prompt_templates.id", ondelete="SET NULL"),
         nullable=True,
     )
     created_at: Mapped[datetime] = mapped_column(

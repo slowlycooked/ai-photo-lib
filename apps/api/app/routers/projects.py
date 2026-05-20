@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import os
 import threading
 import time
 from datetime import date, datetime, time as time_
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import FileResponse
 from sqlalchemy import extract, func
 from sqlalchemy.orm import Session
 
@@ -25,6 +27,7 @@ from ..schemas.project_ai import (
     PromptTemplateUpdate,
 )
 from ..schemas.ai import (
+    AIAnalysisResponse,
     AIJobListResponse,
     AIJobResponse,
     AIStatusResponse,
@@ -48,12 +51,13 @@ from ..schemas.project import (
     ProjectResponse,
     ProjectUpdate,
 )
-from ..schemas.photo import PhotoListResponse
+from ..schemas.photo import PhotoDetailResponse, PhotoListResponse
 from ..schemas.scan import ScanStatus
 from ..schemas.search import SearchResponse
 from ..services.folder_service import apply_folder_filter
 from ..services.scanner import get_project_scan_state, scan_project
 from ..services.search_service import search_photos
+from ..services.thumbnail import generate_thumbnail
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
@@ -702,6 +706,95 @@ def get_project_timeline(
     }
 
 
+@router.get("/{project_id}/photos/{photo_id}", response_model=PhotoDetailResponse)
+def get_project_photo(
+    project_id: int,
+    photo_id: int,
+    db: Session = Depends(get_db),
+):
+    """Get a single photo within project scope."""
+    _get_or_404(db, project_id)
+    return _get_project_photo_or_404(db, project_id, photo_id)
+
+
+@router.get("/{project_id}/photos/{photo_id}/thumbnail")
+def get_project_photo_thumbnail(
+    project_id: int,
+    photo_id: int,
+    db: Session = Depends(get_db),
+):
+    """Get a photo thumbnail within project scope."""
+    project = _get_or_404(db, project_id)
+    photo = _get_project_photo_or_404(db, project_id, photo_id)
+
+    if not photo.thumbnail_path or not os.path.exists(photo.thumbnail_path):
+        if not os.path.exists(photo.file_path):
+            raise HTTPException(status_code=404, detail="Thumbnail not available")
+        thumb = generate_thumbnail(
+            photo.file_path,
+            project_id=project_id,
+            thumbnail_root=project.thumbnail_path,
+        )
+        if not thumb:
+            raise HTTPException(status_code=404, detail="Thumbnail not available")
+        photo.thumbnail_path = thumb
+        db.commit()
+
+    return FileResponse(
+        photo.thumbnail_path,
+        media_type="image/jpeg",
+        headers={"Cache-Control": "no-cache, must-revalidate"},
+    )
+
+
+@router.get("/{project_id}/photos/{photo_id}/original")
+def get_project_photo_original(
+    project_id: int,
+    photo_id: int,
+    db: Session = Depends(get_db),
+):
+    """Download original file within project scope."""
+    _get_or_404(db, project_id)
+    photo = _get_project_photo_or_404(db, project_id, photo_id)
+
+    if not os.path.exists(photo.file_path):
+        raise HTTPException(status_code=404, detail="Original file not found on disk")
+
+    return FileResponse(
+        photo.file_path,
+        media_type=photo.mime_type or "application/octet-stream",
+        filename=photo.file_name,
+        headers={
+            "Cache-Control": "private, max-age=0",
+            "Content-Disposition": f'attachment; filename="{photo.file_name}"',
+        },
+    )
+
+
+@router.get("/{project_id}/photos/{photo_id}/ai", response_model=AIAnalysisResponse)
+def get_project_photo_ai(
+    project_id: int,
+    photo_id: int,
+    db: Session = Depends(get_db),
+):
+    """Get latest AI analysis within project scope."""
+    _get_or_404(db, project_id)
+    _get_project_photo_or_404(db, project_id, photo_id)
+
+    analysis = (
+        db.query(PhotoAIAnalysis)
+        .filter(
+            PhotoAIAnalysis.photo_id == photo_id,
+            PhotoAIAnalysis.project_id == project_id,
+        )
+        .order_by(PhotoAIAnalysis.created_at.desc())
+        .first()
+    )
+    if not analysis:
+        raise HTTPException(status_code=404, detail="No AI analysis found for this photo")
+    return analysis
+
+
 # ─── Search ──────────────────────────────────────────────────────────────────
 
 @router.get("/{project_id}/search", response_model=SearchResponse)
@@ -780,3 +873,18 @@ def _get_or_404(db: Session, project_id: int) -> Project:
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
     return project
+
+
+def _get_project_photo_or_404(db: Session, project_id: int, photo_id: int) -> Photo:
+    photo = (
+        db.query(Photo)
+        .filter(
+            Photo.id == photo_id,
+            Photo.project_id == project_id,
+            Photo.deleted_at.is_(None),
+        )
+        .first()
+    )
+    if not photo:
+        raise HTTPException(status_code=404, detail="Photo not found in project")
+    return photo

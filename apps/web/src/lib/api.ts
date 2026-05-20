@@ -38,7 +38,7 @@ export interface ProjectUpdate {
 
 export interface Photo {
   id: number;
-  project_id: number | null;
+  project_id: number;
   file_name: string;
   mime_type: string | null;
   width: number | null;
@@ -462,6 +462,18 @@ export const api = {
       request<TimelineResponse>(
         `/projects/${id}/photos/timeline${qs({ folder_id: folderId, folder_scope: folderScope })}`
       ),
+    photo: (id: number, photoId: number) =>
+      request<PhotoDetail>(`/projects/${id}/photos/${photoId}`),
+    photoAI: (id: number, photoId: number) =>
+      request<AIAnalysis>(`/projects/${id}/photos/${photoId}/ai`),
+    thumbnailUrl: (id: number, photoId: number, updatedAt?: string | null) => {
+      const base = `${BASE}/projects/${id}/photos/${photoId}/thumbnail`;
+      if (!updatedAt) return base;
+      const version = Date.parse(updatedAt);
+      return Number.isNaN(version) ? base : `${base}?v=${version}`;
+    },
+    originalUrl: (id: number, photoId: number) =>
+      `${BASE}/projects/${id}/photos/${photoId}/original`,
   },
 
   photos: {

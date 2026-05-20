@@ -686,6 +686,11 @@ export function ProjectAISettingsPage() {
                 </option>
               ))}
             </select>
+            {testPhotos.length === 0 && (
+              <p className="text-caption-sm text-mute mt-1">
+                当前项目暂无可测试图片，请先在任务中心扫描该项目照片库。
+              </p>
+            )}
           </div>
 
           <div className="flex items-end gap-2">
