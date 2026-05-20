@@ -436,23 +436,23 @@ function DebugLogSettingsCard() {
     setForm((prev) => (prev ? { ...prev, [key]: value } : prev));
   }
 
-  if (isLoading || !form) {
-    return (
-      <SettingsCard title="Debug 与日志">
-        <div className="flex items-center gap-2 text-mute py-6 justify-center">
-          <Loader2 className="w-4 h-4 animate-spin" />
-          <span className="text-body-sm">加载 Debug 配置中…</span>
-        </div>
-      </SettingsCard>
-    );
-  }
-
   if (isError) {
     return (
       <SettingsCard title="Debug 与日志">
         <div className="py-6 flex items-center gap-2 text-red-500">
           <AlertCircle className="w-4 h-4" />
           <span className="text-body-sm">加载失败：{(error as Error)?.message ?? "未知错误"}</span>
+        </div>
+      </SettingsCard>
+    );
+  }
+
+  if (isLoading || !form) {
+    return (
+      <SettingsCard title="Debug 与日志">
+        <div className="flex items-center gap-2 text-mute py-6 justify-center">
+          <Loader2 className="w-4 h-4 animate-spin" />
+          <span className="text-body-sm">加载 Debug 配置中…</span>
         </div>
       </SettingsCard>
     );
