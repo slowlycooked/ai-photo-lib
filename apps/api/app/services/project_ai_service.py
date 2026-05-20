@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import re
+import logging
+from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Any
 
@@ -11,6 +13,8 @@ from ..models.ai import ProjectAISettings, ProjectPromptTemplate
 from ..models.photo import Photo
 
 TASK_IMAGE_ANALYSIS = "image_analysis"
+
+logger = logging.getLogger(__name__)
 
 _DEFAULT_USER_PROMPT = """请重点分析以下内容：
 - 场景
@@ -51,6 +55,16 @@ JSON 字段必须严格为：
 }
 
 现在分析图片。只返回 JSON。"""
+
+_STRICT_JSON_RETRY_PREFIX = """上一次输出无效，因为包含解释或推理过程。
+
+现在重新输出。
+只能输出 JSON。
+第一个字符必须是 {。
+最后一个字符必须是 }。
+禁止输出“首先”“我需要”“根据规则”“让我”“现在”等文字。
+不要解释。
+不要 Markdown。"""
 
 _VARIABLE_PATTERN = re.compile(r"\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}")
 
@@ -125,7 +139,7 @@ def get_or_create_project_ai_settings(db: Session, project_id: int) -> ProjectAI
         model_name=settings.openai_vision_model,
         temperature=settings.ai_vision_temperature,
         top_p=0.8,
-        max_tokens=max(settings.ai_vision_max_tokens, 256),
+        max_tokens=settings.ai_vision_max_tokens,
         retry_count=1,
         output_language="zh-CN",
         json_parse_strategy="auto_extract",
@@ -224,15 +238,143 @@ def render_analysis_prompt(
     output_language: str,
     override_prompt: str | None = None,
 ) -> str:
+    system_text, user_text = render_analysis_prompt_parts(
+        photo=photo,
+        prompt_template=prompt_template,
+        output_language=output_language,
+        override_prompt=override_prompt,
+    )
+    return "\n\n".join(p for p in [system_text, user_text] if p.strip())
+
+
+def render_analysis_prompt_parts(
+    *,
+    photo: Photo,
+    prompt_template: ProjectPromptTemplate,
+    output_language: str,
+    override_prompt: str | None = None,
+) -> tuple[str, str]:
     user_prompt = override_prompt if override_prompt else prompt_template.user_prompt
     variables = _build_prompt_variables(photo)
     rendered_user_prompt = _render_template_variables(user_prompt, variables)
 
     language_line = f"所有文本字段必须使用{output_language}。"
+    custom_system = prompt_template.system_prompt.strip() if prompt_template.system_prompt else ""
 
-    system_prompt = prompt_template.system_prompt.strip() if prompt_template.system_prompt else ""
-    parts = [_FIXED_SYSTEM_PREFIX, language_line]
-    if system_prompt:
-        parts.append(system_prompt)
-    parts.extend([rendered_user_prompt, _FIXED_SCHEMA_SUFFIX])
-    return "\n\n".join(p for p in parts if p.strip())
+    system_text = "\n\n".join(
+        p
+        for p in [_FIXED_SYSTEM_PREFIX, language_line, custom_system, _FIXED_SCHEMA_SUFFIX]
+        if p.strip()
+    )
+
+    user_text = "\n\n".join(
+        [
+            "请分析这张图片，并直接返回 JSON。",
+            "不要解释，不要描述你的思考过程。",
+            rendered_user_prompt,
+        ]
+    )
+
+    return system_text, user_text
+
+
+def should_retry_strict_json_output(raw_text: str) -> bool:
+    stripped = raw_text.lstrip()
+    return not stripped.startswith("{") or "{" not in stripped
+
+
+def build_strict_json_retry_user_text() -> str:
+    return _STRICT_JSON_RETRY_PREFIX
+
+
+def analyze_with_strict_json_retry(
+    *,
+    analyze_image_fn: Callable[..., str],
+    image_path: str,
+    system_text: str,
+    user_text: str,
+    endpoint_url: str | None = None,
+    model_name: str | None = None,
+    temperature: float | None = None,
+    top_p: float | None = None,
+    max_tokens: int | None = None,
+) -> str:
+    raw_text = analyze_image_fn(
+        image_path,
+        endpoint_url=endpoint_url,
+        model_name=model_name,
+        prompt_text=user_text,
+        system_text=system_text,
+        temperature=temperature,
+        top_p=top_p,
+        max_tokens=max_tokens,
+    )
+    if not should_retry_strict_json_output(raw_text):
+        return raw_text
+
+    logger.warning("Model output was not strict JSON; retrying once with stricter user prompt.")
+    return analyze_image_fn(
+        image_path,
+        endpoint_url=endpoint_url,
+        model_name=model_name,
+        prompt_text=build_strict_json_retry_user_text(),
+        system_text=system_text,
+        temperature=temperature,
+        top_p=top_p,
+        max_tokens=max_tokens,
+    )
+
+
+def analyze_and_parse_with_strict_json_retry(
+    *,
+    analyze_image_fn: Callable[..., str],
+    parse_output_fn: Callable[..., dict[str, Any]],
+    image_path: str,
+    system_text: str,
+    user_text: str,
+    strategy: str,
+    endpoint_url: str | None = None,
+    model_name: str | None = None,
+    temperature: float | None = None,
+    top_p: float | None = None,
+    max_tokens: int | None = None,
+) -> tuple[str, dict[str, Any]]:
+    raw_text = analyze_image_fn(
+        image_path,
+        endpoint_url=endpoint_url,
+        model_name=model_name,
+        prompt_text=user_text,
+        system_text=system_text,
+        temperature=temperature,
+        top_p=top_p,
+        max_tokens=max_tokens,
+    )
+
+    if should_retry_strict_json_output(raw_text):
+        logger.warning("Model output was not strict JSON; retrying once with strict retry prompt.")
+        raw_text = analyze_image_fn(
+            image_path,
+            endpoint_url=endpoint_url,
+            model_name=model_name,
+            prompt_text=build_strict_json_retry_user_text(),
+            system_text=system_text,
+            temperature=temperature,
+            top_p=top_p,
+            max_tokens=max_tokens,
+        )
+
+    try:
+        return raw_text, parse_output_fn(raw_text, strategy=strategy)
+    except ValueError:
+        logger.warning("Model output failed JSON parsing; retrying once with strict retry prompt.")
+        retry_raw_text = analyze_image_fn(
+            image_path,
+            endpoint_url=endpoint_url,
+            model_name=model_name,
+            prompt_text=build_strict_json_retry_user_text(),
+            system_text=system_text,
+            temperature=temperature,
+            top_p=top_p,
+            max_tokens=max_tokens,
+        )
+        return retry_raw_text, parse_output_fn(retry_raw_text, strategy=strategy)

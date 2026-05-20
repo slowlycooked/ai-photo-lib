@@ -42,10 +42,22 @@ class Settings(BaseSettings):
     thumbnail_size: int = 512
     api_host: str = "0.0.0.0"
     api_port: int = 8000
-    ai_vision_max_tokens: int = 512
-    ai_vision_temperature: float = 0.0
+    ai_vision_max_tokens: int = 1200
+    ai_vision_temperature: float = 0.1
     ai_max_retries: int = 3
     ai_worker_concurrency: int = 1
+
+    # ── Embedding / hybrid search config ─────────────────────────────────────
+    embedding_base_url: str = ""
+    embedding_api_key: str = ""
+    embedding_model: str = ""
+    embedding_dimension: int = 1024
+    embedding_timeout_seconds: int = 60
+    search_vector_top_k: int = 200
+    search_keyword_top_k: int = 2000
+    search_rrf_k: int = 60
+    search_vector_weight: float = 0.45
+    search_keyword_weight: float = 0.55
 
     @model_validator(mode="after")
     def _set_host_path_default(self) -> "Settings":

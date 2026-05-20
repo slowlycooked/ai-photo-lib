@@ -400,6 +400,22 @@ export const api = {
         `/projects/${id}/ai/jobs/failed`,
         { method: "DELETE" }
       ),
+    reanalyze: (
+      id: number,
+      body: {
+        scope: "all" | "completed" | "failed" | "selected";
+        photo_ids?: number[];
+        clear_existing_analysis?: boolean;
+      }
+    ) =>
+      request<{ created_jobs: number; message: string }>(
+        `/projects/${id}/ai/analyze/restart`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        }
+      ),
     getAiSettings: (id: number) =>
       request<ProjectAISettings>(`/projects/${id}/ai-settings`),
     updateAiSettings: (id: number, body: ProjectAISettingsUpdate) =>
@@ -423,6 +439,10 @@ export const api = {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
+      }),
+    deletePromptTemplate: (id: number, templateId: number) =>
+      request<void>(`/projects/${id}/prompt-templates/${templateId}`, {
+        method: "DELETE",
       }),
     resetDefaultPromptTemplate: (id: number) =>
       request<PromptTemplate>(`/projects/${id}/prompt-templates/reset-default`, {
@@ -501,14 +521,18 @@ export const api = {
       request<TimelineResponse>(
         `/photos/timeline${qs({ project_id: projectId, folder_id: folderId, folder_scope: folderScope })}`
       ),
+    /** @deprecated Use api.projects.photo(projectId, photoId) instead. */
     get: (id: number) => request<PhotoDetail>(`/photos/${id}`),
+    /** @deprecated Use api.projects.thumbnailUrl(projectId, photoId, updatedAt) instead. */
     thumbnailUrl: (id: number, updatedAt?: string | null) => {
       const base = `${BASE}/photos/${id}/thumbnail`;
       if (!updatedAt) return base;
       const version = Date.parse(updatedAt);
       return Number.isNaN(version) ? base : `${base}?v=${version}`;
     },
+    /** @deprecated Use api.projects.originalUrl(projectId, photoId) instead. */
     originalUrl: (id: number) => `${BASE}/photos/${id}/original`,
+    /** @deprecated Use api.projects.photoAI(projectId, photoId) instead. */
     getAI: (id: number) => request<AIAnalysis>(`/photos/${id}/ai`),
   },
 

@@ -21,7 +21,8 @@ export default function App() {
             <Route path="/tags" element={<TagsPage />} />
             <Route path="/tasks" element={<TasksPage />} />
             <Route path="/settings" element={<SettingsPage />} />
-            <Route path="/project/settings/ai" element={<ProjectAISettingsPage />} />
+            {/* Legacy AI settings routes — redirect to tasks tab */}
+            <Route path="/project/settings/ai" element={<Navigate to="/tasks?tab=ai-settings" replace />} />
             <Route path="/project/:projectId/settings/ai" element={<ProjectAISettingsPage />} />
             <Route path="/projects/:projectId/settings/ai" element={<ProjectAISettingsPage />} />
           </Routes>

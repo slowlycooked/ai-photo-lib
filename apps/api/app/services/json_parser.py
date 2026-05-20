@@ -22,6 +22,49 @@ _DEFAULTS: dict[str, Any] = {
     "confidence": 0.0,
 }
 
+_SCHEMA_ALIASES: dict[str, tuple[str, ...]] = {
+    "scene_tags": ("scene_tags", "scene_category", "lifestyle_tags"),
+    "object_tags": (
+        "object_tags",
+        "objects",
+        "animals",
+        "food_drink",
+        "transportation",
+        "clothing_accessories",
+        "people_tags",
+    ),
+    "activity_tags": ("activity_tags", "activities"),
+    "location_clues": (
+        "location_clues",
+        "indoor_outdoor",
+        "location_type",
+        "time_clues",
+        "season_weather",
+    ),
+    "quality_tags": ("quality_tags", "lighting_features", "mood_tags"),
+}
+
+_CN_KEYWORD_TAGS: dict[str, tuple[str, str]] = {
+    "夜": ("scene_tags", "night"),
+    "夜晚": ("scene_tags", "night"),
+    "建筑": ("scene_tags", "architecture"),
+    "塔": ("object_tags", "tower"),
+    "楼": ("object_tags", "building"),
+    "传统": ("quality_tags", "traditional_style"),
+    "清晰": ("quality_tags", "clear"),
+    "高清": ("quality_tags", "high_quality"),
+}
+
+_EN_KEYWORD_TAGS: dict[str, tuple[str, str]] = {
+    "night": ("scene_tags", "night"),
+    "architecture": ("scene_tags", "architecture"),
+    "tower": ("object_tags", "tower"),
+    "building": ("object_tags", "building"),
+    "traditional": ("quality_tags", "traditional_style"),
+    "high quality": ("quality_tags", "high_quality"),
+    "clear": ("quality_tags", "clear"),
+}
+
 
 def _ensure_list(value: Any) -> list:
     if isinstance(value, list):
@@ -79,11 +122,183 @@ def _normalize(data: dict) -> dict:
     return result
 
 
+def _append_unique(target: list[str], values: list[str]) -> None:
+    for value in values:
+        text = str(value).strip()
+        if not text:
+            continue
+        if text not in target:
+            target.append(text)
+
+
+def _to_schema_payload(data: dict) -> dict:
+    """Map model-specific keys into the stable analysis schema."""
+    payload: dict[str, Any] = {}
+
+    if "caption" in data:
+        payload["caption"] = data.get("caption")
+    if "people_count" in data:
+        payload["people_count"] = data.get("people_count")
+    if "confidence" in data:
+        payload["confidence"] = data.get("confidence")
+    if "ocr_text" in data:
+        payload["ocr_text"] = data.get("ocr_text")
+
+    for schema_key, aliases in _SCHEMA_ALIASES.items():
+        merged: list[str] = []
+        for alias in aliases:
+            _append_unique(merged, _ensure_list(data.get(alias)))
+        if merged:
+            payload[schema_key] = merged
+
+    merged_search_keywords: list[str] = []
+    _append_unique(merged_search_keywords, _ensure_list(data.get("search_keywords")))
+    _append_unique(merged_search_keywords, _ensure_list(payload.get("scene_tags")))
+    _append_unique(merged_search_keywords, _ensure_list(payload.get("object_tags")))
+    _append_unique(merged_search_keywords, _ensure_list(payload.get("activity_tags")))
+    _append_unique(merged_search_keywords, _ensure_list(payload.get("location_clues")))
+    if merged_search_keywords:
+        payload["search_keywords"] = merged_search_keywords
+
+    return payload
+
+
 def validate_image_analysis_result(data: dict) -> dict:
     """Validate/normalize parsed image-analysis payload into required schema."""
     if not isinstance(data, dict):
         raise ValueError("Model output root must be a JSON object")
-    return _normalize(data)
+    return _normalize(_to_schema_payload(data))
+
+
+def _first_nonempty_line(text: str) -> str:
+    for line in text.splitlines():
+        s = line.strip()
+        if not s:
+            continue
+        if s in ("{", "}"):
+            continue
+        if s.startswith("- "):
+            continue
+        return s
+    return ""
+
+
+def _extract_partial_json_pairs(raw_text: str) -> dict[str, Any]:
+    """Recover key/value pairs from truncated JSON-like output.
+
+    Example input often ends with an unclosed quote/bracket due to token limit.
+    We keep only lines that can be parsed independently.
+    """
+    recovered: dict[str, Any] = {}
+    for line in raw_text.splitlines():
+        stripped = line.strip().rstrip(",")
+        if not stripped or stripped in ("{", "}"):
+            continue
+        m = re.match(r'^"(?P<key>[^"]+)"\s*:\s*(?P<value>.+)$', stripped)
+        if not m:
+            continue
+
+        key = m.group("key")
+        value_text = m.group("value").strip()
+        if not value_text:
+            continue
+
+        # Ignore unfinished scalar/list values produced by truncated output.
+        if value_text.startswith('"') and not re.match(r'^"(?:[^"\\]|\\.)*"$', value_text):
+            continue
+        if value_text.startswith("[") and not value_text.endswith("]"):
+            continue
+        if value_text.startswith("{") and not value_text.endswith("}"):
+            continue
+
+        try:
+            recovered[key] = json.loads(value_text)
+        except json.JSONDecodeError:
+            continue
+
+    return recovered
+
+
+def _infer_people_count(text: str) -> int:
+    lowered = text.lower()
+    if "无人" in text or "没有人" in text or "no people" in lowered:
+        return 0
+
+    m = re.search(r"people_count\s*[:：]\s*(\d+)", lowered)
+    if m:
+        return int(m.group(1))
+
+    m = re.search(r"(?:人数|人们数量)\s*[:：]?\s*(\d+)", text)
+    if m:
+        return int(m.group(1))
+
+    return 0
+
+
+def _infer_confidence(text: str) -> float:
+    lowered = text.lower()
+    m = re.search(r"confidence\s*[:：]\s*([0-9]+(?:\.[0-9]+)?%?)", lowered)
+    if m:
+        return _ensure_float(m.group(1))
+
+    m = re.search(r"置信度\s*[:：]?\s*([0-9]+(?:\.[0-9]+)?%?)", text)
+    if m:
+        return _ensure_float(m.group(1))
+
+    if "较高" in text or "高" in text:
+        return 0.75
+    if "较低" in text or "低" in text:
+        return 0.35
+    return 0.5
+
+
+def _extract_tags_from_keywords(text: str) -> dict[str, list[str]]:
+    lowered = text.lower()
+    tags: dict[str, list[str]] = {
+        "scene_tags": [],
+        "object_tags": [],
+        "activity_tags": [],
+        "location_clues": [],
+        "quality_tags": [],
+        "search_keywords": [],
+    }
+
+    for keyword, (bucket, tag) in _CN_KEYWORD_TAGS.items():
+        if keyword in text and tag not in tags[bucket]:
+            tags[bucket].append(tag)
+
+    for keyword, (bucket, tag) in _EN_KEYWORD_TAGS.items():
+        if keyword in lowered and tag not in tags[bucket]:
+            tags[bucket].append(tag)
+
+    if "城市" in text or "city" in lowered:
+        tags["location_clues"].append("city")
+
+    for bucket in ("scene_tags", "object_tags", "location_clues"):
+        for tag in tags[bucket]:
+            if tag not in tags["search_keywords"]:
+                tags["search_keywords"].append(tag)
+
+    return tags
+
+
+def _build_fallback_from_plain_text(raw_text: str) -> dict:
+    """Build a best-effort schema payload when model output has no JSON."""
+    caption = _first_nonempty_line(raw_text)
+    tags = _extract_tags_from_keywords(raw_text)
+    result = {
+        "caption": caption,
+        "scene_tags": tags["scene_tags"],
+        "object_tags": tags["object_tags"],
+        "activity_tags": tags["activity_tags"],
+        "people_count": _infer_people_count(raw_text),
+        "ocr_text": [],
+        "location_clues": tags["location_clues"],
+        "quality_tags": tags["quality_tags"],
+        "search_keywords": tags["search_keywords"],
+        "confidence": _infer_confidence(raw_text),
+    }
+    return validate_image_analysis_result(result)
 
 
 def build_relative_paths(library_path: str, entry: Path) -> Tuple[str, str]:
@@ -111,8 +326,7 @@ def parse_model_json_output(raw_text: str, strategy: str = "auto_extract") -> di
     - auto_extract: full fallback pipeline including object extraction (default)
     """
     if not raw_text or not raw_text.strip():
-        logger.warning("Model returned empty output, using defaults.")
-        return dict(_DEFAULTS)
+        raise ValueError("Model returned empty output; cannot parse JSON.")
 
     # Some models occasionally prepend BOM-like markers.
     raw_text = raw_text.strip().lstrip("\ufeff")
@@ -168,6 +382,20 @@ def parse_model_json_output(raw_text: str, strategy: str = "auto_extract") -> di
             continue
         if isinstance(data, dict):
             return validate_image_analysis_result(data)
+
+    # Attempt 5: recover parseable key/value lines from truncated JSON-like text.
+    partial = _extract_partial_json_pairs(raw_text)
+    if partial:
+        logger.warning(
+            "Model output JSON was truncated; recovered partial key/value fields."
+        )
+        return validate_image_analysis_result(partial)
+
+    if strategy == "auto_extract":
+        logger.warning(
+            "Model output had no decodable JSON; using plain-text fallback extraction."
+        )
+        return _build_fallback_from_plain_text(raw_text)
 
     raise ValueError(
         "Cannot parse model output as JSON. "

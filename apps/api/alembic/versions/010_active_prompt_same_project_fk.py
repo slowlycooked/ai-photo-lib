@@ -1,6 +1,6 @@
 """enforce active prompt template belongs to same project
 
-Revision ID: 010_active_prompt_same_project_fk
+Revision ID: 010_active_prompt_same_proj_fk
 Revises: 009_project_isolation
 Create Date: 2026-05-20
 """
@@ -11,7 +11,7 @@ from typing import Sequence, Union
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "010_active_prompt_same_project_fk"
+revision: str = "010_active_prompt_same_proj_fk"
 down_revision: Union[str, None] = "009_project_isolation"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None

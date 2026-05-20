@@ -4,16 +4,23 @@ import os
 import threading
 import time
 from datetime import date, datetime, time as time_
-from typing import Optional
+from typing import List, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse
-from sqlalchemy import extract, func
+from pydantic import BaseModel
+from sqlalchemy import and_, extract, func
 from sqlalchemy.orm import Session
 
 from ..config import settings
 from ..database import SessionLocal, get_db
-from ..models.ai import AIJob, PhotoAIAnalysis, ProjectPromptTemplate
+from ..models.ai import (
+    AIJob,
+    PhotoAIAnalysis,
+    PhotoEmbedding,
+    ProjectAISettings,
+    ProjectPromptTemplate,
+)
 from ..models.photo import Photo
 from ..models.project import Project
 from ..schemas.project_ai import (
@@ -38,11 +45,12 @@ from ..services.json_parser import parse_model_json_output
 from ..services.project_ai_service import (
     TASK_IMAGE_ANALYSIS,
     activate_prompt_template,
+    analyze_and_parse_with_strict_json_retry,
     build_default_template,
     default_output_schema,
     get_active_prompt_template,
     get_or_create_project_ai_settings,
-    render_analysis_prompt,
+    render_analysis_prompt_parts,
 )
 from ..services.vlm_client import VLMRequestError, analyze_image
 from ..schemas.project import (
@@ -209,6 +217,147 @@ def start_project_ai(project_id: int, db: Session = Depends(get_db)):
 
     db.commit()
     return StartAnalysisResponse(created_jobs=count, message="AI analysis jobs created")
+
+
+@router.post("/{project_id}/ai/embeddings/rebuild", response_model=StartAnalysisResponse)
+def rebuild_project_embeddings(project_id: int, db: Session = Depends(get_db)):
+    _get_or_404(db, project_id)
+
+    active_embed_photo_ids = (
+        db.query(AIJob.photo_id)
+        .filter(
+            AIJob.project_id == project_id,
+            AIJob.job_type == "embed",
+            AIJob.status.in_(["queued", "running"]),
+        )
+        .subquery()
+    )
+
+    rows = (
+        db.query(PhotoAIAnalysis.photo_id)
+        .outerjoin(
+            PhotoEmbedding,
+            and_(
+                PhotoEmbedding.project_id == PhotoAIAnalysis.project_id,
+                PhotoEmbedding.photo_id == PhotoAIAnalysis.photo_id,
+            ),
+        )
+        .filter(
+            PhotoAIAnalysis.project_id == project_id,
+            PhotoEmbedding.photo_id.is_(None),
+            PhotoAIAnalysis.photo_id.not_in(active_embed_photo_ids),
+        )
+        .all()
+    )
+
+    count = 0
+    for (photo_id,) in rows:
+        db.add(
+            AIJob(
+                project_id=project_id,
+                photo_id=photo_id,
+                job_type="embed",
+                status="queued",
+            )
+        )
+        count += 1
+
+    db.commit()
+    return StartAnalysisResponse(created_jobs=count, message="Embedding rebuild jobs created")
+
+
+# ─── AI restart ──────────────────────────────────────────────────────────────
+
+class ReanalyzeRequest(BaseModel):
+    scope: Literal["all", "completed", "failed", "selected"] = "completed"
+    photo_ids: List[int] = []
+    clear_existing_analysis: bool = True
+
+
+@router.post("/{project_id}/ai/analyze/restart", response_model=StartAnalysisResponse)
+def restart_project_ai_analysis(
+    project_id: int,
+    body: ReanalyzeRequest,
+    db: Session = Depends(get_db),
+):
+    _get_or_404(db, project_id)
+
+    # Exclude photos that are currently being processed
+    active_photo_ids = (
+        db.query(AIJob.photo_id)
+        .filter(
+            AIJob.project_id == project_id,
+            AIJob.status.in_(["queued", "running"]),
+        )
+        .subquery()
+    )
+
+    query = db.query(Photo).filter(
+        Photo.project_id == project_id,
+        Photo.deleted_at.is_(None),
+        Photo.id.not_in(active_photo_ids),
+    )
+
+    if body.scope == "completed":
+        query = query.join(
+            PhotoAIAnalysis,
+            (PhotoAIAnalysis.photo_id == Photo.id)
+            & (PhotoAIAnalysis.project_id == project_id),
+        )
+    elif body.scope == "selected":
+        if not body.photo_ids:
+            return StartAnalysisResponse(
+                created_jobs=0,
+                message="No selected photos",
+            )
+        query = query.filter(Photo.id.in_(body.photo_ids))
+    elif body.scope == "failed":
+        failed_photo_ids = (
+            db.query(AIJob.photo_id)
+            .filter(
+                AIJob.project_id == project_id,
+                AIJob.status == "failed",
+            )
+            .subquery()
+        )
+        query = query.filter(Photo.id.in_(failed_photo_ids))
+    # scope == "all": no extra filter needed
+
+    photos = query.all()
+    photo_ids = [p.id for p in photos]
+
+    if body.clear_existing_analysis and photo_ids:
+        db.query(PhotoAIAnalysis).filter(
+            PhotoAIAnalysis.project_id == project_id,
+            PhotoAIAnalysis.photo_id.in_(photo_ids),
+        ).delete(synchronize_session=False)
+
+    # Remove old completed/failed jobs to keep stats clean
+    if photo_ids:
+        db.query(AIJob).filter(
+            AIJob.project_id == project_id,
+            AIJob.photo_id.in_(photo_ids),
+            AIJob.status.in_(["success", "failed"]),
+        ).delete(synchronize_session=False)
+
+    count = 0
+    for photo in photos:
+        db.add(
+            AIJob(
+                photo_id=photo.id,
+                project_id=project_id,
+                job_type="reanalyze",
+                status="queued",
+            )
+        )
+        photo.status = "indexed"
+        count += 1
+
+    db.commit()
+    return StartAnalysisResponse(
+        created_jobs=count,
+        message="AI re-analysis jobs created",
+    )
 
 
 @router.get("/{project_id}/ai/status", response_model=AIStatusResponse)
@@ -490,6 +639,41 @@ def update_project_prompt_template(
     return new_template
 
 
+@router.delete(
+    "/{project_id}/prompt-templates/{template_id}",
+    status_code=204,
+)
+def delete_project_prompt_template(
+    project_id: int,
+    template_id: int,
+    db: Session = Depends(get_db),
+):
+    _get_or_404(db, project_id)
+    template = (
+        db.query(ProjectPromptTemplate)
+        .filter(
+            ProjectPromptTemplate.id == template_id,
+            ProjectPromptTemplate.project_id == project_id,
+        )
+        .first()
+    )
+    if not template:
+        raise HTTPException(status_code=404, detail="Prompt template not found")
+
+    settings_row = (
+        db.query(ProjectAISettings)
+        .filter(ProjectAISettings.project_id == project_id)
+        .first()
+    )
+    if template.is_active or (
+        settings_row and settings_row.active_prompt_template_id == template.id
+    ):
+        raise HTTPException(status_code=400, detail="Cannot delete active prompt template")
+
+    db.delete(template)
+    db.commit()
+
+
 @router.post(
     "/{project_id}/prompt-templates/reset-default",
     response_model=PromptTemplateResponse,
@@ -560,7 +744,7 @@ def test_project_prompt_template(
         template_id=body.prompt_template_id,
     )
 
-    prompt = render_analysis_prompt(
+    system_text, user_text = render_analysis_prompt_parts(
         photo=photo,
         prompt_template=template,
         output_language=settings_row.output_language,
@@ -570,11 +754,15 @@ def test_project_prompt_template(
     image_path = photo.thumbnail_path or photo.file_path
     started = time.perf_counter()
     try:
-        raw_output = analyze_image(
-            image_path,
+        raw_output, parsed = analyze_and_parse_with_strict_json_retry(
+            analyze_image_fn=analyze_image,
+            parse_output_fn=parse_model_json_output,
+            image_path=image_path,
             endpoint_url=settings_row.endpoint_url,
             model_name=settings_row.model_name,
-            prompt_text=prompt,
+            system_text=system_text,
+            user_text=user_text,
+            strategy=settings_row.json_parse_strategy,
             temperature=settings_row.temperature,
             top_p=settings_row.top_p,
             max_tokens=settings_row.max_tokens,
@@ -590,33 +778,28 @@ def test_project_prompt_template(
             error_code=exc.code,
             duration_ms=duration_ms,
         )
-
-    duration_ms = int((time.perf_counter() - started) * 1000)
-
-    try:
-        parsed = parse_model_json_output(
-            raw_output,
-            strategy=settings_row.json_parse_strategy,
-        )
-        return PromptTemplateTestResponse(
-            success=True,
-            raw_output=raw_output,
-            parsed_json=parsed,
-            error=None,
-            retryable=None,
-            error_code=None,
-            duration_ms=duration_ms,
-        )
     except Exception as exc:  # noqa: BLE001
+        duration_ms = int((time.perf_counter() - started) * 1000)
         return PromptTemplateTestResponse(
             success=False,
-            raw_output=raw_output,
+            raw_output="",
             parsed_json=None,
             error=str(exc),
             retryable=False,
             error_code="parse_error",
             duration_ms=duration_ms,
         )
+
+    duration_ms = int((time.perf_counter() - started) * 1000)
+    return PromptTemplateTestResponse(
+        success=True,
+        raw_output=raw_output,
+        parsed_json=parsed,
+        error=None,
+        retryable=None,
+        error_code=None,
+        duration_ms=duration_ms,
+    )
 
 
 # ─── Photos ───────────────────────────────────────────────────────────────────
@@ -803,6 +986,7 @@ def project_search(
     q: str,
     page: int = 1,
     page_size: int = 50,
+    mode: str = Query("hybrid", pattern="^(keyword|vector|hybrid)$"),
     folder_id: Optional[int] = None,
     folder_scope: str = "subtree",
     db: Session = Depends(get_db),
@@ -811,7 +995,7 @@ def project_search(
     _get_or_404(db, project_id)
     total, items = search_photos(
         db, q, page=page, page_size=page_size,
-        project_id=project_id, folder_id=folder_id, folder_scope=folder_scope,
+        project_id=project_id, folder_id=folder_id, folder_scope=folder_scope, mode=mode,
     )
     return SearchResponse(query=q, total=total, page=page, page_size=page_size, items=items)
 

@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import List, Optional
 
 import sqlalchemy as sa
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import BigInteger, Boolean, Float, ForeignKey, Integer, JSON, Text, TIMESTAMP, func
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import Mapped, mapped_column
@@ -47,20 +48,25 @@ class PhotoAIAnalysis(Base):
 
 
 class PhotoEmbedding(Base):
-    """Placeholder model for future pgvector embeddings (v0.4+).
-
-    The three embedding columns are stored as JSON-serialised TEXT for now.
-    They will be migrated to the native `vector(1024)` type in v0.4.
-    """
+    """Project-scoped photo embeddings stored in pgvector columns."""
 
     __tablename__ = "photo_embeddings"
-
-    photo_id: Mapped[int] = mapped_column(
-        BigInteger, ForeignKey("photos.id", ondelete="CASCADE"), primary_key=True
+    __table_args__ = (
+        sa.UniqueConstraint("project_id", "photo_id", name="uq_photo_embeddings_project_photo"),
+        sa.Index("ix_photo_embeddings_project_id", "project_id"),
     )
-    caption_embedding: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    tag_embedding: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    ocr_embedding: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    project_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    photo_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("photos.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    caption_embedding: Mapped[Optional[list[float]]] = mapped_column(Vector(1024), nullable=True)
+    tag_embedding: Mapped[Optional[list[float]]] = mapped_column(Vector(1024), nullable=True)
+    ocr_embedding: Mapped[Optional[list[float]]] = mapped_column(Vector(1024), nullable=True)
+    embedding_model: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
         TIMESTAMP, server_default=func.now(), nullable=False
     )
@@ -102,6 +108,13 @@ class AIJob(Base):
 
 class ProjectPromptTemplate(Base):
     __tablename__ = "project_prompt_templates"
+    __table_args__ = (
+        sa.UniqueConstraint(
+            "project_id",
+            "id",
+            name="uq_project_prompt_templates_project_id_id",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     project_id: Mapped[int] = mapped_column(

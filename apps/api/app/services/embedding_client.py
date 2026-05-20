@@ -1,0 +1,145 @@
+from __future__ import annotations
+
+import logging
+from typing import Any
+
+import httpx
+
+from ..config import settings
+
+logger = logging.getLogger(__name__)
+
+
+class EmbeddingRequestError(RuntimeError):
+    def __init__(
+        self,
+        message: str,
+        *,
+        retryable: bool = True,
+        code: str | None = None,
+    ):
+        super().__init__(message)
+        self.retryable = retryable
+        self.code = code
+
+
+def _embeddings_url_from_endpoint(endpoint_url: str) -> str:
+    url = endpoint_url.strip().rstrip("/")
+    if not url:
+        raise EmbeddingRequestError("Missing embedding endpoint URL", retryable=False, code="missing_endpoint")
+
+    if url.endswith("/embeddings"):
+        return url
+    if url.endswith("/chat/completions"):
+        return f"{url[:-len('/chat/completions')]}/embeddings"
+    if url.endswith("/completions"):
+        return f"{url[:-len('/completions')]}/embeddings"
+    if url.endswith("/v1"):
+        return f"{url}/embeddings"
+    return f"{url}/v1/embeddings"
+
+
+def _default_model() -> str:
+    return settings.embedding_model or settings.openai_model
+
+
+def _default_api_key() -> str:
+    return settings.embedding_api_key or settings.openai_api_key
+
+
+def _normalize_endpoint_url(endpoint_url: str | None = None) -> str:
+    if endpoint_url and endpoint_url.strip():
+        return _embeddings_url_from_endpoint(endpoint_url)
+
+    base = (settings.embedding_base_url or settings.openai_base_url).strip()
+    return _embeddings_url_from_endpoint(base)
+
+
+def embed_texts(
+    texts: list[str],
+    *,
+    model: str | None = None,
+    endpoint_url: str | None = None,
+    expected_dim: int | None = None,
+) -> list[list[float]]:
+    clean_texts = [t.strip() for t in texts if t and t.strip()]
+    if not clean_texts:
+        return []
+
+    used_model = model or _default_model()
+    if not used_model:
+        raise EmbeddingRequestError("Missing embedding model configuration", retryable=False, code="missing_model")
+
+    url = _normalize_endpoint_url(endpoint_url)
+    headers = {
+        "Authorization": f"Bearer {_default_api_key()}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "model": used_model,
+        "input": clean_texts,
+    }
+
+    try:
+        with httpx.Client(timeout=settings.embedding_timeout_seconds) as client:
+            response = client.post(url, json=payload, headers=headers)
+            response.raise_for_status()
+    except httpx.ConnectError as exc:
+        raise EmbeddingRequestError(
+            f"Cannot connect to embedding API at {url}",
+            retryable=True,
+            code="connect_error",
+        ) from exc
+    except httpx.TimeoutException as exc:
+        raise EmbeddingRequestError(
+            "Embedding API request timed out",
+            retryable=True,
+            code="timeout",
+        ) from exc
+    except httpx.HTTPStatusError as exc:
+        status = exc.response.status_code
+        retryable = status >= 500 or status == 429
+        raise EmbeddingRequestError(
+            f"Embedding API returned HTTP {status}: {exc.response.text[:500]}",
+            retryable=retryable,
+            code=f"http_{status}",
+        ) from exc
+
+    data: dict[str, Any] = response.json()
+    items = data.get("data") or []
+    embeddings: list[list[float]] = []
+
+    for item in sorted(items, key=lambda x: x.get("index", 0)):
+        emb = item.get("embedding")
+        if not isinstance(emb, list):
+            raise EmbeddingRequestError(
+                "Embedding response item missing embedding list",
+                retryable=False,
+                code="invalid_payload",
+            )
+        embeddings.append([float(x) for x in emb])
+
+    if len(embeddings) != len(clean_texts):
+        raise EmbeddingRequestError(
+            f"Embedding response count mismatch: expected {len(clean_texts)}, got {len(embeddings)}",
+            retryable=False,
+            code="count_mismatch",
+        )
+
+    dim = expected_dim or settings.embedding_dimension
+    for emb in embeddings:
+        if len(emb) != dim:
+            raise EmbeddingRequestError(
+                f"Embedding dimension mismatch: expected {dim}, got {len(emb)}",
+                retryable=False,
+                code="dimension_mismatch",
+            )
+
+    return embeddings
+
+
+def embed_text(text: str, **kwargs) -> list[float]:
+    vectors = embed_texts([text], **kwargs)
+    if not vectors:
+        raise EmbeddingRequestError("No embedding returned", retryable=False, code="empty_result")
+    return vectors[0]

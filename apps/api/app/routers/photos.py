@@ -29,6 +29,10 @@ _LIST_DEPRECATION_MSG = (
     "Global /photos and /photos/timeline endpoints are deprecated. "
     "Use /projects/{project_id}/photos[/timeline] instead."
 )
+_PER_PHOTO_DEPRECATION_MSG = (
+    "Global per-photo /photos/{photo_id}* endpoints are deprecated. "
+    "Use /projects/{project_id}/photos/{photo_id}* instead."
+)
 
 
 # ─── Timeline ────────────────────────────────────────────────────────────────
@@ -129,8 +133,9 @@ def list_photos(
 
 # ─── Get one ──────────────────────────────────────────────────────────────────
 
-@router.get("/{photo_id}", response_model=PhotoDetailResponse)
+@router.get("/{photo_id}", response_model=PhotoDetailResponse, deprecated=True)
 def get_photo(photo_id: int, db: Session = Depends(get_db)):
+    logger.warning(_PER_PHOTO_DEPRECATION_MSG)
     photo = (
         db.query(Photo)
         .filter(Photo.id == photo_id, Photo.deleted_at.is_(None))
@@ -143,10 +148,11 @@ def get_photo(photo_id: int, db: Session = Depends(get_db)):
 
 # ─── Thumbnail ────────────────────────────────────────────────────────────────
 
-@router.get("/{photo_id}/thumbnail")
+@router.get("/{photo_id}/thumbnail", deprecated=True)
 def get_thumbnail(photo_id: int, db: Session = Depends(get_db)):
     from ..services.thumbnail import generate_thumbnail
 
+    logger.warning(_PER_PHOTO_DEPRECATION_MSG)
     photo = (
         db.query(Photo)
         .filter(Photo.id == photo_id, Photo.deleted_at.is_(None))
@@ -174,10 +180,11 @@ def get_thumbnail(photo_id: int, db: Session = Depends(get_db)):
 
 # ─── Original download ────────────────────────────────────────────────────────
 
-@router.get("/{photo_id}/original")
+@router.get("/{photo_id}/original", deprecated=True)
 def get_original(photo_id: int, db: Session = Depends(get_db)):
     """Download the original photo file. Path is resolved from DB only — no
     caller-supplied paths are accepted, preventing path-traversal attacks."""
+    logger.warning(_PER_PHOTO_DEPRECATION_MSG)
     photo = (
         db.query(Photo)
         .filter(Photo.id == photo_id, Photo.deleted_at.is_(None))
@@ -202,8 +209,9 @@ def get_original(photo_id: int, db: Session = Depends(get_db)):
 
 # ─── AI analysis ──────────────────────────────────────────────────────────────
 
-@router.get("/{photo_id}/ai", response_model=AIAnalysisResponse)
+@router.get("/{photo_id}/ai", response_model=AIAnalysisResponse, deprecated=True)
 def get_photo_ai(photo_id: int, db: Session = Depends(get_db)):
+    logger.warning(_PER_PHOTO_DEPRECATION_MSG)
     photo = (
         db.query(Photo)
         .filter(Photo.id == photo_id, Photo.deleted_at.is_(None))

@@ -39,11 +39,14 @@ from app.models.folder import ProjectFolder  # noqa: F401 — registers 'project
 from app.models.project import Project  # noqa: F401 — registers 'projects' table in metadata
 from app.services.vlm_client import VLMRequestError, analyze_image
 from app.services.json_parser import parse_model_json_output
+from app.services.embedding_client import EmbeddingRequestError
+from app.services.embedding_service import upsert_photo_embeddings
 from app.services.project_ai_service import (
     TASK_IMAGE_ANALYSIS,
+    analyze_and_parse_with_strict_json_retry,
     get_active_prompt_template,
     get_or_create_project_ai_settings,
-    render_analysis_prompt,
+    render_analysis_prompt_parts,
 )
 from app.services.thumbnail import generate_thumbnail
 
@@ -163,6 +166,10 @@ def _process_job(db: Session, job: AIJob) -> None:
         db.commit()
         return
 
+    if job.job_type == "embed":
+        _process_embedding_job(db, job, photo, project_id)
+        return
+
     try:
         ai_settings = get_or_create_project_ai_settings(db, project_id)
         prompt_template = get_active_prompt_template(
@@ -170,7 +177,7 @@ def _process_job(db: Session, job: AIJob) -> None:
             project_id,
             task_type=TASK_IMAGE_ANALYSIS,
         )
-        prompt_text = render_analysis_prompt(
+        system_text, user_text = render_analysis_prompt_parts(
             photo=photo,
             prompt_template=prompt_template,
             output_language=ai_settings.output_language,
@@ -188,22 +195,31 @@ def _process_job(db: Session, job: AIJob) -> None:
         }
 
         image_path = _pick_image_path(photo, db)
-        logger.info("Analyzing photo %d (%s) via %s…", photo.id, photo.file_name, image_path)
-
-        raw_text = analyze_image(
+        logger.info(
+            "Analyzing photo. project_id=%d task_id=%d photo_id=%d file_name=%s prompt_template_id=%s prompt_version=%s image_path=%s",
+            project_id,
+            job.id,
+            photo.id,
+            photo.file_name,
+            prompt_template.id,
+            prompt_template.version,
             image_path,
+        )
+
+        raw_text, parsed = analyze_and_parse_with_strict_json_retry(
+            analyze_image_fn=analyze_image,
+            parse_output_fn=parse_model_json_output,
+            image_path=image_path,
             endpoint_url=ai_settings.endpoint_url,
             model_name=ai_settings.model_name,
-            prompt_text=prompt_text,
+            system_text=system_text,
+            user_text=user_text,
+            strategy=ai_settings.json_parse_strategy,
             temperature=ai_settings.temperature,
             top_p=ai_settings.top_p,
             max_tokens=ai_settings.max_tokens,
         )
         job.raw_model_output = raw_text[:_MAX_ERROR_MESSAGE_LEN]
-        parsed = parse_model_json_output(
-            raw_text,
-            strategy=ai_settings.json_parse_strategy,
-        )
 
         # Delete previous analysis for this photo in this project (upsert via delete+insert).
         # Scope by both project_id and photo_id to avoid touching other projects.
@@ -230,6 +246,24 @@ def _process_job(db: Session, job: AIJob) -> None:
             raw_result=parsed,
         )
         db.add(analysis)
+        db.flush()
+
+        try:
+            upsert_photo_embeddings(
+                db,
+                project_id=project_id,
+                photo_id=photo.id,
+                ai=analysis,
+                endpoint_url=ai_settings.endpoint_url,
+            )
+        except EmbeddingRequestError as exc:
+            logger.warning(
+                "Embedding generation failed after analysis. project_id=%d task_id=%d photo_id=%d error=%s",
+                project_id,
+                job.id,
+                photo.id,
+                exc,
+            )
 
         # Update photo status
         photo.status = "ai_indexed"
@@ -279,6 +313,74 @@ def _process_job(db: Session, job: AIJob) -> None:
                     photo.id if photo else job.photo_id,
                     exc,
                 )
+
+        db.commit()
+
+
+def _process_embedding_job(db: Session, job: AIJob, photo: Photo, project_id: int) -> None:
+    analysis = (
+        db.query(PhotoAIAnalysis)
+        .filter(
+            PhotoAIAnalysis.project_id == project_id,
+            PhotoAIAnalysis.photo_id == photo.id,
+        )
+        .first()
+    )
+    if not analysis:
+        job.status = "failed"
+        job.error_message = (
+            f"Cannot build embedding: no analysis found for photo {photo.id} in project {project_id}"
+        )
+        job.finished_at = datetime.now(timezone.utc)
+        job.updated_at = job.finished_at
+        db.commit()
+        return
+
+    try:
+        ai_settings = get_or_create_project_ai_settings(db, project_id)
+        upsert_photo_embeddings(
+            db,
+            project_id=project_id,
+            photo_id=photo.id,
+            ai=analysis,
+            endpoint_url=ai_settings.endpoint_url,
+        )
+        job.status = "success"
+        job.error_message = None
+        job.parse_error = None
+        job.finished_at = datetime.now(timezone.utc)
+        job.updated_at = job.finished_at
+        db.commit()
+    except Exception as exc:  # noqa: BLE001
+        db.rollback()
+        is_retryable = not isinstance(exc, EmbeddingRequestError) or exc.retryable
+        job.retry_count = (job.retry_count or 0) + 1
+        error_detail = f"{type(exc).__name__}: {exc}"
+        job.error_message = error_detail[:_MAX_ERROR_MESSAGE_LEN]
+        job.parse_error = error_detail[:_MAX_ERROR_MESSAGE_LEN]
+        job.finished_at = datetime.now(timezone.utc)
+        job.updated_at = job.finished_at
+
+        if is_retryable and job.retry_count < settings.ai_max_retries:
+            job.status = "queued"
+            logger.warning(
+                "Embedding job failed (attempt %d/%d). project_id=%d task_id=%d photo_id=%d error=%s",
+                job.retry_count,
+                settings.ai_max_retries,
+                project_id,
+                job.id,
+                photo.id,
+                exc,
+            )
+        else:
+            job.status = "failed"
+            logger.error(
+                "Embedding job permanently failed. project_id=%d task_id=%d photo_id=%d error=%s",
+                project_id,
+                job.id,
+                photo.id,
+                exc,
+            )
 
         db.commit()
 

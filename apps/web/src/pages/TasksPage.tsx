@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { useSearchParams } from "react-router-dom";
 import {
   Brain,
   FolderSearch,
@@ -10,11 +10,14 @@ import {
   AlertCircle,
   CheckCircle2,
   Clock,
+  Settings2,
+  RotateCcw,
 } from "lucide-react";
 import { ScanPanel } from "@/components/ScanPanel";
 import { api, type AIJob } from "@/lib/api";
 import { useScanStatus, useStartScan } from "@/hooks/useScan";
 import { useProjectContext } from "@/contexts/ProjectContext";
+import { ProjectAISettingsPanel } from "./ProjectAISettingsPanel";
 
 // ─── Stat tile ───────────────────────────────────────────────────────────────
 
@@ -230,8 +233,6 @@ function FailedJobRow({ job }: { job: AIJob }) {
   );
 }
 
-// ─── AI section ───────────────────────────────────────────────────────────────
-
 function AISection({ projectId }: { projectId: number | null }) {
   const queryClient = useQueryClient();
   const [message, setMessage] = useState<string | null>(null);
@@ -271,8 +272,48 @@ function AISection({ projectId }: { projectId: number | null }) {
     onError: (err: Error) => setMessage(`启动失败：${err.message}`),
   });
 
+  const reanalyzeCompletedMutation = useMutation({
+    mutationFn: () =>
+      api.projects.reanalyze(projectId!, {
+        scope: "completed",
+        clear_existing_analysis: true,
+      }),
+    onSuccess: (data) => {
+      setMessage(
+        data.created_jobs > 0
+          ? `已创建 ${data.created_jobs} 个重新分析任务`
+          : "没有已完成的照片需要重新分析"
+      );
+      queryClient.invalidateQueries({ queryKey: ["ai-status", projectId] });
+      setTimeout(() => setMessage(null), 5000);
+    },
+    onError: (err: Error) => setMessage(`重新分析失败：${err.message}`),
+  });
+
+  const reanalyzeAllMutation = useMutation({
+    mutationFn: () =>
+      api.projects.reanalyze(projectId!, {
+        scope: "all",
+        clear_existing_analysis: true,
+      }),
+    onSuccess: (data) => {
+      setMessage(
+        data.created_jobs > 0
+          ? `已创建 ${data.created_jobs} 个重新分析任务`
+          : "没有照片需要重新分析"
+      );
+      queryClient.invalidateQueries({ queryKey: ["ai-status", projectId] });
+      setTimeout(() => setMessage(null), 5000);
+    },
+    onError: (err: Error) => setMessage(`重新分析失败：${err.message}`),
+  });
+
   const isRunning = status && status.running > 0;
   const canRun = projectId != null;
+  const isAnyPending =
+    startMutation.isPending ||
+    reanalyzeCompletedMutation.isPending ||
+    reanalyzeAllMutation.isPending;
 
   // Rough speed: success / (age of oldest running job in hours) — simplified
   const speed = status && status.success > 0 ? status.success : null;
@@ -280,35 +321,17 @@ function AISection({ projectId }: { projectId: number | null }) {
   return (
     <section className="space-y-4">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          {isLoading ? (
-            <Loader2 className="w-4 h-4 animate-spin text-mute" />
-          ) : isRunning ? (
-            <Loader2 className="w-4 h-4 animate-spin text-primary" />
-          ) : (
-            <Brain className="w-4 h-4 text-primary" />
-          )}
-          <h2 className="text-body-sm font-semibold text-ink">
-            {isRunning ? "AI 分析进行中…" : "AI 图片分析"}
-          </h2>
-          {projectId != null && (
-            <Link
-              to={`/project/${projectId}/settings/ai`}
-              className="text-caption-sm text-primary hover:text-primary-pressed"
-            >
-              项目 AI 配置
-            </Link>
-          )}
-        </div>
-        <button
-          onClick={() => startMutation.mutate()}
-          disabled={startMutation.isPending || !canRun}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-primary text-white text-btn-sm font-bold hover:bg-primary-pressed disabled:bg-stone transition-colors"
-        >
-          <Play className="w-3.5 h-3.5" />
-          {startMutation.isPending ? "启动中…" : "开始分析"}
-        </button>
+      <div className="flex items-center gap-2">
+        {isLoading ? (
+          <Loader2 className="w-4 h-4 animate-spin text-mute" />
+        ) : isRunning ? (
+          <Loader2 className="w-4 h-4 animate-spin text-primary" />
+        ) : (
+          <Brain className="w-4 h-4 text-primary" />
+        )}
+        <h2 className="text-body-sm font-semibold text-ink">
+          {isRunning ? "AI 分析进行中…" : "AI 图片分析"}
+        </h2>
       </div>
 
       {/* Stats */}
@@ -328,6 +351,42 @@ function AISection({ projectId }: { projectId: number | null }) {
         </p>
       )}
 
+      {/* Action buttons */}
+      <div className="flex flex-wrap gap-2">
+        <button
+          onClick={() => startMutation.mutate()}
+          disabled={isAnyPending || !canRun}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-primary text-white text-btn-sm font-bold hover:bg-primary-pressed disabled:bg-stone transition-colors"
+        >
+          <Play className="w-3.5 h-3.5" />
+          {startMutation.isPending ? "启动中…" : "开始分析"}
+        </button>
+        <button
+          onClick={() => reanalyzeCompletedMutation.mutate()}
+          disabled={isAnyPending || !canRun}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-hairline text-btn-sm hover:bg-surface-card disabled:opacity-50 transition-colors"
+        >
+          <RotateCcw className="w-3.5 h-3.5" />
+          {reanalyzeCompletedMutation.isPending ? "处理中…" : "重新分析已完成"}
+        </button>
+        <button
+          onClick={() => {
+            if (!window.confirm("这会清除当前项目已有 AI 分析结果并重新生成，确认继续？")) return;
+            reanalyzeAllMutation.mutate();
+          }}
+          disabled={isAnyPending || !canRun}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-hairline text-btn-sm hover:bg-surface-card disabled:opacity-50 transition-colors"
+        >
+          <RefreshCw className="w-3.5 h-3.5" />
+          {reanalyzeAllMutation.isPending ? "处理中…" : "重新分析全部"}
+        </button>
+      </div>
+
+      <div className="text-caption-sm text-mute space-y-0.5">
+        <p>开始分析：只处理没有 AI 结果的照片</p>
+        <p>重新分析：会删除旧 AI 分析结果并重新生成</p>
+      </div>
+
       {message && <p className="text-caption-sm text-mute">{message}</p>}
 
       {!canRun && <p className="text-caption-sm text-mute">请先选择项目后再执行 AI 分析。</p>}
@@ -339,37 +398,89 @@ function AISection({ projectId }: { projectId: number | null }) {
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
+type TaskTab = "scan" | "ai" | "ai-settings";
+
 export function TasksPage() {
   const { currentProjectId } = useProjectContext();
   const { data: scanStatus, isLoading: scanLoading } = useScanStatus(currentProjectId);
   const { mutate: startScan, isPending, error: scanError } = useStartScan(currentProjectId);
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  const tabParam = searchParams.get("tab");
+  const initialTab: TaskTab =
+    tabParam === "scan" || tabParam === "ai" || tabParam === "ai-settings"
+      ? tabParam
+      : "ai";
+  const [tab, setTab] = useState<TaskTab>(initialTab);
+
+  const handleTabChange = (next: TaskTab) => {
+    setTab(next);
+    setSearchParams(next === "ai" ? {} : { tab: next }, { replace: true });
+  };
+
+  const tabClass = (t: TaskTab) =>
+    [
+      "px-4 py-2 text-btn-sm font-medium transition-colors border-b-2",
+      tab === t
+        ? "border-primary text-primary"
+        : "border-transparent text-mute hover:text-ink",
+    ].join(" ");
 
   return (
-    <main className="max-w-3xl mx-auto px-4 sm:px-6 py-6 space-y-8">
+    <main className="max-w-3xl mx-auto px-4 sm:px-6 py-6 space-y-6">
       <h1 className="text-heading-md font-semibold text-ink flex items-center gap-2">
         <Clock className="w-5 h-5" />
         任务中心
       </h1>
 
-      {/* Scan section */}
-      <section className="space-y-3">
-        <div className="flex items-center gap-2">
-          <FolderSearch className="w-4 h-4 text-mute" />
-          <h2 className="text-body-sm font-semibold text-ink">照片扫描</h2>
-        </div>
-        <ScanPanel
-          status={scanStatus}
-          isLoading={scanLoading}
-          onStart={() => startScan()}
-          isPending={isPending}
-          mutationError={scanError?.message ?? null}
-        />
-      </section>
+      {/* Tab nav */}
+      <div className="flex gap-0 border-b border-hairline -mb-2">
+        <button onClick={() => handleTabChange("scan")} className={tabClass("scan")}>
+          <span className="flex items-center gap-1.5">
+            <FolderSearch className="w-3.5 h-3.5" />
+            照片扫描
+          </span>
+        </button>
+        <button onClick={() => handleTabChange("ai")} className={tabClass("ai")}>
+          <span className="flex items-center gap-1.5">
+            <Brain className="w-3.5 h-3.5" />
+            AI 分析任务
+          </span>
+        </button>
+        <button onClick={() => handleTabChange("ai-settings")} className={tabClass("ai-settings")}>
+          <span className="flex items-center gap-1.5">
+            <Settings2 className="w-3.5 h-3.5" />
+            AI 配置
+          </span>
+        </button>
+      </div>
 
-      <div className="border-t border-hairline" />
+      {/* Tab content */}
+      {tab === "scan" && (
+        <section className="space-y-3">
+          <ScanPanel
+            status={scanStatus}
+            isLoading={scanLoading}
+            onStart={() => startScan()}
+            isPending={isPending}
+            mutationError={scanError?.message ?? null}
+          />
+        </section>
+      )}
 
-      {/* AI section */}
-      <AISection projectId={currentProjectId} />
+      {tab === "ai" && (
+        <AISection projectId={currentProjectId} />
+      )}
+
+      {tab === "ai-settings" && (
+        currentProjectId != null ? (
+          <ProjectAISettingsPanel projectId={currentProjectId} />
+        ) : (
+          <div className="bg-canvas border border-hairline rounded-md px-5 py-4 text-body-sm text-mute">
+            请先选择项目后再查看 AI 配置。
+          </div>
+        )
+      )}
     </main>
   );
 }

@@ -122,6 +122,30 @@ CREATE TABLE ai_jobs (
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE project_prompt_templates (
+    id INTEGER PRIMARY KEY,
+    project_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    task_type TEXT NOT NULL DEFAULT 'image_analysis',
+    user_prompt TEXT NOT NULL,
+    is_active BOOLEAN NOT NULL DEFAULT 0,
+    version INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uq_project_prompt_templates_project_id_id UNIQUE (project_id, id)
+);
+
+CREATE TABLE project_ai_settings (
+    id INTEGER PRIMARY KEY,
+    project_id INTEGER NOT NULL UNIQUE,
+    endpoint_url TEXT NOT NULL,
+    model_name TEXT NOT NULL,
+    active_prompt_template_id INTEGER,
+    CONSTRAINT fk_project_ai_settings_active_prompt_same_project
+        FOREIGN KEY (project_id, active_prompt_template_id)
+        REFERENCES project_prompt_templates (project_id, id)
+);
 """
 
 SEED_SQL = """
@@ -135,6 +159,10 @@ VALUES (101, 1, '/tmp/a/a.jpg', 'a.jpg', 'indexed'),
 
 INSERT INTO photo_ai_analysis (id, project_id, photo_id, caption)
 VALUES (1, 2, 202, 'from project b');
+
+INSERT INTO project_prompt_templates (id, project_id, name, user_prompt, is_active, version)
+VALUES (1001, 1, 'Prompt A', 'A prompt', 1, 1),
+       (2002, 2, 'Prompt B', 'B prompt', 1, 1);
 """
 
 
@@ -156,6 +184,7 @@ class ProjectIsolationEndpointsTest(unittest.TestCase):
         )
 
         with self._engine.begin() as conn:
+            conn.execute(sa.text("PRAGMA foreign_keys=ON"))
             for stmt in SCHEMA_SQL.split(";"):
                 sql = stmt.strip()
                 if sql:
@@ -185,9 +214,22 @@ class ProjectIsolationEndpointsTest(unittest.TestCase):
         res = self.client.get("/projects/1/photos/202")
         self.assertEqual(res.status_code, 404)
 
+    def test_project_can_read_own_photo(self) -> None:
+        res = self.client.get("/projects/2/photos/202")
+        self.assertEqual(res.status_code, 200)
+        body = res.json()
+        self.assertEqual(body["id"], 202)
+        self.assertEqual(body["project_id"], 2)
+
     def test_project_cannot_read_other_project_photo_ai(self) -> None:
         res = self.client.get("/projects/1/photos/202/ai")
         self.assertEqual(res.status_code, 404)
+
+    def test_project_can_read_own_photo_ai(self) -> None:
+        res = self.client.get("/projects/2/photos/202/ai")
+        self.assertEqual(res.status_code, 200)
+        body = res.json()
+        self.assertEqual(body["photo_id"], 202)
 
     def test_project_cannot_test_prompt_with_other_project_photo(self) -> None:
         res = self.client.post(
@@ -201,6 +243,20 @@ class ProjectIsolationEndpointsTest(unittest.TestCase):
         self.assertEqual(res.status_code, 200)
         body = res.json()
         self.assertEqual(body["created_jobs"], 1)
+
+    def test_active_prompt_fk_blocks_cross_project_template(self) -> None:
+        with self._engine.begin() as conn:
+            with self.assertRaises(sa.exc.IntegrityError):
+                conn.execute(
+                    sa.text(
+                        """
+                        INSERT INTO project_ai_settings
+                            (id, project_id, endpoint_url, model_name, active_prompt_template_id)
+                        VALUES
+                            (1, 1, 'http://example.invalid/v1', 'demo-model', 2002)
+                        """
+                    )
+                )
 
 
 if __name__ == "__main__":

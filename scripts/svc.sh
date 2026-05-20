@@ -235,10 +235,12 @@ start_worker() {
   fi
 
   log_info "启动 AI Worker..."
-  cd "$ROOT/apps/api"
-  [ -d ".venv" ] && source .venv/bin/activate
+  local py_bin="python3"
+  if [ -x "$ROOT/apps/api/.venv/bin/python" ]; then
+    py_bin="$ROOT/apps/api/.venv/bin/python"
+  fi
   cd "$ROOT/apps/worker"
-  nohup python main.py \
+  nohup "$py_bin" main.py \
     > "$(log_file worker)" 2>&1 &
   save_pid worker
   sleep 1

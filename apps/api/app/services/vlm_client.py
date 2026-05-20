@@ -18,6 +18,10 @@ pillow_heif.register_heif_opener()
 logger = logging.getLogger(__name__)
 
 _DEFAULT_PROMPT = """请分析图片内容并只返回 JSON。"""
+_DEFAULT_SYSTEM_TEXT = (
+    "你是一个图片分析 JSON API。只能返回一个 JSON 对象。"
+    "禁止输出解释、推理过程、Markdown 或任何 JSON 之外的文本。"
+)
 
 
 class VLMRequestError(RuntimeError):
@@ -56,7 +60,8 @@ def _extract_message_text(message: dict[str, Any]) -> str:
 
     reasoning_content = message.get("reasoning_content")
     if isinstance(reasoning_content, str) and reasoning_content.strip():
-        return reasoning_content
+        logger.warning("Model returned reasoning_content without JSON content.")
+        return ""
 
     return ""
 
@@ -113,6 +118,7 @@ def analyze_image(
     endpoint_url: str | None = None,
     model_name: str | None = None,
     prompt_text: str | None = None,
+    system_text: str | None = None,
     temperature: float | None = None,
     top_p: float | None = None,
     max_tokens: int | None = None,
@@ -154,17 +160,36 @@ def analyze_image(
 
     data_url = f"data:{mime};base64,{img_b64}"
 
+    effective_system_text = system_text or _DEFAULT_SYSTEM_TEXT
+    effective_prompt_text = prompt_text or _DEFAULT_PROMPT
+
+    logger.info(
+        "Dispatching VLM image analysis request. endpoint_url=%s model_name=%s image_path=%s mime=%s max_tokens=%s temperature=%s top_p=%s thinking_disabled=%s\n"
+        "system_text:\n%s\n"
+        "user_text:\n%s",
+        endpoint_url or settings.openai_base_url,
+        model_name or settings.openai_vision_model,
+        str(path),
+        mime,
+        max_tokens if max_tokens is not None else settings.ai_vision_max_tokens,
+        temperature if temperature is not None else settings.ai_vision_temperature,
+        top_p if top_p is not None else 0.8,
+        True,
+        effective_system_text,
+        effective_prompt_text,
+    )
+
     payload = {
         "model": model_name or settings.openai_vision_model,
         "messages": [
             {
                 "role": "system",
-                "content": "Return only valid JSON object output. No extra text.",
+                "content": effective_system_text,
             },
             {
                 "role": "user",
                 "content": [
-                    {"type": "text", "text": prompt_text or _DEFAULT_PROMPT},
+                    {"type": "text", "text": effective_prompt_text},
                     {"type": "image_url", "image_url": {"url": data_url}},
                 ],
             }
@@ -174,6 +199,10 @@ def analyze_image(
         "top_p": top_p if top_p is not None else 0.8,
         # Most OpenAI-compatible servers honor this and suppress non-JSON text.
         "response_format": {"type": "json_object"},
+        # llama-server may enable thinking by default via the chat template.
+        # Explicitly disable it per request so JSON-only image analysis does not
+        # emit reasoning text before the object body.
+        "chat_template_kwargs": {"enable_thinking": False},
         "stream": False,
     }
 
