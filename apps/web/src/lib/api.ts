@@ -745,3 +745,18 @@ export const api = {
       }).then(normaliseDebugSettingsResponse),
   },
 };
+
+// ─── Phase 7: Modular API namespace ───────────────────────────────────────────
+// Re-export the new domain-split modules so callers can migrate incrementally.
+// Existing `import { api, Photo, ... } from "@/lib/api"` continues to work.
+export {
+  projectsApi,
+  foldersApi,
+  settingsApi,
+  DEFAULT_DEBUG_PRESETS,
+  normaliseDebugMode,
+  normaliseDebugSettingsResponse,
+  normaliseLogLevel,
+  normaliseMatrix,
+  normalisePresets,
+} from "../api/index";

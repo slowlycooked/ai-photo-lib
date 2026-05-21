@@ -11,7 +11,25 @@ from sqlalchemy.exc import OperationalError
 from ._version import APP_VERSION
 from .database import SessionLocal
 from .logging_config import setup_logging, should_log_request_debug_middleware
-from .routers import health, photos, scan, ai, search, tags, settings, projects, folders
+from .routers import (
+    health,
+    photos,
+    scan,
+    ai,
+    search,
+    tags,
+    settings,
+    projects,
+    folders,
+    project_scan,
+    project_ai_jobs,
+    project_ai_settings,
+    project_prompt_templates,
+    project_embeddings,
+    project_search,
+    project_tags,
+    project_photos,
+)
 from .schemas.debug_config import build_default_debug_config
 from .services.runtime_settings_service import (
     RuntimeSettingsService,
@@ -100,3 +118,12 @@ app.include_router(ai.router)
 app.include_router(search.router)
 app.include_router(tags.router)
 app.include_router(settings.router)
+# ── project-scoped routers (Phase 1 split) ───────────────────────────────────
+app.include_router(project_photos.router)
+app.include_router(project_scan.router)
+app.include_router(project_ai_jobs.router)
+app.include_router(project_ai_settings.router)
+app.include_router(project_prompt_templates.router)
+app.include_router(project_embeddings.router)
+app.include_router(project_search.router)
+app.include_router(project_tags.router)

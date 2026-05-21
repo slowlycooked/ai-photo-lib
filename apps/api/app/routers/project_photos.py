@@ -1,0 +1,181 @@
+from __future__ import annotations
+
+import os
+from datetime import date, datetime, time as time_
+from typing import Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import FileResponse
+from sqlalchemy import extract, func
+from sqlalchemy.orm import Session
+
+from ..api.deps import require_project, require_project_photo
+from ..database import get_db
+from ..models.ai import PhotoAIAnalysis
+from ..models.photo import Photo
+from ..models.project import Project
+from ..schemas.ai import AIAnalysisResponse
+from ..schemas.photo import PhotoDetailResponse, PhotoListResponse
+from ..services.folder_service import apply_folder_filter
+from ..services.thumbnail import generate_thumbnail
+
+router = APIRouter(prefix="/projects", tags=["projects-photos"])
+
+
+@router.get("/{project_id}/photos", response_model=PhotoListResponse)
+def list_project_photos(
+    project_id: int,
+    page: int = 1,
+    page_size: int = Query(50, ge=1, le=100),
+    date_from: Optional[date] = Query(None),
+    date_to: Optional[date] = Query(None),
+    folder_id: Optional[int] = None,
+    folder_scope: str = "subtree",
+    project: Project = Depends(require_project),
+    db: Session = Depends(get_db),
+):
+    """List photos for a specific project with optional filters."""
+    page_size = max(1, min(page_size, 100))
+    offset = (page - 1) * page_size
+
+    base_query = db.query(Photo).filter(
+        Photo.project_id == project_id, Photo.deleted_at.is_(None)
+    )
+    if date_from is not None:
+        base_query = base_query.filter(
+            Photo.taken_at >= datetime.combine(date_from, time_.min)
+        )
+    if date_to is not None:
+        base_query = base_query.filter(
+            Photo.taken_at < datetime.combine(date_to, time_.min)
+        )
+    if folder_id is not None:
+        base_query = apply_folder_filter(base_query, db, project_id, folder_id, folder_scope)
+
+    total = base_query.count()
+    photos = (
+        base_query.order_by(Photo.taken_at.desc().nullslast(), Photo.created_at.desc())
+        .offset(offset)
+        .limit(page_size)
+        .all()
+    )
+    return PhotoListResponse(total=total, page=page, page_size=page_size, items=photos)
+
+
+@router.get("/{project_id}/photos/timeline")
+def get_project_timeline(
+    project_id: int,
+    folder_id: Optional[int] = None,
+    folder_scope: str = "subtree",
+    project: Project = Depends(require_project),
+    db: Session = Depends(get_db),
+):
+    """Return monthly photo count timeline for a specific project."""
+    base_query = db.query(Photo).filter(
+        Photo.project_id == project_id,
+        Photo.deleted_at.is_(None),
+        Photo.taken_at.is_not(None),
+    )
+    if folder_id is not None:
+        base_query = apply_folder_filter(base_query, db, project_id, folder_id, folder_scope)
+
+    rows = (
+        base_query.with_entities(
+            extract("year", Photo.taken_at).label("year"),
+            extract("month", Photo.taken_at).label("month"),
+            func.count(Photo.id).label("count"),
+        )
+        .group_by("year", "month")
+        .order_by(
+            extract("year", Photo.taken_at).desc(),
+            extract("month", Photo.taken_at).desc(),
+        )
+        .all()
+    )
+    return {
+        "items": [
+            {
+                "key": f"{int(r.year)}-{str(int(r.month)).zfill(2)}",
+                "year": int(r.year),
+                "month": int(r.month),
+                "count": r.count,
+            }
+            for r in rows
+        ]
+    }
+
+
+@router.get("/{project_id}/photos/{photo_id}", response_model=PhotoDetailResponse)
+def get_project_photo(
+    photo: Photo = Depends(require_project_photo),
+):
+    """Return a single photo within project scope."""
+    return photo
+
+
+@router.get("/{project_id}/photos/{photo_id}/thumbnail")
+def get_project_photo_thumbnail(
+    project: Project = Depends(require_project),
+    photo: Photo = Depends(require_project_photo),
+    db: Session = Depends(get_db),
+):
+    """Serve or generate the thumbnail for a photo."""
+    if not photo.thumbnail_path or not os.path.exists(photo.thumbnail_path):
+        if not os.path.exists(photo.file_path):
+            raise HTTPException(status_code=404, detail="Thumbnail not available")
+        thumb = generate_thumbnail(
+            photo.file_path,
+            project_id=project.id,
+            thumbnail_root=project.thumbnail_path,
+        )
+        if not thumb:
+            raise HTTPException(status_code=404, detail="Thumbnail not available")
+        photo.thumbnail_path = thumb
+        db.commit()
+
+    return FileResponse(
+        photo.thumbnail_path,
+        media_type="image/jpeg",
+        headers={"Cache-Control": "no-cache, must-revalidate"},
+    )
+
+
+@router.get("/{project_id}/photos/{photo_id}/original")
+def get_project_photo_original(
+    photo: Photo = Depends(require_project_photo),
+):
+    """Download the original file for a photo, scoped to its project."""
+    if not os.path.exists(photo.file_path):
+        raise HTTPException(status_code=404, detail="Original file not found on disk")
+
+    return FileResponse(
+        photo.file_path,
+        media_type=photo.mime_type or "application/octet-stream",
+        filename=photo.file_name,
+        headers={
+            "Cache-Control": "private, max-age=0",
+            "Content-Disposition": f'attachment; filename="{photo.file_name}"',
+        },
+    )
+
+
+@router.get("/{project_id}/photos/{photo_id}/ai", response_model=AIAnalysisResponse)
+def get_project_photo_ai(
+    project_id: int,
+    photo_id: int,
+    photo: Photo = Depends(require_project_photo),
+    db: Session = Depends(get_db),
+):
+    """Return the latest AI analysis for a photo within project scope."""
+    analysis = (
+        db.query(PhotoAIAnalysis)
+        .filter(
+            PhotoAIAnalysis.photo_id == photo_id,
+            PhotoAIAnalysis.project_id == project_id,
+        )
+        .order_by(PhotoAIAnalysis.created_at.desc())
+        .first()
+    )
+    if not analysis:
+        raise HTTPException(status_code=404, detail="No AI analysis found for this photo")
+    return analysis
