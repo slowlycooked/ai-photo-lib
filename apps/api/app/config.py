@@ -45,7 +45,9 @@ class Settings(BaseSettings):
     ai_vision_max_tokens: int = 1200
     ai_vision_temperature: float = 0.1
     ai_max_retries: int = 3
-    ai_worker_concurrency: int = 1
+    # Comma-separated list of allowed CORS origins.
+    # Override in .env when deploying behind a reverse proxy or custom domain.
+    cors_allow_origins: str = "http://localhost:5173,http://localhost:8088"
 
     # ── Embedding / hybrid search config ─────────────────────────────────────
     embedding_base_url: str = ""
@@ -62,7 +64,6 @@ class Settings(BaseSettings):
     search_caption_vector_weight: float = 0.35
     search_tag_vector_weight: float = 0.50
     search_ocr_vector_weight: float = 0.15
-    search_debug_enabled: bool = True
 
     @model_validator(mode="after")
     def _set_host_path_default(self) -> "Settings":

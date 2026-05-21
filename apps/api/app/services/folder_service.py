@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Dict, Optional
 
+from fastapi import HTTPException
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
@@ -78,7 +79,7 @@ def apply_folder_filter(query, db: Session, project_id: int, folder_id: Optional
         ProjectFolder.deleted_at.is_(None),
     ).first()
     if not folder:
-        raise ValueError("Folder not found")
+        raise HTTPException(status_code=404, detail="Folder not found")
     if folder_scope == "direct":
         return query.filter(Photo.folder_id == folder.id)
     if folder.relative_path == "":

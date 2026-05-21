@@ -521,7 +521,7 @@ def _build_result_items(
             "score": round(float(score), 6),
         }
 
-        if debug and settings.search_debug_enabled and should_include_search_debug_payload():
+        if debug and should_include_search_debug_payload():
             item["keyword_score"] = round(float(candidate.keyword_score), 6)
             item["vector_score"] = round(float(candidate.vector_score), 6)
             item["rrf_score"] = round(float(candidate.rrf_score), 6)
@@ -603,7 +603,7 @@ def search_photos(
             debug=debug,
         )
         debug_payload: Optional[dict] = None
-        if debug and settings.search_debug_enabled and should_include_search_debug_payload():
+        if debug and should_include_search_debug_payload():
             debug_payload = _build_debug_payload(
                 query_plan=query_plan,
                 mode="keyword",
@@ -647,7 +647,7 @@ def search_photos(
                 pass
         if effective_mode == "vector":
             debug_payload = None
-            if debug and settings.search_debug_enabled and should_include_search_debug_payload():
+            if debug and should_include_search_debug_payload():
                 debug_payload = _build_debug_payload(
                     query_plan=query_plan,
                     mode="vector",
@@ -670,7 +670,7 @@ def search_photos(
             debug=debug,
         )
         debug_payload = None
-        if debug and settings.search_debug_enabled and should_include_search_debug_payload():
+        if debug and should_include_search_debug_payload():
             debug_payload = _build_debug_payload(
                 query_plan=query_plan,
                 mode="hybrid",
@@ -720,7 +720,7 @@ def search_photos(
             debug=debug,
         )
         debug_payload = None
-        if debug and settings.search_debug_enabled and should_include_search_debug_payload():
+        if debug and should_include_search_debug_payload():
             debug_payload = _build_debug_payload(
                 query_plan=query_plan,
                 mode="vector",
@@ -756,7 +756,7 @@ def search_photos(
         debug=debug,
     )
     debug_payload = None
-    if debug and settings.search_debug_enabled and should_include_search_debug_payload():
+    if debug and should_include_search_debug_payload():
         debug_payload = _build_debug_payload(
             query_plan=query_plan,
             mode="hybrid",

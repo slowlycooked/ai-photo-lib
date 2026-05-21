@@ -8,7 +8,7 @@ Usage:
 
 Environment variables (see .env.example):
     DATABASE_URL, OPENAI_BASE_URL, OPENAI_MODEL,
-    AI_MAX_RETRIES, AI_WORKER_CONCURRENCY, THUMBNAIL_PATH
+    AI_MAX_RETRIES, THUMBNAIL_PATH
 """
 from __future__ import annotations
 

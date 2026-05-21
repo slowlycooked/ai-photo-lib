@@ -17,20 +17,6 @@ services:
       timeout: 5s
       retries: 10
 
-  redis:
-    image: redis:7-alpine
-    container_name: ai-photo-redis
-    restart: unless-stopped
-    volumes:
-      - ${DATA_DIR:-/volume1/docker/ai-photo-lib}/redis:/data
-    ports:
-      - "127.0.0.1:${REDIS_HOST_PORT:-16379}:6379"
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 3s
-      retries: 5
-
   llama:
     image: ai-photo-lib-llama:ds916-cpu
     container_name: ai-photo-llama
@@ -98,8 +84,6 @@ services:
     restart: unless-stopped
     environment:
       DATABASE_URL: postgresql+psycopg://photo:${POSTGRES_PASSWORD:-photo}@postgres:5432/photo
-      REDIS_URL: redis://redis:6379/0
-
       PHOTO_LIBRARY_PATH: /photos
       HOST_PHOTO_LIBRARY_PATH: ${PHOTO_LIBRARY_PATH:-/volume1/photo}
       THUMBNAIL_PATH: /data/thumbs
@@ -115,7 +99,6 @@ services:
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-Qwen3-Embedding-0.6B}
 
       AI_MAX_RETRIES: ${AI_MAX_RETRIES:-3}
-      AI_WORKER_CONCURRENCY: ${AI_WORKER_CONCURRENCY:-1}
 
     volumes:
       - ${PHOTO_LIBRARY_PATH:-/volume1/photo}:/photos:ro
@@ -123,8 +106,6 @@ services:
 
     depends_on:
       postgres:
-        condition: service_healthy
-      redis:
         condition: service_healthy
       llama:
         condition: service_healthy
@@ -146,7 +127,6 @@ services:
     restart: unless-stopped
     environment:
       DATABASE_URL: postgresql+psycopg://photo:${POSTGRES_PASSWORD:-photo}@postgres:5432/photo
-      REDIS_URL: redis://redis:6379/0
 
       PHOTO_LIBRARY_PATH: /photos
       THUMBNAIL_PATH: /data/thumbs
@@ -161,7 +141,6 @@ services:
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-Qwen3-Embedding-0.6B}
 
       AI_MAX_RETRIES: ${AI_MAX_RETRIES:-3}
-      AI_WORKER_CONCURRENCY: ${AI_WORKER_CONCURRENCY:-1}
 
     volumes:
       - ${PHOTO_LIBRARY_PATH:-/volume1/photo}:/photos:ro
@@ -169,8 +148,6 @@ services:
 
     depends_on:
       postgres:
-        condition: service_healthy
-      redis:
         condition: service_healthy
       llama:
         condition: service_healthy

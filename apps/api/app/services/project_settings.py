@@ -58,7 +58,6 @@ class EffectiveSearchSettings:
     caption_vector_weight: float
     tag_vector_weight: float
     ocr_vector_weight: float
-    debug_enabled: bool
 
 
 @dataclass(frozen=True)
@@ -179,7 +178,6 @@ class ProjectSettingsResolver:
                 caption_vector_weight=global_settings.search_caption_vector_weight,
                 tag_vector_weight=global_settings.search_tag_vector_weight,
                 ocr_vector_weight=global_settings.search_ocr_vector_weight,
-                debug_enabled=global_settings.search_debug_enabled,
             ),
             library=library,
         )

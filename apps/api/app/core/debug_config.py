@@ -216,6 +216,9 @@ def legacy_debug_level_to_mode(value: object) -> str:
 
 def python_logging_level(level: str) -> int:
     normalized = normalize_log_level(level)
+    if normalized == "OFF":
+        # logging.CRITICAL + 1 (51) effectively disables all log output.
+        return logging.CRITICAL + 1
     if normalized == "TRACE":
         return TRACE_LEVEL_NUM
     if normalized == "DEBUG":
