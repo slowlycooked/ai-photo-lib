@@ -16,8 +16,10 @@ os.environ.setdefault("OPENAI_VISION_MODEL", "test-model")
 
 from app.models.ai import PhotoEmbedding  # noqa: E402
 from app.services.embedding_service import (  # noqa: E402
+    EMBEDDING_INPUT_VERSION,
     _REQUIRED_PHOTO_EMBEDDING_COLUMNS,
     build_embedding_inputs,
+    build_photo_embedding_document,
     is_embedding_stale,
     upsert_photo_embeddings,
 )
@@ -79,9 +81,12 @@ class EmbeddingServiceTest(unittest.TestCase):
             "caption_embedding",
             "tag_embedding",
             "ocr_embedding",
+            "content_embedding",
             "caption_text_hash",
             "tag_text_hash",
             "ocr_text_hash",
+            "content_text_hash",
+            "embedding_input_version",
             "embedding_model",
             "embedding_dimension",
             "embedding_status",
@@ -102,6 +107,8 @@ class EmbeddingServiceTest(unittest.TestCase):
             quality_tags=["sharp"],
             location_clues=["cloud sea"],
             search_keywords=["hike", "sunrise"],
+            people_count=0,
+            confidence=1.0,
         )
 
         inputs = build_embedding_inputs(ai)
@@ -123,10 +130,12 @@ class EmbeddingServiceTest(unittest.TestCase):
             quality_tags=[],
             location_clues=[],
             search_keywords=["pet"],
+            people_count=0,
+            confidence=1.0,
         )
         db = _FakeDB()
 
-        with patch("app.services.embedding_service.embed_texts", return_value=[[0.1] * 1024, [0.2] * 1024, [0.3] * 1024]):
+        with patch("app.services.embedding_service.embed_texts", return_value=[[0.1] * 1024, [0.2] * 1024, [0.3] * 1024, [0.4] * 1024]):
             row = upsert_photo_embeddings(db, project_id=1, photo_id=10, ai=ai, model_name="embed-model")
             self.assertEqual(db.add_calls, 1)
             self.assertEqual(row.project_id, 1)
@@ -147,6 +156,8 @@ class EmbeddingServiceTest(unittest.TestCase):
             quality_tags=[],
             location_clues=[],
             search_keywords=["pet"],
+            people_count=0,
+            confidence=1.0,
         )
         embedding = SimpleNamespace(
             embedding_status="ready",
@@ -168,6 +179,8 @@ class EmbeddingServiceTest(unittest.TestCase):
             quality_tags=[],
             location_clues=[],
             search_keywords=["pet"],
+            people_count=0,
+            confidence=1.0,
         )
         with patch("app.services.embedding_service._hash_text", side_effect=["h1", "h2", "h3"]):
             embedding = SimpleNamespace(
@@ -190,6 +203,8 @@ class EmbeddingServiceTest(unittest.TestCase):
             quality_tags=[],
             location_clues=[],
             search_keywords=["pet"],
+            people_count=0,
+            confidence=1.0,
         )
         old_schema_columns = {
             "photo_id",
@@ -210,6 +225,133 @@ class EmbeddingServiceTest(unittest.TestCase):
         self.assertIn("Incompatible table schema", str(cm.exception))
         self.assertIn("alembic upgrade head", str(cm.exception))
         self.assertFalse(db.query_called)
+
+    # ── content embedding / version tests ────────────────────────────────────
+
+    def test_build_photo_embedding_document_returns_string(self) -> None:
+        ai = SimpleNamespace(
+            caption="mountain view",
+            ocr_text="",
+            scene_tags=["mountain", "sunrise"],
+            object_tags=["backpack"],
+            activity_tags=["hiking"],
+            quality_tags=[],
+            location_clues=[],
+            search_keywords=["hike"],
+            people_count=0,
+            confidence=1.0,
+        )
+        doc = build_photo_embedding_document(ai)
+        self.assertIsInstance(doc, str)
+        self.assertIn("mountain view", doc)
+        self.assertIn("hiking", doc)
+
+    def test_build_photo_embedding_document_accepts_photo(self) -> None:
+        ai = SimpleNamespace(
+            caption="indoor office",
+            ocr_text="",
+            scene_tags=[],
+            object_tags=[],
+            activity_tags=[],
+            quality_tags=[],
+            location_clues=[],
+            search_keywords=[],
+            people_count=0,
+            confidence=1.0,
+        )
+        photo = SimpleNamespace(file_name="IMG_001.jpg", taken_at=None, relative_path=None, file_path=None)
+        doc = build_photo_embedding_document(ai, photo=photo)
+        self.assertIn("IMG_001.jpg", doc)
+
+    def test_is_embedding_stale_true_when_content_hash_missing(self) -> None:
+        """Embeddings generated before content_text_hash existed are stale."""
+        ai = SimpleNamespace(
+            caption="beach",
+            ocr_text="",
+            scene_tags=[],
+            object_tags=[],
+            activity_tags=[],
+            quality_tags=[],
+            location_clues=[],
+            search_keywords=[],
+            people_count=0,
+            confidence=1.0,
+        )
+        embedding = SimpleNamespace(
+            embedding_status="ready",
+            embedding_model="embed-model",
+            embedding_dimension=1024,
+            caption_text_hash=None,
+            tag_text_hash=None,
+            ocr_text_hash=None,
+            # content_text_hash absent entirely (old row)
+        )
+        self.assertTrue(is_embedding_stale(ai, embedding, model_name="embed-model", dimension=1024))
+
+    def test_is_embedding_stale_true_when_input_version_changes(self) -> None:
+        """Embeddings with a different input_version are stale."""
+        ai = SimpleNamespace(
+            caption="beach",
+            ocr_text="",
+            scene_tags=[],
+            object_tags=[],
+            activity_tags=[],
+            quality_tags=[],
+            location_clues=[],
+            search_keywords=[],
+            people_count=0,
+            confidence=1.0,
+        )
+        # Simulate row written with an old input version
+        embedding = SimpleNamespace(
+            embedding_status="ready",
+            embedding_model="embed-model",
+            embedding_dimension=1024,
+            caption_text_hash=None,
+            tag_text_hash=None,
+            ocr_text_hash=None,
+            content_text_hash=None,
+            embedding_input_version="photo_semantic_v0",  # outdated
+        )
+        self.assertTrue(
+            is_embedding_stale(ai, embedding, model_name="embed-model", dimension=1024),
+        )
+
+    def test_embedding_input_version_constant_not_empty(self) -> None:
+        self.assertIsInstance(EMBEDDING_INPUT_VERSION, str)
+        self.assertGreater(len(EMBEDDING_INPUT_VERSION), 0)
+
+    def test_two_projects_embedding_inputs_are_independent(self) -> None:
+        """build_embedding_inputs must be stateless and project-neutral."""
+        ai_a = SimpleNamespace(
+            caption="architecture",
+            ocr_text="",
+            scene_tags=["building"],
+            object_tags=[],
+            activity_tags=[],
+            quality_tags=[],
+            location_clues=[],
+            search_keywords=[],
+            people_count=0,
+            confidence=1.0,
+        )
+        ai_b = SimpleNamespace(
+            caption="family dinner",
+            ocr_text="",
+            scene_tags=["home"],
+            object_tags=[],
+            activity_tags=[],
+            quality_tags=[],
+            location_clues=[],
+            search_keywords=[],
+            people_count=2,
+            confidence=1.0,
+        )
+        inputs_a = build_embedding_inputs(ai_a)
+        inputs_b = build_embedding_inputs(ai_b)
+        self.assertNotEqual(inputs_a["caption"], inputs_b["caption"])
+        self.assertNotIn("building", inputs_b["tags"])
+        self.assertNotIn("home", inputs_a["tags"])
 
 
 if __name__ == "__main__":

@@ -33,7 +33,7 @@ def search(
 ):
     """[DEPRECATED] Use GET /projects/{project_id}/search instead."""
     logger.warning(_DEPRECATION_MSG)
-    total, items = search_photos(
+    total, items, _debug = search_photos(
         db, q, page=page, page_size=page_size, project_id=project_id,
         folder_id=folder_id, folder_scope=folder_scope
     )

@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertCircle, Bot, Check, Clipboard, FlaskConical, Loader2, RotateCcw, Save, Sparkles, Trash2 } from "lucide-react";
+import { AlertCircle, Bot, Check, Clipboard, FlaskConical, Loader2, RefreshCw, RotateCcw, Save, Sparkles, Trash2 } from "lucide-react";
 import {
   api,
   type Photo,
   type ProjectAISettingsUpdate,
+  type ProjectEmbeddingSettingsUpdate,
   type PromptTemplate,
   type PromptTemplateTestResponse,
 } from "@/lib/api";
@@ -120,7 +121,231 @@ function Label({ children }: { children: React.ReactNode }) {
   return <label className="block text-caption-sm text-mute mb-1">{children}</label>;
 }
 
-export function ProjectAISettingsPanel({ projectId }: { projectId: number }) {
+// ─── Embedding Settings Section ───────────────────────────────────────────────
+
+function EmbeddingSettingsSection({ projectId }: { projectId: number }) {
+  const queryClient = useQueryClient();
+  const [form, setForm] = useState<ProjectEmbeddingSettingsUpdate>({});
+  const [testResult, setTestResult] = useState<{
+    success: boolean; model_name: string; embedding_dimension: number;
+    sample: number[]; duration_ms: number; error: string | null;
+  } | null>(null);
+  const [rebuildMsg, setRebuildMsg] = useState<string | null>(null);
+
+  const { data: settings, isLoading } = useQuery({
+    queryKey: ["project-embedding-settings", projectId],
+    queryFn: () => api.projects.getEmbeddingSettings(projectId),
+    staleTime: 30_000,
+  });
+
+  const { data: status, isLoading: statusLoading, refetch: refetchStatus } = useQuery({
+    queryKey: ["project-embedding-status", projectId],
+    queryFn: () => api.projects.getEmbeddingStatus(projectId),
+    staleTime: 15_000,
+  });
+
+  useEffect(() => {
+    if (!settings) return;
+    setForm({
+      provider: settings.provider,
+      endpoint_url: settings.endpoint_url,
+      model_name: settings.model_name,
+      embedding_dimension: settings.embedding_dimension,
+      batch_size: settings.batch_size,
+      timeout_seconds: settings.timeout_seconds,
+      input_prefix_query: settings.input_prefix_query,
+      input_prefix_document: settings.input_prefix_document,
+      enabled: settings.enabled,
+    });
+  }, [settings]);
+
+  // Reset on project change
+  useEffect(() => {
+    setTestResult(null);
+    setRebuildMsg(null);
+    setForm({});
+  }, [projectId]);
+
+  const saveMut = useMutation({
+    mutationFn: (body: ProjectEmbeddingSettingsUpdate) =>
+      api.projects.updateEmbeddingSettings(projectId, body),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["project-embedding-settings", projectId] });
+      setRebuildMsg("保存成功");
+      setTimeout(() => setRebuildMsg(null), 2000);
+    },
+  });
+
+  const testMut = useMutation({
+    mutationFn: () =>
+      api.projects.testEmbeddingSettings(projectId, {
+        endpoint_url: form.endpoint_url,
+        api_key: form.api_key,
+        model_name: form.model_name,
+        sample_text: "test embedding connection",
+      }),
+    onSuccess: (data) => setTestResult(data),
+    onError: (e) => setTestResult({ success: false, model_name: "", embedding_dimension: 0, sample: [], duration_ms: 0, error: (e as Error).message }),
+  });
+
+  const rebuildMut = useMutation({
+    mutationFn: (scope: "all" | "stale" | "failed" | "missing") =>
+      api.projects.rebuildEmbeddings(projectId, { scope }),
+    onSuccess: (data, scope) => {
+      setRebuildMsg(`已入队 ${data.enqueued} 个任务 (${scope})`);
+      queryClient.invalidateQueries({ queryKey: ["project-embedding-status", projectId] });
+    },
+    onError: (e) => setRebuildMsg(`失败: ${(e as Error).message}`),
+  });
+
+  if (isLoading) return null;
+
+  return (
+    <SettingsCard title="Embedding 语义向量配置">
+      {/* Provider / endpoint / model */}
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <Label>Endpoint URL</Label>
+          <input
+            className="input-base w-full"
+            value={form.endpoint_url ?? ""}
+            onChange={(e) => setForm((f) => ({ ...f, endpoint_url: e.target.value }))}
+            placeholder="http://embedding-server/v1"
+          />
+        </div>
+        <div>
+          <Label>Model Name</Label>
+          <input
+            className="input-base w-full"
+            value={form.model_name ?? ""}
+            onChange={(e) => setForm((f) => ({ ...f, model_name: e.target.value }))}
+            placeholder="Qwen3-Embedding-0.6B"
+          />
+        </div>
+        <div>
+          <Label>API Key (可留空)</Label>
+          <input
+            type="password"
+            className="input-base w-full"
+            value={form.api_key ?? ""}
+            onChange={(e) => setForm((f) => ({ ...f, api_key: e.target.value || null }))}
+            placeholder="sk-..."
+            autoComplete="off"
+          />
+        </div>
+        <div>
+          <Label>Dimension</Label>
+          <input
+            type="number"
+            className="input-base w-full"
+            value={form.embedding_dimension ?? ""}
+            onChange={(e) => setForm((f) => ({ ...f, embedding_dimension: Number(e.target.value) }))}
+          />
+        </div>
+        <div>
+          <Label>Query Prefix</Label>
+          <input
+            className="input-base w-full"
+            value={form.input_prefix_query ?? ""}
+            onChange={(e) => setForm((f) => ({ ...f, input_prefix_query: e.target.value }))}
+            placeholder="Instruct: ..."
+          />
+        </div>
+        <div>
+          <Label>Document Prefix</Label>
+          <input
+            className="input-base w-full"
+            value={form.input_prefix_document ?? ""}
+            onChange={(e) => setForm((f) => ({ ...f, input_prefix_document: e.target.value }))}
+          />
+        </div>
+      </div>
+
+      <div className="flex gap-2 flex-wrap pt-1">
+        <button
+          onClick={() => saveMut.mutate(form)}
+          disabled={saveMut.isPending}
+          className="btn-primary flex items-center gap-1.5 text-sm"
+        >
+          {saveMut.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+          保存配置
+        </button>
+        <button
+          onClick={() => testMut.mutate()}
+          disabled={testMut.isPending}
+          className="btn-secondary flex items-center gap-1.5 text-sm"
+        >
+          {testMut.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FlaskConical className="w-3.5 h-3.5" />}
+          测试 Embedding
+        </button>
+      </div>
+
+      {testResult && (
+        <div className={`rounded-md p-2 text-sm ${testResult.success ? "bg-green-50 text-green-800" : "bg-red-50 text-red-800"}`}>
+          {testResult.success
+            ? `✓ 连接成功 · ${testResult.model_name} · ${testResult.embedding_dimension}d · ${testResult.duration_ms}ms`
+            : `✗ ${testResult.error}`}
+        </div>
+      )}
+
+      {/* Status */}
+      <div className="border-t border-hairline pt-3 space-y-2">
+        <div className="flex items-center justify-between">
+          <h3 className="text-body-sm font-semibold text-ink">向量状态</h3>
+          <button
+            onClick={() => refetchStatus()}
+            className="text-caption-sm text-primary hover:text-primary-pressed flex items-center gap-1"
+          >
+            <RefreshCw className="w-3 h-3" />
+            刷新
+          </button>
+        </div>
+        {statusLoading ? (
+          <Loader2 className="w-4 h-4 animate-spin text-stone" />
+        ) : status ? (
+          <div className="grid grid-cols-4 gap-2 text-center">
+            {[
+              { label: "就绪", value: status.ready, color: "text-green-700" },
+              { label: "缺失", value: status.missing, color: "text-amber-700" },
+              { label: "过期", value: status.stale, color: "text-orange-600" },
+              { label: "失败", value: status.failed, color: "text-red-600" },
+            ].map((item) => (
+              <div key={item.label} className="rounded-md bg-surface-soft p-2">
+                <div className={`text-heading-md font-bold ${item.color}`}>{item.value}</div>
+                <div className="text-caption-sm text-mute">{item.label}</div>
+              </div>
+            ))}
+          </div>
+        ) : null}
+
+        {rebuildMsg && (
+          <p className="text-body-sm text-green-700">{rebuildMsg}</p>
+        )}
+
+        <div className="flex gap-2 flex-wrap pt-1">
+          <button onClick={() => rebuildMut.mutate("missing")} disabled={rebuildMut.isPending}
+            className="btn-secondary text-xs flex items-center gap-1">
+            <RotateCcw className="w-3 h-3" /> 重建缺失
+          </button>
+          <button onClick={() => rebuildMut.mutate("failed")} disabled={rebuildMut.isPending}
+            className="btn-secondary text-xs flex items-center gap-1">
+            <RotateCcw className="w-3 h-3" /> 重建失败
+          </button>
+          <button onClick={() => rebuildMut.mutate("stale")} disabled={rebuildMut.isPending}
+            className="btn-secondary text-xs flex items-center gap-1">
+            <RotateCcw className="w-3 h-3" /> 重建过期
+          </button>
+          <button onClick={() => rebuildMut.mutate("all")} disabled={rebuildMut.isPending}
+            className="btn-secondary text-xs text-danger flex items-center gap-1">
+            <RefreshCw className="w-3 h-3" /> 强制全量重建
+          </button>
+        </div>
+      </div>
+    </SettingsCard>
+  );
+}
+
+
   const queryClient = useQueryClient();
 
   const [message, setMessage] = useState<string | null>(null);
@@ -795,6 +1020,8 @@ export function ProjectAISettingsPanel({ projectId }: { projectId: number }) {
           )}
         </div>
       </SettingsCard>
-    </div>
+
+      {/* Embedding Settings Section */}
+      <EmbeddingSettingsSection projectId={projectId} />
   );
 }

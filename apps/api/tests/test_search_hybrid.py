@@ -75,8 +75,9 @@ class SearchHybridTest(unittest.TestCase):
                     {11: 0.9},
                     {11: 0.85},
                     {11: 0.2},
+                    {11: 0.1},
                 ]
-                scores = _vector_search(db, query="cloud hiking", project_id=7, folder_photo_ids=None, limit=5)
+                scores, _model, _reason = _vector_search(db, query="cloud hiking", normalized_query="cloud hiking", project_id=7, folder_photo_ids=None, limit=5)
 
         self.assertIsInstance(scores[11], VectorMatchScores)
         self.assertGreater(scores[11].total_score, 0.0)
@@ -89,8 +90,9 @@ class SearchHybridTest(unittest.TestCase):
                     {11: 0.1},
                     {11: 0.1},
                     {11: 0.1},
+                    {11: 0.1},
                 ]
-                scores = _vector_search(db, query="weak", project_id=7, folder_photo_ids=None, limit=5)
+                scores, _m, _r = _vector_search(db, query="weak", normalized_query="weak", project_id=7, folder_photo_ids=None, limit=5)
 
         self.assertEqual(scores, {})
 
@@ -106,7 +108,7 @@ class SearchHybridTest(unittest.TestCase):
             "app.services.search_service._build_result_items",
             return_value=(1, [{"photo_id": 9, "score": 0.7}]),
         ) as build_items:
-            total, items = search_photos(
+            total, items, _debug = search_photos(
                 db=object(),
                 query="hike",
                 page=1,
@@ -168,7 +170,7 @@ class SearchHybridTest(unittest.TestCase):
             "app.services.search_service._build_result_items",
             return_value=(1, [item]),
         ):
-            total, items = search_photos(
+            total, items, _debug = search_photos(
                 db=object(),
                 query="cat",
                 project_id=1,

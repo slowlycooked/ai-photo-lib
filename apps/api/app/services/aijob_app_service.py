@@ -33,6 +33,7 @@ from ..services.project_ai_service import (
     get_or_create_project_ai_settings,
     render_analysis_prompt_parts,
 )
+from ..services.project_embedding_settings_service import resolve_embedding_settings
 from ..services.thumbnail import generate_thumbnail
 from ..services.vlm_client import VLMRequestError, analyze_image
 
@@ -237,12 +238,27 @@ class AIJobAppService:
             self._db.flush()
 
             try:
+                try:
+                    embed_cfg = resolve_embedding_settings(self._db, project_id)
+                    embed_endpoint = embed_cfg["endpoint_url"]
+                    embed_api_key = embed_cfg.get("api_key")
+                    embed_model = embed_cfg["model_name"]
+                    embed_timeout = embed_cfg.get("timeout_seconds")
+                except RuntimeError:
+                    embed_endpoint = ai_settings.endpoint_url
+                    embed_api_key = None
+                    embed_model = None
+                    embed_timeout = None
                 upsert_photo_embeddings(
                     self._db,
                     project_id=project_id,
                     photo_id=photo.id,
                     ai=analysis,
-                    endpoint_url=ai_settings.endpoint_url,
+                    endpoint_url=embed_endpoint,
+                    api_key=embed_api_key,
+                    model_name=embed_model,
+                    timeout_seconds=embed_timeout,
+                    photo=photo,
                 )
             except EmbeddingRequestError as exc:
                 logger.warning(
@@ -294,13 +310,28 @@ class AIJobAppService:
             return
 
         try:
-            ai_settings = get_or_create_project_ai_settings(self._db, project_id)
+            try:
+                embed_cfg = resolve_embedding_settings(self._db, project_id)
+                embed_endpoint = embed_cfg["endpoint_url"]
+                embed_api_key = embed_cfg.get("api_key")
+                embed_model = embed_cfg["model_name"]
+                embed_timeout = embed_cfg.get("timeout_seconds")
+            except RuntimeError:
+                ai_settings_for_embed = get_or_create_project_ai_settings(self._db, project_id)
+                embed_endpoint = ai_settings_for_embed.endpoint_url
+                embed_api_key = None
+                embed_model = None
+                embed_timeout = None
             upsert_photo_embeddings(
                 self._db,
                 project_id=project_id,
                 photo_id=photo.id,
                 ai=analysis,
-                endpoint_url=ai_settings.endpoint_url,
+                endpoint_url=embed_endpoint,
+                api_key=embed_api_key,
+                model_name=embed_model,
+                timeout_seconds=embed_timeout,
+                photo=photo,
             )
             now = datetime.now(timezone.utc)
             job.status = "success"

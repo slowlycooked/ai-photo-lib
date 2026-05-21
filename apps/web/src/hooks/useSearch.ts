@@ -1,13 +1,41 @@
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
+import type { SearchMode } from "@/api/types";
 
 const PAGE_SIZE = 50;
 
-export function useSearch(query: string, projectId: number | null) {
+interface UseSearchOptions {
+  mode?: SearchMode;
+  debug?: boolean;
+  folderId?: number | null;
+  folderScope?: string;
+}
+
+export function useSearch(
+  query: string,
+  projectId: number | null,
+  options: UseSearchOptions = {},
+) {
+  const {
+    mode = "hybrid",
+    debug = false,
+    folderId = null,
+    folderScope = "subtree",
+  } = options;
+
   return useInfiniteQuery({
-    queryKey: ["search", query, projectId],
+    queryKey: ["search", query, projectId, mode, debug, folderId, folderScope],
     queryFn: ({ pageParam = 1 }) =>
-      api.projects.search(projectId!, query, pageParam as number, PAGE_SIZE),
+      api.projects.search(
+        projectId!,
+        query,
+        pageParam as number,
+        PAGE_SIZE,
+        folderId,
+        folderScope as "subtree" | "direct",
+        mode,
+        debug,
+      ),
     initialPageParam: 1,
     enabled: query.trim().length > 0 && projectId !== null,
     getNextPageParam: (last) => {

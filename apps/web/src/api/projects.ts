@@ -3,12 +3,17 @@ import type {
   AIAnalysis,
   AIJobListResponse,
   AIStatus,
+  EmbeddingStatusResponse,
+  EmbeddingTestRequest,
+  EmbeddingTestResponse,
   FolderScope,
   PhotoDetail,
   PhotoListResponse,
   ProjectAISettings,
   ProjectAISettingsUpdate,
   ProjectCreate,
+  ProjectEmbeddingSettings,
+  ProjectEmbeddingSettingsUpdate,
   ProjectListResponse,
   ProjectUpdate,
   Project,
@@ -18,7 +23,10 @@ import type {
   PromptTemplateTestRequest,
   PromptTemplateTestResponse,
   PromptTemplateUpdate,
+  RebuildRequest,
+  RebuildResponse,
   ScanStatus,
+  SearchMode,
   SearchResponse,
   TagsResponse,
   TimelineResponse,
@@ -157,6 +165,8 @@ export const projectsApi = {
     pageSize = 50,
     folderId?: number | null,
     folderScope: FolderScope = "subtree",
+    mode: SearchMode = "hybrid",
+    debug = false,
   ) =>
     request<SearchResponse>(
       `/projects/${id}/search${qs({
@@ -165,8 +175,39 @@ export const projectsApi = {
         page_size: pageSize,
         folder_id: folderId,
         folder_scope: folderScope,
+        mode,
+        debug: debug || undefined,
       })}`,
     ),
+
+  // ── Embedding Settings ────────────────────────────────────────────────────
+
+  getEmbeddingSettings: (id: number) =>
+    request<ProjectEmbeddingSettings>(`/projects/${id}/embedding-settings`),
+
+  updateEmbeddingSettings: (id: number, body: ProjectEmbeddingSettingsUpdate) =>
+    request<ProjectEmbeddingSettings>(`/projects/${id}/embedding-settings`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+
+  testEmbeddingSettings: (id: number, body: EmbeddingTestRequest) =>
+    request<EmbeddingTestResponse>(`/projects/${id}/embedding-settings/test`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+
+  getEmbeddingStatus: (id: number) =>
+    request<EmbeddingStatusResponse>(`/projects/${id}/embeddings/status`),
+
+  rebuildEmbeddings: (id: number, body: RebuildRequest) =>
+    request<RebuildResponse>(`/projects/${id}/embeddings/rebuild`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
 
   // ── Tags ──────────────────────────────────────────────────────────────────
 

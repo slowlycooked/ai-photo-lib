@@ -67,14 +67,58 @@ class PhotoEmbedding(Base):
     caption_embedding: Mapped[Optional[list[float]]] = mapped_column(Vector(1024), nullable=True)
     tag_embedding: Mapped[Optional[list[float]]] = mapped_column(Vector(1024), nullable=True)
     ocr_embedding: Mapped[Optional[list[float]]] = mapped_column(Vector(1024), nullable=True)
+    content_embedding: Mapped[Optional[list[float]]] = mapped_column(Vector(1024), nullable=True)
     caption_text_hash: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     tag_text_hash: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     ocr_text_hash: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    content_text_hash: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     embedding_model: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     embedding_dimension: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    embedding_input_version: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     embedding_status: Mapped[str] = mapped_column(Text, server_default="ready", nullable=False)
     embedding_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     embedded_at: Mapped[Optional[datetime]] = mapped_column(TIMESTAMP, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP, server_default=func.now(), nullable=False
+    )
+
+
+class ProjectEmbeddingSettings(Base):
+    """Per-project configuration for the text embedding service."""
+
+    __tablename__ = "project_embedding_settings"
+    __table_args__ = (
+        sa.UniqueConstraint(
+            "project_id",
+            name="uq_project_embedding_settings_project_id",
+        ),
+        sa.Index("ix_project_embedding_settings_project_id", "project_id"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    project_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    provider: Mapped[str] = mapped_column(
+        Text, server_default="openai-compatible", nullable=False
+    )
+    endpoint_url: Mapped[str] = mapped_column(Text, nullable=False)
+    api_key: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    model_name: Mapped[str] = mapped_column(Text, nullable=False)
+    embedding_dimension: Mapped[int] = mapped_column(
+        Integer, server_default="1024", nullable=False
+    )
+    batch_size: Mapped[int] = mapped_column(Integer, server_default="16", nullable=False)
+    timeout_seconds: Mapped[int] = mapped_column(Integer, server_default="60", nullable=False)
+    input_prefix_query: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    input_prefix_document: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, server_default="true", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP, server_default=func.now(), nullable=False
+    )
     updated_at: Mapped[datetime] = mapped_column(
         TIMESTAMP, server_default=func.now(), nullable=False
     )

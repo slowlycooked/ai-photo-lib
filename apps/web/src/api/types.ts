@@ -194,6 +194,30 @@ export interface SearchResultItem {
   caption: string | null;
   matched_tags: string[];
   score: number;
+  keyword_score?: number;
+  vector_score?: number;
+  rrf_score?: number;
+  match_source?: string[];
+  field_scores?: {
+    content?: number;
+    caption?: number;
+    tag?: number;
+    ocr?: number;
+  };
+}
+
+export interface SearchDebugPayload {
+  original_query: string;
+  normalized_query: string;
+  expanded_terms: string[];
+  intent: string;
+  mode: string;
+  embedding_model: string;
+  embedding_dimension: number;
+  keyword_candidates: number;
+  vector_candidates: number;
+  merged_candidates: number;
+  fallback_reason?: string;
 }
 
 export interface SearchResponse {
@@ -202,6 +226,7 @@ export interface SearchResponse {
   page: number;
   page_size: number;
   items: SearchResultItem[];
+  debug?: SearchDebugPayload | null;
 }
 
 // ─── Tags ─────────────────────────────────────────────────────────────────────
@@ -338,4 +363,81 @@ export interface PromptTemplateTestResponse {
   parsed_json: Record<string, unknown> | null;
   error: string | null;
   duration_ms: number;
+}
+
+// ─── Embedding Settings ───────────────────────────────────────────────────────
+
+export type SearchMode = "keyword" | "vector" | "hybrid";
+
+export interface ProjectEmbeddingSettings {
+  id: number;
+  project_id: number;
+  provider: string;
+  endpoint_url: string;
+  model_name: string;
+  embedding_dimension: number;
+  batch_size: number;
+  timeout_seconds: number;
+  input_prefix_query: string;
+  input_prefix_document: string;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ProjectEmbeddingSettingsUpdate {
+  provider?: string;
+  endpoint_url?: string;
+  api_key?: string | null;
+  model_name?: string;
+  embedding_dimension?: number;
+  batch_size?: number;
+  timeout_seconds?: number;
+  input_prefix_query?: string;
+  input_prefix_document?: string;
+  enabled?: boolean;
+}
+
+export interface EmbeddingTestRequest {
+  endpoint_url?: string;
+  api_key?: string | null;
+  model_name?: string;
+  sample_text?: string;
+}
+
+export interface EmbeddingTestResponse {
+  success: boolean;
+  model_name: string;
+  embedding_dimension: number;
+  sample: number[];
+  duration_ms: number;
+  error: string | null;
+}
+
+export interface EmbeddingStatusResponse {
+  project_id: number;
+  total_analyzed_photos: number;
+  ready: number;
+  missing: number;
+  stale: number;
+  failed: number;
+  running_jobs: number;
+  queued_jobs: number;
+  embedding_model: string;
+  embedding_dimension: number;
+  input_version: string;
+}
+
+export type RebuildScope = "all" | "stale" | "failed" | "missing" | "selected";
+
+export interface RebuildRequest {
+  scope: RebuildScope;
+  photo_ids?: number[];
+  force?: boolean;
+}
+
+export interface RebuildResponse {
+  enqueued: number;
+  scope: RebuildScope;
+  job_ids: number[];
 }

@@ -2,14 +2,16 @@ import { useEffect, useRef, useState } from "react";
 import { Loader2, SearchX, ImageIcon } from "lucide-react";
 import { useSearch } from "@/hooks/useSearch";
 import { api } from "@/lib/api";
-import type { SearchResultItem } from "@/lib/api";
+import type { SearchDebugPayload, SearchMode, SearchResultItem } from "@/api/types";
 
 interface SearchResultGridProps {
   query: string;
   projectId?: number | null;
+  mode?: SearchMode;
+  debug?: boolean;
 }
 
-function SearchCard({ item }: { item: SearchResultItem }) {
+function SearchCard({ item, debug }: { item: SearchResultItem; debug?: boolean }) {
   const [loaded, setLoaded] = useState(false);
 
   return (
@@ -52,13 +54,62 @@ function SearchCard({ item }: { item: SearchResultItem }) {
           )}
 
           <p className="text-caption-sm text-ash truncate">{item.file_name}</p>
+
+          {/* Debug per-card scores */}
+          {debug && (item.rrf_score != null || item.vector_score != null) && (
+            <div className="text-[10px] font-mono text-muted-foreground space-y-0.5 border-t border-dashed border-border pt-1">
+              {item.rrf_score != null && (
+                <div>rrf: {item.rrf_score.toFixed(5)}</div>
+              )}
+              {item.keyword_score != null && (
+                <div>kw: {item.keyword_score.toFixed(4)}</div>
+              )}
+              {item.vector_score != null && (
+                <div>vec: {item.vector_score.toFixed(4)}</div>
+              )}
+              {item.field_scores && (
+                <div>
+                  {Object.entries(item.field_scores)
+                    .map(([k, v]) => `${k}:${(v as number).toFixed(3)}`)
+                    .join(" ")}
+                </div>
+              )}
+              {item.match_source && (
+                <div className="text-[9px] text-stone">{item.match_source.join(" ")}</div>
+              )}
+            </div>
+          )}
         </div>
       </div>
     </div>
   );
 }
 
-export function SearchResultGrid({ query, projectId }: SearchResultGridProps) {
+function DebugPanel({ payload }: { payload: SearchDebugPayload }) {
+  return (
+    <div className="rounded-md border border-amber-400/50 bg-amber-50 dark:bg-amber-950/30 p-3 text-[11px] font-mono space-y-1 text-amber-900 dark:text-amber-200">
+      <div className="font-semibold text-xs mb-1.5">🔍 Search Debug</div>
+      <div><span className="opacity-60">原始:</span> {payload.original_query}</div>
+      <div><span className="opacity-60">规范化:</span> {payload.normalized_query}</div>
+      {payload.expanded_terms.length > 0 && (
+        <div><span className="opacity-60">扩展词:</span> {payload.expanded_terms.join(", ")}</div>
+      )}
+      <div><span className="opacity-60">意图:</span> {payload.intent} &nbsp; <span className="opacity-60">模式:</span> {payload.mode}</div>
+      <div><span className="opacity-60">模型:</span> {payload.embedding_model} ({payload.embedding_dimension}d)</div>
+      <div>
+        <span className="opacity-60">候选:</span>{" "}
+        关键词 {payload.keyword_candidates} / 向量 {payload.vector_candidates} / 合并 {payload.merged_candidates}
+      </div>
+      {payload.fallback_reason && (
+        <div className="text-red-600 dark:text-red-400">
+          ⚠ Fallback: {payload.fallback_reason}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function SearchResultGrid({ query, projectId, mode = "hybrid", debug = false }: SearchResultGridProps) {
   const {
     data,
     fetchNextPage,
@@ -67,7 +118,7 @@ export function SearchResultGrid({ query, projectId }: SearchResultGridProps) {
     isLoading,
     isError,
     error,
-  } = useSearch(query, projectId ?? null);
+  } = useSearch(query, projectId ?? null, { mode, debug });
 
   const sentinelRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -84,6 +135,7 @@ export function SearchResultGrid({ query, projectId }: SearchResultGridProps) {
 
   const allItems = data?.pages.flatMap((p) => p.items) ?? [];
   const total = data?.pages[0]?.total ?? 0;
+  const debugPayload = data?.pages[0]?.debug;
 
   if (isLoading) {
     return (
@@ -121,6 +173,8 @@ export function SearchResultGrid({ query, projectId }: SearchResultGridProps) {
 
   return (
     <div className="space-y-4">
+      {debug && debugPayload && <DebugPanel payload={debugPayload} />}
+
       <p className="text-body-sm text-mute">
         「{query}」共找到{" "}
         <span className="font-semibold text-ink">{total.toLocaleString()}</span> 张照片
@@ -128,7 +182,7 @@ export function SearchResultGrid({ query, projectId }: SearchResultGridProps) {
 
       <div className="masonry-grid">
         {allItems.map((item) => (
-          <SearchCard key={item.photo_id} item={item} />
+          <SearchCard key={item.photo_id} item={item} debug={debug} />
         ))}
       </div>
 

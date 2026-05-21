@@ -28,7 +28,7 @@ def project_search(
     db: Session = Depends(get_db),
 ):
     """Search photos within a specific project."""
-    total, items = search_photos(
+    total, items, debug_payload = search_photos(
         db,
         q,
         page=page,
@@ -39,4 +39,11 @@ def project_search(
         mode=mode,
         debug=debug,
     )
-    return SearchResponse(query=q, total=total, page=page, page_size=page_size, items=items)
+    return SearchResponse(
+        query=q,
+        total=total,
+        page=page,
+        page_size=page_size,
+        items=items,
+        debug=debug_payload,
+    )

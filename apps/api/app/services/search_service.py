@@ -15,10 +15,12 @@ from ..logging_config import (
     should_include_search_debug_payload,
     should_include_search_trace_payload,
 )
-from ..models.ai import PhotoAIAnalysis, ProjectAISettings
+from ..models.ai import PhotoAIAnalysis
 from ..models.photo import Photo
 from ..services.embedding_client import EmbeddingRequestError, embed_text
 from ..services.folder_service import apply_folder_filter
+from ..services.project_embedding_settings_service import resolve_embedding_settings
+from ..services.query_understanding_service import SearchQueryPlan, understand_query
 
 logger = logging.getLogger(__name__)
 
@@ -39,9 +41,22 @@ _WEIGHTS = {
 _MAX_PER_TERM = sum(_WEIGHTS.values())
 _DB_EMBEDDING_DIMENSION = DB_EMBEDDING_DIMENSION
 
+# Default vector field weights: content (semantic composite) gets the highest weight
+_DEFAULT_CONTENT_WEIGHT = 0.50
+_DEFAULT_TAG_WEIGHT = 0.25
+_DEFAULT_CAPTION_WEIGHT = 0.20
+_DEFAULT_OCR_WEIGHT = 0.05
+
+# OCR-heavy query overrides
+_OCR_CONTENT_WEIGHT = 0.35
+_OCR_TAG_WEIGHT = 0.15
+_OCR_CAPTION_WEIGHT = 0.10
+_OCR_OCR_WEIGHT = 0.40
+
 
 @dataclass
 class VectorMatchScores:
+    content_score: float = 0.0
     caption_score: float = 0.0
     tag_score: float = 0.0
     ocr_score: float = 0.0
@@ -57,6 +72,7 @@ class SearchCandidate:
     rrf_score: float = 0.0
     matched_tags: list[str] = field(default_factory=list)
     match_source: list[str] = field(default_factory=list)
+    field_scores: dict = field(default_factory=dict)
 
 
 def _build_any_match_filter(terms: list[str]):
@@ -93,7 +109,7 @@ def _score_result(photo: Photo, ai: PhotoAIAnalysis, terms: list[str]) -> tuple[
         if photo.file_name and t in photo.file_name.lower():
             raw += _WEIGHTS["file_name"]
 
-        for field, weight in (
+        for fname, weight in (
             ("scene_tags", _WEIGHTS["scene_tags"]),
             ("object_tags", _WEIGHTS["object_tags"]),
             ("activity_tags", _WEIGHTS["activity_tags"]),
@@ -101,7 +117,7 @@ def _score_result(photo: Photo, ai: PhotoAIAnalysis, terms: list[str]) -> tuple[
             ("quality_tags", _WEIGHTS["quality_tags"]),
             ("location_clues", _WEIGHTS["location_clues"]),
         ):
-            tags: list[str] | None = getattr(ai, field, None)
+            tags: list[str] | None = getattr(ai, fname, None)
             if tags:
                 for tag in tags:
                     if t in tag.lower():
@@ -133,18 +149,20 @@ def _resolve_folder_photo_ids(
 def _keyword_search(
     db: Session,
     query: str,
+    expanded_terms: list[str],
     *,
     project_id: int | None,
     folder_photo_ids: set[int] | None,
     limit: int,
 ) -> list[SearchCandidate]:
-    terms = [t for t in query.split() if t] or [query]
+    # Use expanded terms for matching, fall back to raw tokens from query
+    all_terms = expanded_terms if expanded_terms else [t for t in query.split() if t] or [query]
 
     base_query = (
         db.query(Photo, PhotoAIAnalysis)
         .join(PhotoAIAnalysis, PhotoAIAnalysis.photo_id == Photo.id)
         .filter(Photo.deleted_at.is_(None))
-        .filter(_build_any_match_filter(terms))
+        .filter(_build_any_match_filter(all_terms))
     )
 
     if project_id is not None:
@@ -167,7 +185,7 @@ def _keyword_search(
 
     candidates: list[SearchCandidate] = []
     for photo, ai in rows:
-        score, matched_tags = _score_result(photo, ai, terms)
+        score, matched_tags = _score_result(photo, ai, all_terms)
         if score <= 0:
             continue
         candidates.append(
@@ -195,25 +213,25 @@ def _is_ocr_like_query(query: str) -> bool:
 
 
 def _vector_field_weights(query: str) -> dict[str, float]:
-    caption_weight = settings.search_caption_vector_weight
-    tag_weight = settings.search_tag_vector_weight
-    ocr_weight = settings.search_ocr_vector_weight
+    """Return per-field vector weights for a query.
 
+    content_embedding gets the highest weight by default because it
+    encodes the full semantic document. OCR-like queries shift weight
+    toward ocr_embedding.
+    """
     if _is_ocr_like_query(query):
-        ocr_weight = ocr_weight + 0.2
-
-    total = caption_weight + tag_weight + ocr_weight
-    if total <= 0:
         return {
-            "caption_embedding": 0.35,
-            "tag_embedding": 0.50,
-            "ocr_embedding": 0.15,
+            "content_embedding": _OCR_CONTENT_WEIGHT,
+            "tag_embedding": _OCR_TAG_WEIGHT,
+            "caption_embedding": _OCR_CAPTION_WEIGHT,
+            "ocr_embedding": _OCR_OCR_WEIGHT,
         }
 
     return {
-        "caption_embedding": caption_weight / total,
-        "tag_embedding": tag_weight / total,
-        "ocr_embedding": ocr_weight / total,
+        "content_embedding": _DEFAULT_CONTENT_WEIGHT,
+        "tag_embedding": _DEFAULT_TAG_WEIGHT,
+        "caption_embedding": _DEFAULT_CAPTION_WEIGHT,
+        "ocr_embedding": _DEFAULT_OCR_WEIGHT,
     }
 
 
@@ -261,48 +279,69 @@ def _vector_search(
     db: Session,
     *,
     query: str,
+    normalized_query: str,
     project_id: int,
     folder_photo_ids: set[int] | None,
     limit: int,
-) -> dict[int, VectorMatchScores]:
+) -> tuple[dict[int, VectorMatchScores], str, str]:
+    """Perform multi-field vector search.
+
+    Returns (scores_dict, embedding_model, fallback_reason).
+    fallback_reason is empty string when no fallback occurred.
+    """
     if settings.embedding_dimension != _DB_EMBEDDING_DIMENSION:
         raise RuntimeError(
-            f"Config mismatch: embedding_dimension must be {_DB_EMBEDDING_DIMENSION}, got {settings.embedding_dimension}"
+            f"Config mismatch: embedding_dimension must be {_DB_EMBEDDING_DIMENSION}, "
+            f"got {settings.embedding_dimension}"
         )
 
-    settings_row = (
-        db.query(ProjectAISettings)
-        .filter(ProjectAISettings.project_id == project_id)
-        .first()
-    )
-    endpoint_url = settings_row.endpoint_url if settings_row else None
-    embedding_model = settings.embedding_model or (settings_row.model_name if settings_row else "") or settings.openai_model
+    # Resolve embedding config from project settings, not AI settings
+    try:
+        embed_cfg = resolve_embedding_settings(db, project_id)
+        endpoint_url = embed_cfg["endpoint_url"]
+        api_key = embed_cfg["api_key"]
+        embedding_model = embed_cfg["model_name"]
+        timeout_seconds = embed_cfg["timeout_seconds"]
+    except RuntimeError:
+        # Fall back to global config if no project settings found
+        endpoint_url = (settings.embedding_base_url or settings.openai_base_url or "").strip()
+        api_key = settings.embedding_api_key or settings.openai_api_key
+        embedding_model = settings.embedding_model or settings.openai_model
+        timeout_seconds = settings.embedding_timeout_seconds
+
+    # Use the semantically expanded/normalised query for embedding
+    embed_input = normalized_query if normalized_query.strip() else query
 
     query_embedding = embed_text(
-        query,
+        embed_input,
         endpoint_url=endpoint_url,
+        api_key=api_key,
         model=embedding_model,
+        timeout_seconds=timeout_seconds,
         expected_dim=settings.embedding_dimension,
     )
     if should_include_search_trace_payload():
-        logger.trace(
-            "Search embedding query generated. project_id=%s query=%s embedding_model=%s dimension=%s",
+        logger.debug(
+            "Search embedding query generated. project_id=%s query=%r normalized=%r "
+            "embedding_model=%s dimension=%s",
             project_id,
             query,
+            embed_input,
             embedding_model,
             len(query_embedding),
         )
 
     vector_literal = _query_vector_literal(query_embedding)
     field_weights = _vector_field_weights(query)
-    if should_include_search_trace_payload():
-        logger.trace(
-            "Search vector weights. project_id=%s query=%s field_weights=%s",
-            project_id,
-            query,
-            field_weights,
-        )
 
+    content_scores = _vector_field_search(
+        db,
+        project_id=project_id,
+        query_vector_literal=vector_literal,
+        field_name="content_embedding",
+        folder_photo_ids=folder_photo_ids,
+        limit=limit,
+    )
     caption_scores = _vector_field_search(
         db,
         project_id=project_id,
@@ -329,26 +368,34 @@ def _vector_search(
     )
 
     merged: dict[int, VectorMatchScores] = {}
-    photo_ids = set(caption_scores.keys()) | set(tag_scores.keys()) | set(ocr_scores.keys())
+    photo_ids = (
+        set(content_scores.keys())
+        | set(caption_scores.keys())
+        | set(tag_scores.keys())
+        | set(ocr_scores.keys())
+    )
     for photo_id in photo_ids:
+        cn = max(0.0, content_scores.get(photo_id, 0.0))
         c = max(0.0, caption_scores.get(photo_id, 0.0))
         t = max(0.0, tag_scores.get(photo_id, 0.0))
         o = max(0.0, ocr_scores.get(photo_id, 0.0))
         total = (
-            c * field_weights["caption_embedding"]
+            cn * field_weights["content_embedding"]
+            + c * field_weights["caption_embedding"]
             + t * field_weights["tag_embedding"]
             + o * field_weights["ocr_embedding"]
         )
         if total < settings.search_vector_min_score:
             continue
         merged[photo_id] = VectorMatchScores(
+            content_score=cn,
             caption_score=c,
             tag_score=t,
             ocr_score=o,
             total_score=total,
         )
 
-    return merged
+    return merged, embedding_model, ""
 
 
 def _rrf_merge(
@@ -382,13 +429,23 @@ def _rrf_merge(
         row.vector_score = vector_match.total_score
         row.rrf_score += fused
         row.final_score = row.rrf_score
+
+        # Track which fields contributed
         for source_name, score in (
+            ("vector_content", vector_match.content_score),
             ("vector_caption", vector_match.caption_score),
             ("vector_tag", vector_match.tag_score),
             ("vector_ocr", vector_match.ocr_score),
         ):
             if score > 0 and source_name not in row.match_source:
                 row.match_source.append(source_name)
+
+        row.field_scores = {
+            "content": round(vector_match.content_score, 4),
+            "caption": round(vector_match.caption_score, 4),
+            "tag": round(vector_match.tag_score, 4),
+            "ocr": round(vector_match.ocr_score, 4),
+        }
 
     return sorted(merged.values(), key=lambda item: item.final_score, reverse=True)
 
@@ -451,7 +508,7 @@ def _build_result_items(
         else:
             score = candidate.keyword_score
 
-        item = {
+        item: dict = {
             "photo_id": photo.id,
             "file_name": photo.file_name,
             "thumbnail_url": thumb,
@@ -469,6 +526,8 @@ def _build_result_items(
             item["vector_score"] = round(float(candidate.vector_score), 6)
             item["rrf_score"] = round(float(candidate.rrf_score), 6)
             item["match_source"] = list(candidate.match_source)
+            if candidate.field_scores:
+                item["field_scores"] = candidate.field_scores
 
         items.append(item)
 
@@ -485,21 +544,35 @@ def search_photos(
     folder_scope: str = "subtree",
     mode: SearchMode = "hybrid",
     debug: bool = False,
-) -> Tuple[int, list]:
+) -> Tuple[int, list, Optional[dict]]:
+    """Search photos. Returns (total, items, debug_payload).
+
+    debug_payload is None when debug=False or debug is not enabled.
+    """
     query = query.strip()
     if not query:
-        return 0, []
+        return 0, [], None
+
+    # Run query understanding to get expanded terms and normalised query
+    query_plan: SearchQueryPlan = understand_query(query, project_id=project_id)
+
+    # Respect mode override from caller, but fall back to plan's suggestion
+    effective_mode: SearchMode = mode
 
     logger.debug(
-        "Executing search. project_id=%s mode=%s page=%s page_size=%s folder_id=%s folder_scope=%s debug=%s query=%s",
+        "Executing search. project_id=%s mode=%s effective_mode=%s page=%s page_size=%s "
+        "folder_id=%s folder_scope=%s debug=%s query=%r intent=%s expanded_terms=%s",
         project_id,
         mode,
+        effective_mode,
         page,
         page_size,
         folder_id,
         folder_scope,
         debug,
         query,
+        query_plan.intent,
+        query_plan.expanded_terms[:10],
     )
 
     folder_photo_ids = _resolve_folder_photo_ids(
@@ -509,16 +582,18 @@ def search_photos(
         folder_scope=folder_scope,
     )
 
+    # Keyword search always uses expanded terms
     keyword_results = _keyword_search(
         db,
         query,
+        query_plan.expanded_terms,
         project_id=project_id,
         folder_photo_ids=folder_photo_ids,
         limit=settings.search_keyword_top_k,
     )
 
-    if mode == "keyword" or project_id is None:
-        return _build_result_items(
+    if effective_mode == "keyword" or project_id is None:
+        total, items = _build_result_items(
             db,
             keyword_results,
             project_id=project_id,
@@ -527,26 +602,58 @@ def search_photos(
             page_size=page_size,
             debug=debug,
         )
+        debug_payload: Optional[dict] = None
+        if debug and settings.search_debug_enabled and should_include_search_debug_payload():
+            debug_payload = _build_debug_payload(
+                query_plan=query_plan,
+                mode="keyword",
+                embedding_model="",
+                embedding_dimension=settings.embedding_dimension,
+                keyword_candidates=len(keyword_results),
+                vector_candidates=0,
+                merged_candidates=len(keyword_results),
+                fallback_reason="",
+            )
+        return total, items, debug_payload
 
+    # Vector / hybrid path
     vector_scores: dict[int, VectorMatchScores] = {}
+    embedding_model = ""
+    fallback_reason = ""
+
     try:
-        vector_scores = _vector_search(
+        vector_scores, embedding_model, fallback_reason = _vector_search(
             db,
             query=query,
+            normalized_query=query_plan.normalized_query,
             project_id=project_id,
             folder_photo_ids=folder_photo_ids,
             limit=settings.search_vector_top_k,
         )
     except (EmbeddingRequestError, SQLAlchemyError, RuntimeError) as exc:
+        fallback_reason = str(exc)
         logger.warning(
-            "Vector search fallback to keyword. project_id=%s query=%s error=%s",
+            "Vector search fallback to keyword. project_id=%s query=%r error=%s",
             project_id,
             query,
             exc,
         )
-        if mode == "vector":
-            return 0, []
-        return _build_result_items(
+        if effective_mode == "vector":
+            debug_payload = None
+            if debug and settings.search_debug_enabled and should_include_search_debug_payload():
+                debug_payload = _build_debug_payload(
+                    query_plan=query_plan,
+                    mode="vector",
+                    embedding_model=embedding_model,
+                    embedding_dimension=settings.embedding_dimension,
+                    keyword_candidates=len(keyword_results),
+                    vector_candidates=0,
+                    merged_candidates=0,
+                    fallback_reason=fallback_reason,
+                )
+            return 0, [], debug_payload
+        # hybrid: fall back to keyword-only
+        total, items = _build_result_items(
             db,
             keyword_results,
             project_id=project_id,
@@ -555,8 +662,21 @@ def search_photos(
             page_size=page_size,
             debug=debug,
         )
+        debug_payload = None
+        if debug and settings.search_debug_enabled and should_include_search_debug_payload():
+            debug_payload = _build_debug_payload(
+                query_plan=query_plan,
+                mode="hybrid",
+                embedding_model=embedding_model,
+                embedding_dimension=settings.embedding_dimension,
+                keyword_candidates=len(keyword_results),
+                vector_candidates=0,
+                merged_candidates=len(keyword_results),
+                fallback_reason=fallback_reason,
+            )
+        return total, items, debug_payload
 
-    if mode == "vector":
+    if effective_mode == "vector":
         vector_only = [
             SearchCandidate(
                 photo_id=photo_id,
@@ -565,16 +685,25 @@ def search_photos(
                 match_source=[
                     source
                     for source, value in (
+                        ("vector_content", scores.content_score),
                         ("vector_caption", scores.caption_score),
                         ("vector_tag", scores.tag_score),
                         ("vector_ocr", scores.ocr_score),
                     )
                     if value > 0
                 ],
+                field_scores={
+                    "content": round(scores.content_score, 4),
+                    "caption": round(scores.caption_score, 4),
+                    "tag": round(scores.tag_score, 4),
+                    "ocr": round(scores.ocr_score, 4),
+                },
             )
-            for photo_id, scores in sorted(vector_scores.items(), key=lambda x: x[1].total_score, reverse=True)
+            for photo_id, scores in sorted(
+                vector_scores.items(), key=lambda x: x[1].total_score, reverse=True
+            )
         ]
-        return _build_result_items(
+        total, items = _build_result_items(
             db,
             vector_only,
             project_id=project_id,
@@ -583,18 +712,34 @@ def search_photos(
             page_size=page_size,
             debug=debug,
         )
+        debug_payload = None
+        if debug and settings.search_debug_enabled and should_include_search_debug_payload():
+            debug_payload = _build_debug_payload(
+                query_plan=query_plan,
+                mode="vector",
+                embedding_model=embedding_model,
+                embedding_dimension=settings.embedding_dimension,
+                keyword_candidates=len(keyword_results),
+                vector_candidates=len(vector_scores),
+                merged_candidates=len(vector_only),
+                fallback_reason="",
+            )
+        return total, items, debug_payload
 
+    # Hybrid: RRF merge
     merged = _rrf_merge(keyword_results, vector_scores)
     if should_include_search_trace_payload():
-        logger.trace(
-            "Search scoring summary. project_id=%s query=%s keyword_candidates=%s vector_candidates=%s merged_candidates=%s",
+        logger.debug(
+            "Search scoring summary. project_id=%s query=%r keyword_candidates=%s "
+            "vector_candidates=%s merged_candidates=%s",
             project_id,
             query,
             len(keyword_results),
             len(vector_scores),
             len(merged),
         )
-    return _build_result_items(
+
+    total, items = _build_result_items(
         db,
         merged,
         project_id=project_id,
@@ -603,3 +748,44 @@ def search_photos(
         page_size=page_size,
         debug=debug,
     )
+    debug_payload = None
+    if debug and settings.search_debug_enabled and should_include_search_debug_payload():
+        debug_payload = _build_debug_payload(
+            query_plan=query_plan,
+            mode="hybrid",
+            embedding_model=embedding_model,
+            embedding_dimension=settings.embedding_dimension,
+            keyword_candidates=len(keyword_results),
+            vector_candidates=len(vector_scores),
+            merged_candidates=len(merged),
+            fallback_reason="",
+        )
+    return total, items, debug_payload
+
+
+def _build_debug_payload(
+    *,
+    query_plan: SearchQueryPlan,
+    mode: str,
+    embedding_model: str,
+    embedding_dimension: int,
+    keyword_candidates: int,
+    vector_candidates: int,
+    merged_candidates: int,
+    fallback_reason: str,
+) -> dict:
+    payload: dict = {
+        "original_query": query_plan.original_query,
+        "normalized_query": query_plan.normalized_query,
+        "expanded_terms": query_plan.expanded_terms,
+        "intent": query_plan.intent,
+        "mode": mode,
+        "embedding_model": embedding_model,
+        "embedding_dimension": embedding_dimension,
+        "keyword_candidates": keyword_candidates,
+        "vector_candidates": vector_candidates,
+        "merged_candidates": merged_candidates,
+    }
+    if fallback_reason:
+        payload["fallback_reason"] = fallback_reason
+    return payload

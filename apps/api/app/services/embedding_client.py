@@ -60,6 +60,8 @@ def embed_texts(
     *,
     model: str | None = None,
     endpoint_url: str | None = None,
+    api_key: str | None = None,
+    timeout_seconds: int | None = None,
     expected_dim: int | None = None,
 ) -> list[list[float]]:
     clean_texts = [t.strip() for t in texts if t and t.strip()]
@@ -71,8 +73,10 @@ def embed_texts(
         raise EmbeddingRequestError("Missing embedding model configuration", retryable=False, code="missing_model")
 
     url = _normalize_endpoint_url(endpoint_url)
+    used_api_key = api_key or _default_api_key()
+    used_timeout = timeout_seconds if timeout_seconds is not None else settings.embedding_timeout_seconds
     headers = {
-        "Authorization": f"Bearer {_default_api_key()}",
+        "Authorization": f"Bearer {used_api_key}",
         "Content-Type": "application/json",
     }
     payload = {
@@ -81,7 +85,7 @@ def embed_texts(
     }
 
     try:
-        with httpx.Client(timeout=settings.embedding_timeout_seconds) as client:
+        with httpx.Client(timeout=used_timeout) as client:
             response = client.post(url, json=payload, headers=headers)
             response.raise_for_status()
     except httpx.ConnectError as exc:
@@ -138,8 +142,23 @@ def embed_texts(
     return embeddings
 
 
-def embed_text(text: str, **kwargs) -> list[float]:
-    vectors = embed_texts([text], **kwargs)
+def embed_text(
+    text: str,
+    *,
+    model: str | None = None,
+    endpoint_url: str | None = None,
+    api_key: str | None = None,
+    timeout_seconds: int | None = None,
+    expected_dim: int | None = None,
+) -> list[float]:
+    vectors = embed_texts(
+        [text],
+        model=model,
+        endpoint_url=endpoint_url,
+        api_key=api_key,
+        timeout_seconds=timeout_seconds,
+        expected_dim=expected_dim,
+    )
     if not vectors:
         raise EmbeddingRequestError("No embedding returned", retryable=False, code="empty_result")
     return vectors[0]

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel
 
@@ -21,6 +21,7 @@ class SearchResultItem(BaseModel):
     vector_score: Optional[float] = None
     rrf_score: Optional[float] = None
     match_source: Optional[List[str]] = None
+    field_scores: Optional[Dict[str, float]] = None
 
 
 class SearchResponse(BaseModel):
@@ -29,3 +30,4 @@ class SearchResponse(BaseModel):
     page: int
     page_size: int
     items: List[SearchResultItem]
+    debug: Optional[Dict[str, Any]] = None

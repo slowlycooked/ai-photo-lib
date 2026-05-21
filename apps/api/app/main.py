@@ -24,6 +24,7 @@ from .routers import (
     project_scan,
     project_ai_jobs,
     project_ai_settings,
+    project_embedding_settings,
     project_prompt_templates,
     project_embeddings,
     project_search,
@@ -123,6 +124,7 @@ app.include_router(project_photos.router)
 app.include_router(project_scan.router)
 app.include_router(project_ai_jobs.router)
 app.include_router(project_ai_settings.router)
+app.include_router(project_embedding_settings.router)
 app.include_router(project_prompt_templates.router)
 app.include_router(project_embeddings.router)
 app.include_router(project_search.router)
