@@ -4,8 +4,6 @@ import json
 import logging
 import re
 from typing import Any
-from pathlib import Path
-from typing import Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -299,22 +297,6 @@ def _build_fallback_from_plain_text(raw_text: str) -> dict:
         "confidence": _infer_confidence(raw_text),
     }
     return validate_image_analysis_result(result)
-
-
-def build_relative_paths(library_path: str, entry: Path) -> Tuple[str, str]:
-    """
-    计算照片的 relative_path 和 folder_path
-    """
-    # Ensure library_path is a Path object for relative_to
-    lib_path = Path(library_path).resolve()
-    entry_path = Path(entry).resolve()
-    
-    rel_path = str(entry_path.relative_to(lib_path))
-    if "/" in rel_path:
-        folder_path = rel_path.rsplit("/", 1)[0]
-    else:
-        folder_path = ""
-    return rel_path, folder_path
 
 
 def parse_model_json_output(raw_text: str, strategy: str = "auto_extract") -> dict:

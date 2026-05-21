@@ -1,8 +1,13 @@
-from sqlalchemy.orm import Session
-from sqlalchemy import or_, func
-from app.models.folder import ProjectFolder
-from app.models.photo import Photo
+from __future__ import annotations
+
 from typing import Dict, Optional
+
+from sqlalchemy import func, or_
+from sqlalchemy.orm import Session
+
+from ..models.folder import ProjectFolder
+from ..models.photo import Photo
+
 
 def ensure_folder_path(db: Session, project_id: int, folder_path: str, cache: Dict[str, ProjectFolder]) -> ProjectFolder:
     if folder_path in cache:
@@ -42,7 +47,7 @@ def ensure_folder_path(db: Session, project_id: int, folder_path: str, cache: Di
     return folder
 
 
-def recompute_project_folder_counts(db: Session, project_id: int):
+def recompute_project_folder_counts(db: Session, project_id: int) -> None:
     # 1. 统计每个文件夹直接照片数
     direct_counts = dict(
         db.query(Photo.folder_id, func.count(Photo.id))
@@ -73,7 +78,7 @@ def apply_folder_filter(query, db: Session, project_id: int, folder_id: Optional
         ProjectFolder.deleted_at.is_(None),
     ).first()
     if not folder:
-        raise Exception("Folder not found")
+        raise ValueError("Folder not found")
     if folder_scope == "direct":
         return query.filter(Photo.folder_id == folder.id)
     if folder.relative_path == "":

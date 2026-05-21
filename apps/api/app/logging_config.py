@@ -69,12 +69,6 @@ _LOGGER_GROUPS: dict[str, tuple[str, ...]] = {
     ),
 }
 
-def set_log_context(request_id=None, project_id=None, task_id=None, photo_id=None):
-    if request_id: request_id_ctx.set(request_id)
-    if project_id: project_id_ctx.set(project_id)
-    if task_id: task_id_ctx.set(task_id)
-    if photo_id: photo_id_ctx.set(photo_id)
-
 def get_log_context():
     return {
         "request_id": request_id_ctx.get(),
@@ -97,13 +91,6 @@ class SensitiveDataFilter(logging.Filter):
         record.msg = msg
         record.args = ()
         return True
-
-def truncate_log_text(text: str, max_length: int) -> str:
-    if not isinstance(text, str):
-        return text
-    if len(text) > max_length:
-        return text[:max_length] + "...[truncated]"
-    return text
 
 class ContextualFormatter(logging.Formatter):
     def format(self, record):

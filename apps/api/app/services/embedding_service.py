@@ -7,10 +7,11 @@ from sqlalchemy import inspect
 from sqlalchemy.orm import Session
 
 from ..config import settings
+from ..constants.embedding import DB_EMBEDDING_DIMENSION
 from ..models.ai import PhotoAIAnalysis, PhotoEmbedding
 from .embedding_client import EmbeddingRequestError, embed_texts
 
-_DB_EMBEDDING_DIMENSION = 1024
+_DB_EMBEDDING_DIMENSION = DB_EMBEDDING_DIMENSION
 _REQUIRED_PHOTO_EMBEDDING_COLUMNS = {
     "id",
     "project_id",

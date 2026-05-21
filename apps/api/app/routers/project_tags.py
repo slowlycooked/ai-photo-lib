@@ -1,33 +1,20 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from ..api.deps import require_project
 from ..database import get_db
 from ..models.project import Project
+from ..schemas.tags import TagCount, TagsResponse
 
 router = APIRouter(prefix="/projects", tags=["projects-tags"])
 
 
-class _TagCount(BaseModel):
-    tag: str
-    count: int
-
-
-class _TagsResponse(BaseModel):
-    scene_tags: list[_TagCount]
-    object_tags: list[_TagCount]
-    activity_tags: list[_TagCount]
-    quality_tags: list[_TagCount]
-    search_keywords: list[_TagCount]
-
-
 def _count_tags(
     db: Session, field: str, project_id: int, limit: int = 100
-) -> list[_TagCount]:
+) -> list[TagCount]:
     sql = text(
         f"SELECT unnest(paa.{field}) AS tag, COUNT(*) AS cnt "  # noqa: S608
         f"FROM photo_ai_analysis paa "
@@ -35,17 +22,17 @@ def _count_tags(
         f"GROUP BY tag ORDER BY cnt DESC LIMIT :limit"
     )
     rows = db.execute(sql, {"pid": project_id, "limit": limit}).fetchall()
-    return [_TagCount(tag=r[0], count=r[1]) for r in rows]
+    return [TagCount(tag=r[0], count=r[1]) for r in rows]
 
 
-@router.get("/{project_id}/tags", response_model=_TagsResponse)
+@router.get("/{project_id}/tags", response_model=TagsResponse)
 def project_tags(
     project_id: int,
     project: Project = Depends(require_project),
     db: Session = Depends(get_db),
 ):
     """Return per-category tag counts for a project."""
-    return _TagsResponse(
+    return TagsResponse(
         scene_tags=_count_tags(db, "scene_tags", project_id),
         object_tags=_count_tags(db, "object_tags", project_id),
         activity_tags=_count_tags(db, "activity_tags", project_id),

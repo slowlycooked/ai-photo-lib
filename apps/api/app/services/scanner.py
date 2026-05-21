@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from ..config import settings
 from ..models.photo import Photo
 from .thumbnail import SUPPORTED_SUFFIXES, generate_thumbnail
-from .json_parser import build_relative_paths
+from .path_utils import build_relative_paths
 from .folder_service import ensure_folder_path
 
 logger = logging.getLogger(__name__)
@@ -360,7 +360,17 @@ def scan_directory(db: Session) -> None:
         .filter(Project.is_default.is_(True), Project.deleted_at.is_(None))
         .first()
     )
-    project_id = default_project.id if default_project else None
+    if default_project is None:
+        scan_state.update(
+            running=False,
+            message="Default project not found; use /projects/{project_id}/scan/start",
+        )
+        logger.error(
+            "Legacy scan aborted: no default project found. "
+            "Use POST /projects/{project_id}/scan/start instead."
+        )
+        return
+    project_id = default_project.id
 
     library = Path(settings.photo_library_path)
     if not library.exists():

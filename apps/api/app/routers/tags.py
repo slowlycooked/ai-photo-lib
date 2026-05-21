@@ -4,11 +4,11 @@ import logging
 from typing import Optional
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from ..database import get_db
+from ..schemas.tags import TagCount, TagsResponse
 
 logger = logging.getLogger(__name__)
 
@@ -19,19 +19,6 @@ _DEPRECATION_MSG = (
     "Global /tags endpoint is deprecated. "
     "Use /projects/{project_id}/tags instead."
 )
-
-
-class TagCount(BaseModel):
-    tag: str
-    count: int
-
-
-class TagsResponse(BaseModel):
-    scene_tags: list[TagCount]
-    object_tags: list[TagCount]
-    activity_tags: list[TagCount]
-    quality_tags: list[TagCount]
-    search_keywords: list[TagCount]
 
 
 def _count_array_field(

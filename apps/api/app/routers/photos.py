@@ -13,7 +13,6 @@ from sqlalchemy.orm import Session
 from ..database import get_db
 from ..models.ai import PhotoAIAnalysis
 from ..models.photo import Photo
-from ..models.folder import ProjectFolder
 from ..schemas.ai import AIAnalysisResponse
 from ..schemas.photo import PhotoDetailResponse, PhotoListResponse, PhotoResponse
 from ..services.folder_service import apply_folder_filter

@@ -10,6 +10,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from ..config import settings
+from ..constants.embedding import DB_EMBEDDING_DIMENSION
 from ..logging_config import (
     should_include_search_debug_payload,
     should_include_search_trace_payload,
@@ -36,7 +37,7 @@ _WEIGHTS = {
 }
 
 _MAX_PER_TERM = sum(_WEIGHTS.values())
-_DB_EMBEDDING_DIMENSION = 1024
+_DB_EMBEDDING_DIMENSION = DB_EMBEDDING_DIMENSION
 
 
 @dataclass
