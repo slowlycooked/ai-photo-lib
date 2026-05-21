@@ -179,10 +179,7 @@ function EmbeddingSettingsSection({ projectId }: { projectId: number }) {
   const testMut = useMutation({
     mutationFn: () =>
       api.projects.testEmbeddingSettings(projectId, {
-        endpoint_url: form.endpoint_url,
-        api_key: form.api_key,
-        model_name: form.model_name,
-        sample_text: "test embedding connection",
+        text: "test embedding connection",
       }),
     onSuccess: (data) => setTestResult(data),
     onError: (e) => setTestResult({ success: false, model_name: "", embedding_dimension: 0, sample: [], duration_ms: 0, error: (e as Error).message }),
@@ -192,7 +189,7 @@ function EmbeddingSettingsSection({ projectId }: { projectId: number }) {
     mutationFn: (scope: "all" | "stale" | "failed" | "missing") =>
       api.projects.rebuildEmbeddings(projectId, { scope }),
     onSuccess: (data, scope) => {
-      setRebuildMsg(`已入队 ${data.enqueued} 个任务 (${scope})`);
+      setRebuildMsg(`已入队 ${data.created_jobs} 个任务 (${scope})`);
       queryClient.invalidateQueries({ queryKey: ["project-embedding-status", projectId] });
     },
     onError: (e) => setRebuildMsg(`失败: ${(e as Error).message}`),
@@ -346,6 +343,7 @@ function EmbeddingSettingsSection({ projectId }: { projectId: number }) {
 }
 
 
+export function ProjectAISettingsPanel({ projectId }: { projectId: number }) {
   const queryClient = useQueryClient();
 
   const [message, setMessage] = useState<string | null>(null);
@@ -1023,5 +1021,6 @@ function EmbeddingSettingsSection({ projectId }: { projectId: number }) {
 
       {/* Embedding Settings Section */}
       <EmbeddingSettingsSection projectId={projectId} />
+    </div>
   );
 }

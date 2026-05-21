@@ -14,7 +14,6 @@ from ..models.ai import AIJob, PhotoAIAnalysis, PhotoEmbedding
 from ..models.photo import Photo
 from ..models.project import Project
 from ..services.embedding_service import EMBEDDING_INPUT_VERSION, is_embedding_stale
-from ..services.project_ai_service import get_or_create_project_ai_settings
 from ..services.project_embedding_settings_service import resolve_embedding_settings
 
 logger = logging.getLogger(__name__)
@@ -85,13 +84,21 @@ def get_embedding_status(
         embed_cfg = resolve_embedding_settings(db, project_id)
         resolved_model = embed_cfg["model_name"]
         resolved_dim = embed_cfg["embedding_dimension"]
-    except RuntimeError:
-        ai_settings = get_or_create_project_ai_settings(db, project_id)
-        resolved_model = ai_settings.model_name
-        resolved_dim = 1024
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Embedding settings not configured for project {project_id}: {exc}",
+        ) from exc
 
     rows = (
-        db.query(PhotoAIAnalysis, PhotoEmbedding)
+        db.query(PhotoAIAnalysis, PhotoEmbedding, Photo)
+        .join(
+            Photo,
+            and_(
+                Photo.project_id == PhotoAIAnalysis.project_id,
+                Photo.id == PhotoAIAnalysis.photo_id,
+            ),
+        )
         .outerjoin(
             PhotoEmbedding,
             and_(
@@ -109,7 +116,7 @@ def get_embedding_status(
     stale = 0
     failed = 0
 
-    for analysis, embedding in rows:
+    for analysis, embedding, photo in rows:
         if embedding is None:
             missing += 1
         elif embedding.embedding_status == "failed":
@@ -119,6 +126,7 @@ def get_embedding_status(
             embedding,
             model_name=resolved_model,
             dimension=resolved_dim,
+            photo=photo,
         ):
             stale += 1
         else:
@@ -191,15 +199,23 @@ def rebuild_project_embeddings(
         embed_cfg = resolve_embedding_settings(db, project_id)
         resolved_model = embed_cfg["model_name"]
         resolved_dim = embed_cfg["embedding_dimension"]
-    except RuntimeError:
-        ai_settings = get_or_create_project_ai_settings(db, project_id)
-        resolved_model = ai_settings.model_name
-        resolved_dim = 1024
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Embedding settings not configured for project {project_id}: {exc}",
+        ) from exc
 
     active_embed_photo_ids = _get_active_embed_photo_ids(db, project_id)
 
     base_query = (
-        db.query(PhotoAIAnalysis, PhotoEmbedding)
+        db.query(PhotoAIAnalysis, PhotoEmbedding, Photo)
+        .join(
+            Photo,
+            and_(
+                Photo.project_id == PhotoAIAnalysis.project_id,
+                Photo.id == PhotoAIAnalysis.photo_id,
+            ),
+        )
         .outerjoin(
             PhotoEmbedding,
             and_(
@@ -225,7 +241,7 @@ def rebuild_project_embeddings(
     skipped_up_to_date = 0
     total_checked = len(rows)
 
-    for analysis, embedding in rows:
+    for analysis, embedding, photo in rows:
         photo_id = analysis.photo_id
 
         if photo_id in active_embed_photo_ids:
@@ -240,6 +256,7 @@ def rebuild_project_embeddings(
                 embedding,
                 model_name=resolved_model,
                 dimension=resolved_dim,
+                photo=photo,
             )
         elif scope == "failed":
             should_enqueue = (

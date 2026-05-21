@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import logging
 import mimetypes
 import tempfile
@@ -131,7 +132,26 @@ class StructuredExif:
 def _extract_exif(path: str) -> StructuredExif:
     result = StructuredExif()
     try:
-        with open(path, "rb") as fh:
+        suffix = Path(path).suffix.lower()
+        if suffix in (".heic", ".heif"):
+            # exifread cannot parse the HEIC/HEIF container format directly
+            # (no JPEG/TIFF magic bytes at offset 0).  Use Pillow+pillow_heif to
+            # pull the raw EXIF app-segment bytes out of the container, then feed
+            # them to exifread so all existing tag-parsing logic is reused.
+            with Image.open(path) as _img:
+                exif_bytes: bytes = _img.info.get("exif", b"")
+            if not exif_bytes:
+                return result
+            # Pillow wraps the TIFF data with an "Exif\x00\x00" APP1 prefix.
+            # exifread only accepts bare TIFF (II/MM) or JPEG (FFD8) streams —
+            # strip the prefix so the TIFF magic is at offset 0.
+            if exif_bytes.startswith(b"Exif\x00\x00"):
+                exif_bytes = exif_bytes[6:]
+            fh: io.IOBase = io.BytesIO(exif_bytes)
+        else:
+            fh = open(path, "rb")
+
+        with fh:
             tags = exifread.process_file(fh, stop_tag="UNDEF", details=False)
         if not tags:
             return result
@@ -572,6 +592,102 @@ def scan_project(db: Session, project_id: int) -> None:
             project_id,
             state["scanned"],
             state["inserted"],
+            state["updated"],
+            state["errors"],
+        )
+
+
+# ---------------------------------------------------------------------------
+# Reindex — re-extract metadata for existing DB records
+# ---------------------------------------------------------------------------
+
+def reindex_project(db: Session, project_id: int, scope: str = "missing_metadata") -> None:
+    """Re-extract EXIF metadata (date, GPS, camera info) for photos already in
+    the DB without re-traversing the filesystem.
+
+    scope:
+      "missing_metadata" — only photos where taken_at IS NULL
+      "all"              — every photo belonging to this project
+
+    Uses the same per-project scan state so the frontend progress panel works
+    with no extra changes.
+    """
+    state = get_project_scan_state(project_id)
+
+    query = db.query(Photo).filter(
+        Photo.project_id == project_id,
+        Photo.deleted_at.is_(None),
+    )
+    if scope == "missing_metadata":
+        query = query.filter(Photo.taken_at.is_(None))
+
+    photos: list[Photo] = query.all()
+
+    state.update(
+        running=True,
+        scanned=0,
+        inserted=0,
+        updated=0,
+        errors=0,
+        current_path=None,
+        message=f"reindexing ({scope})",
+    )
+
+    try:
+        for photo in photos:
+            state["current_path"] = photo.file_path
+            state["scanned"] += 1
+
+            if not Path(photo.file_path).exists():
+                logger.warning(
+                    "reindex: file not found, skipping photo %d: %s",
+                    photo.id,
+                    photo.file_path,
+                )
+                continue
+
+            try:
+                exif = _extract_exif(photo.file_path)
+                changed = False
+
+                for attr, value in [
+                    ("taken_at", exif.taken_at),
+                    ("exif", exif.raw),
+                    ("gps_latitude", exif.gps_latitude),
+                    ("gps_longitude", exif.gps_longitude),
+                    ("gps_altitude", exif.gps_altitude),
+                    ("camera_make", exif.camera_make),
+                    ("camera_model", exif.camera_model),
+                    ("lens_model", exif.lens_model),
+                    ("focal_length", exif.focal_length),
+                    ("aperture", exif.aperture),
+                    ("exposure_time", exif.exposure_time),
+                    ("iso", exif.iso),
+                    ("orientation", exif.orientation),
+                ]:
+                    if value is not None and getattr(photo, attr) != value:
+                        setattr(photo, attr, value)
+                        changed = True
+
+                if changed:
+                    photo.updated_at = datetime.now()
+                    db.commit()
+                    state["updated"] += 1
+            except Exception as exc:
+                logger.error(
+                    "reindex: failed to process photo %d (%s): %s",
+                    photo.id,
+                    photo.file_path,
+                    exc,
+                )
+                db.rollback()
+                state["errors"] += 1
+    finally:
+        state.update(running=False, current_path=None, message="done")
+        logger.info(
+            "Project %d reindex complete — scanned=%d updated=%d errors=%d",
+            project_id,
+            state["scanned"],
             state["updated"],
             state["errors"],
         )

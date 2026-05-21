@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { X, Calendar, Ruler, Tag, ImageIcon, Brain, Loader2, Download } from "lucide-react";
+import { X, Calendar, Ruler, Tag, ImageIcon, Brain, Loader2, Download, MapPin, Camera, Aperture } from "lucide-react";
 import type { Photo } from "@/lib/api";
 import { api } from "@/lib/api";
 
@@ -30,6 +30,13 @@ interface DetailModalProps {
 function DetailModal({ photo, onClose }: DetailModalProps) {
   const [loaded, setLoaded] = useState(false);
   const projectId = photo.project_id;
+
+  const { data: detail } = useQuery({
+    queryKey: ["project-photo-detail", projectId, photo.id],
+    queryFn: () => api.projects.photo(projectId, photo.id),
+    enabled: projectId != null,
+    staleTime: 30_000,
+  });
 
   const { data: aiData, isLoading: aiLoading } = useQuery({
     queryKey: ["project-photo-ai", projectId, photo.id],
@@ -104,6 +111,55 @@ function DetailModal({ photo, onClose }: DetailModalProps) {
               value={photo.mime_type?.replace("image/", "").toUpperCase() ?? "—"}
             />
           </div>
+
+          {/* GPS + Camera + Exposure from PhotoDetail */}
+          {detail && (detail.gps_latitude != null || detail.camera_make || detail.aperture) && (
+            <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-body-sm pt-1 border-t border-hairline">
+              {detail.gps_latitude != null && detail.gps_longitude != null && (
+                <InfoRow
+                  icon={<MapPin className="w-3.5 h-3.5" />}
+                  label="GPS"
+                  value={
+                    <a
+                      href={`https://maps.apple.com/?ll=${detail.gps_latitude},${detail.gps_longitude}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-primary underline underline-offset-2"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      {detail.gps_latitude.toFixed(5)}, {detail.gps_longitude.toFixed(5)}
+                    </a>
+                  }
+                />
+              )}
+              {(detail.camera_make || detail.camera_model) && (
+                <InfoRow
+                  icon={<Camera className="w-3.5 h-3.5" />}
+                  label="相机"
+                  value={[detail.camera_make, detail.camera_model].filter(Boolean).join(" ")}
+                />
+              )}
+              {detail.lens_model && (
+                <InfoRow
+                  icon={<Aperture className="w-3.5 h-3.5" />}
+                  label="镜头"
+                  value={detail.lens_model}
+                />
+              )}
+              {(detail.aperture || detail.exposure_time || detail.iso) && (
+                <InfoRow
+                  icon={<Aperture className="w-3.5 h-3.5" />}
+                  label="曝光"
+                  value={[
+                    detail.aperture ? `f/${detail.aperture}` : null,
+                    detail.exposure_time ? `${detail.exposure_time}s` : null,
+                    detail.iso ? `ISO ${detail.iso}` : null,
+                    detail.focal_length ? `${detail.focal_length}mm` : null,
+                  ].filter(Boolean).join("  ")}
+                />
+              )}
+            </div>
+          )}
 
           {/* Status badge */}
           <div className="flex items-center gap-2 pt-1">
@@ -205,7 +261,7 @@ function DetailModal({ photo, onClose }: DetailModalProps) {
   );
 }
 
-function InfoRow({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
+function InfoRow({ icon, label, value }: { icon: React.ReactNode; label: string; value: React.ReactNode }) {
   return (
     <div className="flex items-start gap-1.5">
       <span className="text-mute mt-0.5 flex-shrink-0">{icon}</span>

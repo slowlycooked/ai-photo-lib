@@ -399,10 +399,7 @@ export interface ProjectEmbeddingSettingsUpdate {
 }
 
 export interface EmbeddingTestRequest {
-  endpoint_url?: string;
-  api_key?: string | null;
-  model_name?: string;
-  sample_text?: string;
+  text: string;
 }
 
 export interface EmbeddingTestResponse {
@@ -437,7 +434,9 @@ export interface RebuildRequest {
 }
 
 export interface RebuildResponse {
-  enqueued: number;
-  scope: RebuildScope;
-  job_ids: number[];
+  created_jobs: number;
+  skipped_existing_jobs: number;
+  skipped_up_to_date: number;
+  total_checked: number;
+  message: string;
 }

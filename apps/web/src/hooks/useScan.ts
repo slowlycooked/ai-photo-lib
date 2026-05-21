@@ -11,6 +11,25 @@ export function useScanStatus(projectId: number | null) {
   });
 }
 
+export function useStartReindex(projectId: number | null) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (scope: "all" | "missing_metadata" = "missing_metadata") => {
+      if (projectId === null) return Promise.reject(new Error("No project selected"));
+      return api.projects.startReindex(projectId, scope);
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["project-scan-status", projectId] });
+    },
+    onSettled: () => {
+      setTimeout(
+        () => qc.invalidateQueries({ queryKey: ["photos", projectId] }),
+        3000
+      );
+    },
+  });
+}
+
 export function useStartScan(projectId: number | null) {
   const qc = useQueryClient();
   return useMutation({

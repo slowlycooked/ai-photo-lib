@@ -37,8 +37,8 @@ services:
     restart: unless-stopped
 
     volumes:
-      - ${LLAMA_MODEL}:${LLAMA_MODEL}:ro
-      - ${LLAMA_MMPROJ}:${LLAMA_MMPROJ}:ro
+      - ${LLAMA_MODEL}:/models/vision.gguf:ro
+      - ${LLAMA_MMPROJ}:/models/mmproj.gguf:ro
       - ${PHOTO_LIBRARY_PATH:-/volume1/photo}:/photos:ro
 
     ports:
@@ -46,8 +46,8 @@ services:
       - "127.0.0.1:${LLAMA_HOST_PORT:-18082}:8082"
 
     command: >
-      -m ${LLAMA_MODEL}
-      --mmproj ${LLAMA_MMPROJ}
+      -m /models/vision.gguf
+      --mmproj /models/mmproj.gguf
       --alias ${LLAMA_MODEL_ALIAS}
       --host 0.0.0.0
       --port 8082
@@ -64,6 +64,33 @@ services:
       timeout: 10s
       retries: 20
       start_period: 120s
+
+  llama-embed:
+    image: ai-photo-lib-llama:ds916-cpu
+    container_name: ai-photo-llama-embed
+    restart: unless-stopped
+
+    volumes:
+      - ${EMBED_MODEL:-/dev/null}:/model/embed.gguf:ro
+
+    ports:
+      - "127.0.0.1:${EMBED_HOST_PORT:-18083}:8083"
+
+    command: >
+      -m /model/embed.gguf
+      --host 0.0.0.0
+      --port 8083
+      --embedding
+      --pooling last
+      -c ${EMBED_CTX:-8192}
+      -ub ${EMBED_UB:-8192}
+
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8083/v1/models >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 20
+      start_period: 60s
 
   api:
     image: ai-photo-lib-api:ds916
@@ -83,6 +110,10 @@ services:
       OPENAI_MODEL: ${OPENAI_MODEL:-MiniCPM-V-4.6}
       OPENAI_VISION_MODEL: ${OPENAI_VISION_MODEL:-MiniCPM-V-4.6}
 
+      EMBEDDING_BASE_URL: http://llama-embed:8083/v1
+      EMBEDDING_API_KEY: ${OPENAI_API_KEY:-sk-local}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-Qwen3-Embedding-0.6B}
+
       AI_MAX_RETRIES: ${AI_MAX_RETRIES:-3}
       AI_WORKER_CONCURRENCY: ${AI_WORKER_CONCURRENCY:-1}
 
@@ -94,6 +125,10 @@ services:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      llama:
+        condition: service_healthy
+      llama-embed:
         condition: service_healthy
 
   web:
@@ -111,6 +146,7 @@ services:
     restart: unless-stopped
     environment:
       DATABASE_URL: postgresql+psycopg://photo:${POSTGRES_PASSWORD:-photo}@postgres:5432/photo
+      REDIS_URL: redis://redis:6379/0
 
       PHOTO_LIBRARY_PATH: /photos
       THUMBNAIL_PATH: /data/thumbs
@@ -119,6 +155,10 @@ services:
       OPENAI_BASE_URL: http://llama:8082/v1
       OPENAI_MODEL: ${OPENAI_MODEL:-MiniCPM-V-4.6}
       OPENAI_VISION_MODEL: ${OPENAI_VISION_MODEL:-MiniCPM-V-4.6}
+
+      EMBEDDING_BASE_URL: http://llama-embed:8083/v1
+      EMBEDDING_API_KEY: ${OPENAI_API_KEY:-sk-local}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-Qwen3-Embedding-0.6B}
 
       AI_MAX_RETRIES: ${AI_MAX_RETRIES:-3}
       AI_WORKER_CONCURRENCY: ${AI_WORKER_CONCURRENCY:-1}
@@ -130,5 +170,9 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      redis:
+        condition: service_healthy
       llama:
+        condition: service_healthy
+      llama-embed:
         condition: service_healthy

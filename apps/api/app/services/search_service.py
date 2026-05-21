@@ -638,6 +638,13 @@ def search_photos(
             query,
             exc,
         )
+        # A SQLAlchemyError leaves the session in an aborted-transaction state;
+        # rollback so subsequent queries on the same session can proceed.
+        if isinstance(exc, SQLAlchemyError):
+            try:
+                db.rollback()
+            except Exception:
+                pass
         if effective_mode == "vector":
             debug_payload = None
             if debug and settings.search_debug_enabled and should_include_search_debug_payload():

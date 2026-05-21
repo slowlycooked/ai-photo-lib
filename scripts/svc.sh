@@ -50,6 +50,12 @@ LLAMA_PORT="${LLAMA_PORT:-8082}"
 LLAMA_CTX="${LLAMA_CTX:-8192}"
 LLAMA_MEDIA_PATH="${LLAMA_MEDIA_PATH:-${PHOTO_LIBRARY_PATH:-}}"
 LLAMA_STOP_TIMEOUT="${LLAMA_STOP_TIMEOUT:-15}"
+EMBED_SERVER="${EMBED_SERVER:-${LLAMA_SERVER:-}}"
+EMBED_MODEL="${EMBED_MODEL:-}"
+EMBED_PORT="${EMBED_PORT:-8083}"
+EMBED_CTX="${EMBED_CTX:-8192}"
+EMBED_UB="${EMBED_UB:-8192}"
+EMBED_STOP_TIMEOUT="${EMBED_STOP_TIMEOUT:-15}"
 
 # ── 辅助函数 ──────────────────────────────────────────────────────────────────
 log_info()    { echo -e "${CYAN}▶${RESET} $*"; }
@@ -63,21 +69,23 @@ log_file()    { echo "$LOG_DIR/$1.log"; }
 service_port() {
   local name="$1"
   case "$name" in
-    api) echo "$API_PORT" ;;
-    web) echo "$WEB_PORT" ;;
-    ai)  echo "$LLAMA_PORT" ;;
-    *)   echo "" ;;
+    api)   echo "$API_PORT" ;;
+    web)   echo "$WEB_PORT" ;;
+    ai)    echo "$LLAMA_PORT" ;;
+    embed) echo "$EMBED_PORT" ;;
+    *)     echo "" ;;
   esac
 }
 
 service_cmd_pattern() {
   local name="$1"
   case "$name" in
-    api) echo 'ai-photo-api|uvicorn .*(app\.main:app|main:app)' ;;
-    web) echo 'ai-photo-web|vite|npm run dev' ;;
-    ai)  echo 'ai-photo-llama|llama-server' ;;
+    api)    echo 'ai-photo-api|uvicorn .*(app\.main:app|main:app)' ;;
+    web)    echo 'ai-photo-web|vite|npm run dev' ;;
+    ai)     echo 'ai-photo-llama|llama-server' ;;
+    embed)  echo 'ai-photo-embed|llama-server' ;;
     worker) echo 'ai-photo-worker|python(3)? .*main\.py' ;;
-    *)   echo '' ;;
+    *)      echo '' ;;
   esac
 }
 
@@ -444,6 +452,102 @@ start_ai() {
   fi
 }
 
+start_embed() {
+  if is_running embed; then
+    log_ok "llama-embed 已在运行 (PID $(cat "$(pid_file embed)"), port $EMBED_PORT)"
+    return 0
+  fi
+
+  local listen_pid=""
+  listen_pid="$(get_listen_pid_by_port "$EMBED_PORT")"
+  if [ -n "$listen_pid" ]; then
+    local listen_cmd=""
+    listen_cmd="$(ps -p "$listen_pid" -o command= 2>/dev/null || true)"
+    if echo "$listen_cmd" | grep -qiE 'ai-photo-embed|llama-server'; then
+      echo "$listen_pid" > "$(pid_file embed)"
+      log_ok "检测到已运行的 llama-embed (PID $listen_pid, port $EMBED_PORT)，已接管 PID"
+      return 0
+    fi
+    log_error "端口 $EMBED_PORT 已被占用 (PID $listen_pid): $listen_cmd"
+    return 1
+  fi
+
+  if [ -z "$EMBED_SERVER" ] || [ -z "$EMBED_MODEL" ]; then
+    log_warn "EMBED_SERVER / EMBED_MODEL 未在 .env 中配置，跳过启动"
+    return 0
+  fi
+
+  local args=(
+    "$EMBED_SERVER"
+    -m "$EMBED_MODEL"
+    --host 127.0.0.1
+    --port "$EMBED_PORT"
+    --embedding
+    --pooling last
+    -c "$EMBED_CTX"
+    -ub "$EMBED_UB"
+  )
+
+  log_info "启动 llama-embed (port $EMBED_PORT, model=$(basename "$EMBED_MODEL"))..."
+  run_named_process "ai-photo-embed" "${args[@]}" > "$(log_file embed)" 2>&1 &
+  save_pid embed
+  sleep 2
+  if is_running embed; then
+    log_ok "llama-embed 已启动 (PID $(cat "$(pid_file embed)"), log: .logs/embed.log)"
+  else
+    log_error "llama-embed 启动失败，请查看 .logs/embed.log"
+    return 1
+  fi
+}
+
+stop_embed() {
+  if is_running embed; then
+    local pid; pid="$(cat "$(pid_file embed)")"
+    local timeout="${EMBED_STOP_TIMEOUT}"
+    local waited=0
+
+    log_info "停止 llama-embed (PID $pid, TERM -> 最多等待 ${timeout}s)..."
+
+    if ! kill -TERM "$pid" 2>/dev/null; then
+      rm -f "$(pid_file embed)"
+      log_warn "llama-embed 进程不存在，已清理 PID 文件"
+      return 0
+    fi
+
+    while kill -0 "$pid" 2>/dev/null; do
+      if [ "$waited" -ge "$timeout" ]; then
+        log_warn "llama-embed 在 ${timeout}s 内未退出，发送 SIGKILL..."
+        kill -KILL "$pid" 2>/dev/null || true
+        break
+      fi
+      sleep 1
+      waited=$((waited+1))
+    done
+
+    rm -f "$(pid_file embed)"
+    log_ok "llama-embed 已停止"
+    kill_prefixed_processes '(^| )ai-photo-embed( |$)' 'llama-embed'
+  else
+    local listen_pid=""
+    listen_pid="$(get_listen_pid_by_port "$EMBED_PORT")"
+    if [ -n "$listen_pid" ]; then
+      local listen_cmd=""
+      listen_cmd="$(ps -p "$listen_pid" -o command= 2>/dev/null || true)"
+      if echo "$listen_cmd" | grep -qiE 'ai-photo-embed|llama-server'; then
+        log_info "发现监听端口的 llama-embed (PID $listen_pid)，执行停止..."
+        kill -TERM "$listen_pid" 2>/dev/null || true
+        rm -f "$(pid_file embed)"
+        log_ok "llama-embed 已停止"
+        kill_prefixed_processes '(^| )ai-photo-embed( |$)' 'llama-embed'
+        return 0
+      fi
+    fi
+    log_warn "llama-embed 未在运行 (由 svc.sh 管理的实例)"
+  fi
+  kill_prefixed_processes '(^| )ai-photo-embed( |$)' 'llama-embed'
+  kill_listener_by_service_port embed
+}
+
 stop_ai() {
   if is_running ai; then
     local pid; pid="$(cat "$(pid_file ai)")"
@@ -551,6 +655,28 @@ status_ai() {
   fi
 }
 
+status_embed() {
+  local url="http://127.0.0.1:${EMBED_PORT}/v1/models"
+  local http_code
+  http_code=$(curl -s -o /dev/null -w "%{http_code}" \
+    --connect-timeout 2 --max-time 4 \
+    "$url" 2>/dev/null || echo "000")
+
+  local model_info=""
+  [ -n "$EMBED_MODEL" ] && model_info=" model=$(basename "$EMBED_MODEL")"
+
+  if [[ "$http_code" == "200" ]]; then
+    printf "  ${GREEN}%-10s${RESET} ${GREEN}%-8s${RESET} port=%s%s\n" \
+      "Embed" "online" "$EMBED_PORT" "$model_info"
+  elif [[ "$http_code" == "000" ]]; then
+    printf "  ${RED}%-10s${RESET} ${RED}%-8s${RESET} port=%s  (连接失败)\n" \
+      "Embed" "offline" "$EMBED_PORT"
+  else
+    printf "  ${YELLOW}%-10s${RESET} ${YELLOW}%-8s${RESET} port=%s  (HTTP %s)\n" \
+      "Embed" "unknown" "$EMBED_PORT" "$http_code"
+  fi
+}
+
 show_status() {
   echo ""
   echo -e "${BOLD}── 服务状态 ─────────────────────────────────────────${RESET}"
@@ -561,6 +687,8 @@ show_status() {
   status_process "worker"   "Worker"     "-"
   status_process "ai"       "llama-srv"  "$LLAMA_PORT"
   status_ai
+  status_process "embed"    "llama-emb"  "$EMBED_PORT"
+  status_embed
   echo -e "${BOLD}─────────────────────────────────────────────────────${RESET}"
   echo ""
 }
@@ -572,7 +700,7 @@ show_status() {
 resolve_services() {
   # 如果没有指定服务，默认操作全部
   if [ $# -eq 0 ]; then
-    echo "postgres redis ai api worker web"
+    echo "postgres redis ai embed api worker web"
   else
     echo "$@"
   fi
@@ -590,8 +718,9 @@ do_start() {
       api)      start_api ;;
       worker)   start_worker ;;
       ai)       start_ai ;;
+      embed)    start_embed ;;
       web)      start_web ;;
-      all)      start_postgres; start_redis; start_ai; start_api; start_worker; start_web ;;
+      all)      start_postgres; start_redis; start_ai; start_embed; start_api; start_worker; start_web ;;
       *)        log_error "未知服务: $svc"; exit 1 ;;
     esac
   done
@@ -603,7 +732,7 @@ do_stop() {
   local services; services="$(resolve_services "$@")"
   # 停止顺序：先应用层，再基础设施
   local ordered=""
-  for s in web worker api ai redis postgres; do
+  for s in web worker api embed ai redis postgres; do
     if echo "$services" | grep -qw "$s"; then
       ordered="$ordered $s"
     fi
@@ -618,8 +747,9 @@ do_stop() {
       api)      stop_api ;;
       worker)   stop_worker ;;
       ai)       stop_ai ;;
+      embed)    stop_embed ;;
       web)      stop_web ;;
-      all)      stop_web; stop_worker; stop_ai; stop_api; stop_redis; stop_postgres ;;
+      all)      stop_web; stop_worker; stop_embed; stop_ai; stop_api; stop_redis; stop_postgres ;;
       *)        log_error "未知服务: $svc"; exit 1 ;;
     esac
   done
@@ -670,6 +800,7 @@ case "$COMMAND" in
     echo "  postgres  — PostgreSQL    (Docker)"
     echo "  redis     — Redis          (Docker)"
     echo "  ai        — llama-server  (本地进程, OPENAI_BASE_URL, port LLAMA_PORT)"
+    echo "  embed     — llama-embed   (本地进程, Qwen3-Embedding, port EMBED_PORT)"
     echo "  api       — FastAPI        (uvicorn, 本地进程, port API_PORT)"
     echo "  worker    — AI Worker      (Python 轮询 ai_jobs 表)"
     echo "  web       — React          (vite dev server, port WEB_PORT)"

@@ -15,7 +15,7 @@ import {
 } from "lucide-react";
 import { ScanPanel } from "@/components/ScanPanel";
 import { api, type AIJob } from "@/lib/api";
-import { useScanStatus, useStartScan } from "@/hooks/useScan";
+import { useScanStatus, useStartScan, useStartReindex } from "@/hooks/useScan";
 import { useProjectContext } from "@/contexts/ProjectContext";
 import { ProjectAISettingsPanel } from "./ProjectAISettingsPanel";
 
@@ -404,6 +404,7 @@ export function TasksPage() {
   const { currentProjectId } = useProjectContext();
   const { data: scanStatus, isLoading: scanLoading } = useScanStatus(currentProjectId);
   const { mutate: startScan, isPending, error: scanError } = useStartScan(currentProjectId);
+  const { mutate: startReindex, isPending: isReindexPending } = useStartReindex(currentProjectId);
   const [searchParams, setSearchParams] = useSearchParams();
 
   const tabParam = searchParams.get("tab");
@@ -464,6 +465,8 @@ export function TasksPage() {
             onStart={() => startScan()}
             isPending={isPending}
             mutationError={scanError?.message ?? null}
+            onReindex={(scope) => startReindex(scope)}
+            isReindexPending={isReindexPending}
           />
         </section>
       )}
