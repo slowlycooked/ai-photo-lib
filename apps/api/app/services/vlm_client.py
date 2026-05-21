@@ -11,6 +11,7 @@ import pillow_heif
 from PIL import Image
 
 from ..config import settings
+from ..logging_config import should_log_ai_raw_payload
 
 # Register HEIF/HEIC opener so PIL.Image.open() handles these formats
 pillow_heif.register_heif_opener()
@@ -163,10 +164,8 @@ def analyze_image(
     effective_system_text = system_text or _DEFAULT_SYSTEM_TEXT
     effective_prompt_text = prompt_text or _DEFAULT_PROMPT
 
-    logger.info(
-        "Dispatching VLM image analysis request. endpoint_url=%s model_name=%s image_path=%s mime=%s max_tokens=%s temperature=%s top_p=%s thinking_disabled=%s\n"
-        "system_text:\n%s\n"
-        "user_text:\n%s",
+    logger.debug(
+        "Dispatching VLM image analysis request. endpoint_url=%s model_name=%s image_path=%s mime=%s max_tokens=%s temperature=%s top_p=%s thinking_disabled=%s",
         endpoint_url or settings.openai_base_url,
         model_name or settings.openai_vision_model,
         str(path),
@@ -175,9 +174,15 @@ def analyze_image(
         temperature if temperature is not None else settings.ai_vision_temperature,
         top_p if top_p is not None else 0.8,
         True,
-        effective_system_text,
-        effective_prompt_text,
     )
+    if should_log_ai_raw_payload():
+        logger.trace(
+            "VLM raw prompt payload. endpoint_url=%s model_name=%s system_text=%s user_text=%s",
+            endpoint_url or settings.openai_base_url,
+            model_name or settings.openai_vision_model,
+            effective_system_text,
+            effective_prompt_text,
+        )
 
     payload = {
         "model": model_name or settings.openai_vision_model,
@@ -275,5 +280,8 @@ def analyze_image(
             code="invalid_response",
         )
 
-    return _extract_message_text(message)
+    text = _extract_message_text(message)
+    if should_log_ai_raw_payload():
+        logger.trace("VLM raw response text: %s", text)
+    return text
 

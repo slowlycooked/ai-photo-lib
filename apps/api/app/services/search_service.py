@@ -10,6 +10,10 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from ..config import settings
+from ..logging_config import (
+    should_include_search_debug_payload,
+    should_include_search_trace_payload,
+)
 from ..models.ai import PhotoAIAnalysis, ProjectAISettings
 from ..models.photo import Photo
 from ..services.embedding_client import EmbeddingRequestError, embed_text
@@ -279,9 +283,24 @@ def _vector_search(
         model=embedding_model,
         expected_dim=settings.embedding_dimension,
     )
+    if should_include_search_trace_payload():
+        logger.trace(
+            "Search embedding query generated. project_id=%s query=%s embedding_model=%s dimension=%s",
+            project_id,
+            query,
+            embedding_model,
+            len(query_embedding),
+        )
 
     vector_literal = _query_vector_literal(query_embedding)
     field_weights = _vector_field_weights(query)
+    if should_include_search_trace_payload():
+        logger.trace(
+            "Search vector weights. project_id=%s query=%s field_weights=%s",
+            project_id,
+            query,
+            field_weights,
+        )
 
     caption_scores = _vector_field_search(
         db,
@@ -444,7 +463,7 @@ def _build_result_items(
             "score": round(float(score), 6),
         }
 
-        if debug and settings.search_debug_enabled:
+        if debug and settings.search_debug_enabled and should_include_search_debug_payload():
             item["keyword_score"] = round(float(candidate.keyword_score), 6)
             item["vector_score"] = round(float(candidate.vector_score), 6)
             item["rrf_score"] = round(float(candidate.rrf_score), 6)
@@ -469,6 +488,18 @@ def search_photos(
     query = query.strip()
     if not query:
         return 0, []
+
+    logger.debug(
+        "Executing search. project_id=%s mode=%s page=%s page_size=%s folder_id=%s folder_scope=%s debug=%s query=%s",
+        project_id,
+        mode,
+        page,
+        page_size,
+        folder_id,
+        folder_scope,
+        debug,
+        query,
+    )
 
     folder_photo_ids = _resolve_folder_photo_ids(
         db,
@@ -553,6 +584,15 @@ def search_photos(
         )
 
     merged = _rrf_merge(keyword_results, vector_scores)
+    if should_include_search_trace_payload():
+        logger.trace(
+            "Search scoring summary. project_id=%s query=%s keyword_candidates=%s vector_candidates=%s merged_candidates=%s",
+            project_id,
+            query,
+            len(keyword_results),
+            len(vector_scores),
+            len(merged),
+        )
     return _build_result_items(
         db,
         merged,

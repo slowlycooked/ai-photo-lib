@@ -1,10 +1,26 @@
+from __future__ import annotations
+
+import logging
+from time import perf_counter
+
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import OperationalError
 
 from ._version import APP_VERSION
+from .database import SessionLocal
+from .logging_config import setup_logging, should_log_request_debug_middleware
 from .routers import health, photos, scan, ai, search, tags, settings, projects, folders
+from .schemas.debug_config import build_default_debug_config
+from .services.runtime_settings_service import (
+    RuntimeSettingsService,
+    RuntimeSettingsStorageUnavailableError,
+)
+
+logger = logging.getLogger(__name__)
+
+setup_logging(build_default_debug_config())
 
 app = FastAPI(
     title="AI Photo Library API",
@@ -19,6 +35,52 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT", "DELETE"],
     allow_headers=["*"],
 )
+
+
+@app.on_event("startup")
+def load_runtime_debug_config() -> None:
+    db = SessionLocal()
+    try:
+        config = RuntimeSettingsService.get_debug_config(db)
+    except RuntimeSettingsStorageUnavailableError as exc:
+        logger.warning("Runtime debug config unavailable at startup: %s", exc)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Failed to apply startup debug config: %s", exc)
+    else:
+        setup_logging(config)
+    finally:
+        db.close()
+
+
+@app.middleware("http")
+async def request_debug_middleware(request: Request, call_next):
+    if not should_log_request_debug_middleware():
+        return await call_next(request)
+
+    request_logger = logging.getLogger("ai_photo_lib.backend.http")
+    started = perf_counter()
+    body = await request.body()
+
+    async def receive() -> dict[str, object]:
+        return {"type": "http.request", "body": body, "more_body": False}
+
+    debug_request = Request(request.scope, receive)
+    request_logger.debug(
+        "HTTP request start method=%s path=%s query=%s body=%s",
+        request.method,
+        request.url.path,
+        request.url.query,
+        body.decode("utf-8", errors="replace")[:2000],
+    )
+    response = await call_next(debug_request)
+    request_logger.debug(
+        "HTTP request end method=%s path=%s status_code=%s duration_ms=%.2f",
+        request.method,
+        request.url.path,
+        response.status_code,
+        (perf_counter() - started) * 1000,
+    )
+    return response
 
 
 @app.exception_handler(OperationalError)

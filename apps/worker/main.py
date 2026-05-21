@@ -33,10 +33,12 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import sessionmaker, Session
 
 from app.config import settings
+from app.logging_config import setup_logging
 from app.models.ai import AIJob, PhotoAIAnalysis
 from app.models.photo import Photo
 from app.models.folder import ProjectFolder  # noqa: F401 — registers 'project_folders' table in metadata
 from app.models.project import Project  # noqa: F401 — registers 'projects' table in metadata
+from app.schemas.debug_config import build_default_debug_config
 from app.services.vlm_client import VLMRequestError, analyze_image
 from app.services.json_parser import parse_model_json_output
 from app.services.embedding_client import EmbeddingRequestError
@@ -48,13 +50,14 @@ from app.services.project_ai_service import (
     get_or_create_project_ai_settings,
     render_analysis_prompt_parts,
 )
+from app.services.runtime_settings_service import (
+    RuntimeSettingsService,
+    RuntimeSettingsStorageUnavailableError,
+)
 from app.services.thumbnail import generate_thumbnail
 
 # ---------------------------------------------------------------------------
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-)
+setup_logging(build_default_debug_config())
 logger = logging.getLogger("worker")
 
 engine = create_engine(settings.database_url, pool_pre_ping=True)
@@ -397,6 +400,11 @@ def run() -> None:
     while not _shutdown:
         try:
             with SessionLocal() as db:
+                try:
+                    setup_logging(RuntimeSettingsService.get_debug_config(db))
+                except RuntimeSettingsStorageUnavailableError as exc:
+                    logger.warning("Worker debug config unavailable: %s", exc)
+
                 job = (
                     db.query(AIJob)
                     .filter(AIJob.status == "queued")

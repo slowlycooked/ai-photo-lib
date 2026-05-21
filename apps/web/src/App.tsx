@@ -19,9 +19,9 @@ export default function App() {
       .getDebug()
       .then((cfg) => {
         if (cancelled) return;
-        configureFrontendLogger(cfg);
+        configureFrontendLogger(cfg.debugMatrix);
         logger.debug("frontend logger configured", {
-          frontend_log_level: cfg.frontend_log_level,
+          frontendLogLevel: cfg.debugMatrix.frontendLogLevel,
         });
       })
       .catch((error: unknown) => {

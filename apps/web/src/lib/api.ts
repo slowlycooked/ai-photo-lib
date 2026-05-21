@@ -231,23 +231,146 @@ export interface AppSettings {
   ai_max_retries: number;
 }
 
-export type DebugMode = "off" | "basic" | "debug" | "trace";
-export type LogLevel = "ERROR" | "WARNING" | "INFO" | "DEBUG";
+export type DebugMode = "OFF" | "BASIC" | "DEBUG" | "TRACE" | "CUSTOM";
+export type DebugPresetMode = Exclude<DebugMode, "CUSTOM">;
+export type LogLevel = "OFF" | "ERROR" | "WARNING" | "INFO" | "DEBUG" | "TRACE";
 
-export interface DebugSettings {
-  debug_mode: DebugMode;
-  backend_log_level: LogLevel;
-  frontend_log_level: LogLevel;
-  ai_log_level: LogLevel;
-  search_log_level: LogLevel;
-  db_log_level: LogLevel;
-  task_log_level: LogLevel;
-  log_request_body: boolean;
-  log_ai_prompt: boolean;
-  log_ai_response: boolean;
-  log_sql: boolean;
-  log_stacktrace: boolean;
-  max_log_text_length: number;
+export interface DebugMatrix {
+  frontendLogLevel: LogLevel;
+  backendLogLevel: LogLevel;
+  aiLogLevel: LogLevel;
+  searchLogLevel: LogLevel;
+  sqlLogLevel: LogLevel;
+  taskLogLevel: LogLevel;
+}
+
+export interface DebugSettingsResponse {
+  debugMode: DebugMode;
+  debugMatrix: DebugMatrix;
+  presets: Record<DebugPresetMode, DebugMatrix>;
+  updatedAt: string | null;
+}
+
+export interface DebugSettingsUpdate {
+  debugMode: DebugMode;
+  debugMatrix: DebugMatrix;
+}
+
+const DEFAULT_DEBUG_PRESETS: Record<DebugPresetMode, DebugMatrix> = {
+  OFF: {
+    frontendLogLevel: "OFF",
+    backendLogLevel: "OFF",
+    aiLogLevel: "OFF",
+    searchLogLevel: "OFF",
+    sqlLogLevel: "OFF",
+    taskLogLevel: "OFF",
+  },
+  BASIC: {
+    frontendLogLevel: "INFO",
+    backendLogLevel: "INFO",
+    aiLogLevel: "INFO",
+    searchLogLevel: "INFO",
+    sqlLogLevel: "WARNING",
+    taskLogLevel: "INFO",
+  },
+  DEBUG: {
+    frontendLogLevel: "DEBUG",
+    backendLogLevel: "DEBUG",
+    aiLogLevel: "DEBUG",
+    searchLogLevel: "DEBUG",
+    sqlLogLevel: "DEBUG",
+    taskLogLevel: "DEBUG",
+  },
+  TRACE: {
+    frontendLogLevel: "TRACE",
+    backendLogLevel: "TRACE",
+    aiLogLevel: "TRACE",
+    searchLogLevel: "TRACE",
+    sqlLogLevel: "TRACE",
+    taskLogLevel: "TRACE",
+  },
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function normaliseDebugMode(value: unknown): DebugMode {
+  if (typeof value !== "string") return "BASIC";
+  const mode = value.trim().toUpperCase();
+  if (mode === "OFF" || mode === "BASIC" || mode === "DEBUG" || mode === "TRACE" || mode === "CUSTOM") {
+    return mode;
+  }
+  return "BASIC";
+}
+
+function normaliseLogLevel(value: unknown, fallback: LogLevel): LogLevel {
+  if (typeof value !== "string") return fallback;
+  const level = value.trim().toUpperCase();
+  if (
+    level === "OFF" ||
+    level === "ERROR" ||
+    level === "WARNING" ||
+    level === "INFO" ||
+    level === "DEBUG" ||
+    level === "TRACE"
+  ) {
+    return level;
+  }
+  if (level === "WARN") return "WARNING";
+  return fallback;
+}
+
+function readLevel(source: Record<string, unknown>, camelKey: string, snakeKey: string, fallback: LogLevel): LogLevel {
+  return normaliseLogLevel(source[camelKey] ?? source[snakeKey], fallback);
+}
+
+function normaliseMatrix(rawMatrix: unknown, fallback: DebugMatrix): DebugMatrix {
+  const source = isRecord(rawMatrix) ? rawMatrix : {};
+  return {
+    frontendLogLevel: readLevel(source, "frontendLogLevel", "frontend_log_level", fallback.frontendLogLevel),
+    backendLogLevel: readLevel(source, "backendLogLevel", "backend_log_level", fallback.backendLogLevel),
+    aiLogLevel: readLevel(source, "aiLogLevel", "ai_log_level", fallback.aiLogLevel),
+    searchLogLevel: readLevel(source, "searchLogLevel", "search_log_level", fallback.searchLogLevel),
+    sqlLogLevel: readLevel(
+      source,
+      "sqlLogLevel",
+      "sql_log_level",
+      normaliseLogLevel(source["db_log_level"], fallback.sqlLogLevel),
+    ),
+    taskLogLevel: readLevel(source, "taskLogLevel", "task_log_level", fallback.taskLogLevel),
+  };
+}
+
+function normalisePresets(rawPresets: unknown): Record<DebugPresetMode, DebugMatrix> {
+  const source = isRecord(rawPresets) ? rawPresets : {};
+  return {
+    OFF: normaliseMatrix(source["OFF"], DEFAULT_DEBUG_PRESETS.OFF),
+    BASIC: normaliseMatrix(source["BASIC"], DEFAULT_DEBUG_PRESETS.BASIC),
+    DEBUG: normaliseMatrix(source["DEBUG"], DEFAULT_DEBUG_PRESETS.DEBUG),
+    TRACE: normaliseMatrix(source["TRACE"], DEFAULT_DEBUG_PRESETS.TRACE),
+  };
+}
+
+function normaliseDebugSettingsResponse(raw: unknown): DebugSettingsResponse {
+  const source = isRecord(raw) ? raw : {};
+  const mode = normaliseDebugMode(source["debugMode"] ?? source["debug_mode"]);
+  const presets = normalisePresets(source["presets"]);
+
+  return {
+    debugMode: mode,
+    debugMatrix: normaliseMatrix(
+      source["debugMatrix"] ?? source["debug_matrix"] ?? source,
+      mode === "CUSTOM" ? presets.BASIC : presets[mode as DebugPresetMode],
+    ),
+    presets,
+    updatedAt:
+      typeof source["updatedAt"] === "string"
+        ? source["updatedAt"]
+        : typeof source["updated_at"] === "string"
+          ? source["updated_at"]
+          : null,
+  };
 }
 
 export interface ProjectAISettings {
@@ -610,12 +733,15 @@ export const api = {
 
   settings: {
     get: () => request<AppSettings>("/settings"),
-    getDebug: () => request<DebugSettings>("/settings/debug"),
-    updateDebug: (body: DebugSettings) =>
-      request<DebugSettings>("/settings/debug", {
+    getDebug: async () => {
+      const payload = await request<unknown>("/settings/debug");
+      return normaliseDebugSettingsResponse(payload);
+    },
+    updateDebug: (body: DebugSettingsUpdate) =>
+      request<unknown>("/settings/debug", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
-      }),
+      }).then(normaliseDebugSettingsResponse),
   },
 };

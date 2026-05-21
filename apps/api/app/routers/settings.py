@@ -1,13 +1,20 @@
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
-from ..schemas.debug_config import DebugConfig
-from ..services.runtime_settings_service import RuntimeSettingsService
-from ..database import get_db
 
+from ..schemas.debug_config import DebugConfig, DebugConfigUpdate, DebugSettingsResponse, build_default_debug_config
+from ..services.runtime_settings_service import (
+    RuntimeSettingsService,
+    RuntimeSettingsStorageUnavailableError,
+)
+from ..database import get_db
 from ..config import settings
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/settings", tags=["settings"])
 
@@ -39,13 +46,24 @@ def get_settings():
     )
 
 
-@router.get("/debug", response_model=DebugConfig)
+@router.get("/debug", response_model=DebugSettingsResponse)
 def get_debug_config(db: Session = Depends(get_db)):
-    config = RuntimeSettingsService.get_debug_config(db)
-    return config
+    try:
+        config = RuntimeSettingsService.get_debug_config(db)
+    except RuntimeSettingsStorageUnavailableError as exc:
+        logger.error(
+            "Debug config storage unavailable (endpoint=GET /settings/debug). Returning default config. Cause: %s",
+            exc,
+        )
+        config = DebugConfig(**build_default_debug_config().model_dump())
+    return DebugSettingsResponse(**config.model_dump())
 
-@router.put("/debug", response_model=DebugConfig)
-def update_debug_config(cfg: DebugConfig, db: Session = Depends(get_db)):
-    RuntimeSettingsService.set_debug_config(db, cfg)
+
+@router.put("/debug", response_model=DebugSettingsResponse)
+def update_debug_config(cfg: DebugConfigUpdate, db: Session = Depends(get_db)):
+    try:
+        saved = RuntimeSettingsService.set_debug_config(db, cfg)
+    except RuntimeSettingsStorageUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     RuntimeSettingsService.clear_cache()
-    return cfg
+    return DebugSettingsResponse(**saved.model_dump())

@@ -1,22 +1,24 @@
-import type { DebugSettings, LogLevel } from "@/lib/api";
+import type { DebugMatrix, LogLevel } from "@/lib/api";
 
 type LoggerPayload = Record<string, unknown> | undefined;
 
 const LEVEL_WEIGHT: Record<LogLevel, number> = {
+  OFF: 99,
   ERROR: 40,
   WARNING: 30,
   INFO: 20,
   DEBUG: 10,
+  TRACE: 0,
 };
 
-let frontendLogLevel: LogLevel = "WARNING";
+let frontendLogLevel: LogLevel = "INFO";
 
 function shouldLog(level: LogLevel): boolean {
   return LEVEL_WEIGHT[level] >= LEVEL_WEIGHT[frontendLogLevel];
 }
 
-export function configureFrontendLogger(settings: Pick<DebugSettings, "frontend_log_level">): void {
-  frontendLogLevel = settings.frontend_log_level;
+export function configureFrontendLogger(settings: Pick<DebugMatrix, "frontendLogLevel">): void {
+  frontendLogLevel = settings.frontendLogLevel;
 }
 
 function renderArgs(message: string, payload?: LoggerPayload): unknown[] {

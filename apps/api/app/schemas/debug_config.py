@@ -1,44 +1,80 @@
-from typing import Literal, Optional
-from pydantic import BaseModel, Field, validator, root_validator
+from __future__ import annotations
 
-DEBUG_MODES = ("off", "basic", "debug", "trace")
-LOG_LEVELS = ("ERROR", "WARNING", "INFO", "DEBUG")
-MAX_LOG_TEXT_LENGTH_RANGE = (200, 10000)
+from datetime import datetime
+from typing import Optional
 
-DEFAULT_DEBUG_CONFIG = {
-    "debug_mode": "off",
-    "backend_log_level": "WARNING",
-    "frontend_log_level": "WARNING",
-    "ai_log_level": "WARNING",
-    "search_log_level": "WARNING",
-    "db_log_level": "WARNING",
-    "task_log_level": "WARNING",
-    "log_request_body": False,
-    "log_ai_prompt": False,
-    "log_ai_response": False,
-    "log_sql": False,
-    "log_stacktrace": False,
-    "max_log_text_length": 1000,
-}
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-class DebugConfig(BaseModel):
-    debug_mode: Literal["off", "basic", "debug", "trace"] = Field("off")
-    backend_log_level: Literal["ERROR", "WARNING", "INFO", "DEBUG"] = Field("WARNING")
-    frontend_log_level: Literal["ERROR", "WARNING", "INFO", "DEBUG"] = Field("WARNING")
-    ai_log_level: Literal["ERROR", "WARNING", "INFO", "DEBUG"] = Field("WARNING")
-    search_log_level: Literal["ERROR", "WARNING", "INFO", "DEBUG"] = Field("WARNING")
-    db_log_level: Literal["ERROR", "WARNING", "INFO", "DEBUG"] = Field("WARNING")
-    task_log_level: Literal["ERROR", "WARNING", "INFO", "DEBUG"] = Field("WARNING")
-    log_request_body: bool = Field(False)
-    log_ai_prompt: bool = Field(False)
-    log_ai_response: bool = Field(False)
-    log_sql: bool = Field(False)
-    log_stacktrace: bool = Field(False)
-    max_log_text_length: int = Field(1000)
+from ..core.debug_config import (
+    DEBUG_MATRIX_FIELDS,
+    build_preset_matrix,
+    build_presets_map,
+    normalize_debug_mode,
+    normalize_log_level,
+)
 
-    @validator("max_log_text_length")
-    def validate_max_log_text_length(cls, v):
-        min_v, max_v = MAX_LOG_TEXT_LENGTH_RANGE
-        if not (min_v <= v <= max_v):
-            raise ValueError(f"max_log_text_length must be between {min_v} and {max_v}")
-        return v
+
+def to_camel(value: str) -> str:
+    head, *tail = value.split("_")
+    return head + "".join(part.capitalize() for part in tail)
+
+
+class CamelModel(BaseModel):
+    model_config = ConfigDict(
+        alias_generator=to_camel,
+        populate_by_name=True,
+        extra="forbid",
+    )
+
+
+class DebugMatrix(CamelModel):
+    frontend_log_level: str = Field(...)
+    backend_log_level: str = Field(...)
+    ai_log_level: str = Field(...)
+    search_log_level: str = Field(...)
+    sql_log_level: str = Field(...)
+    task_log_level: str = Field(...)
+
+    @field_validator(*DEBUG_MATRIX_FIELDS, mode="before")
+    @classmethod
+    def validate_log_level(cls, value: object) -> str:
+        return normalize_log_level(value)
+
+
+class DebugConfigUpdate(CamelModel):
+    debug_mode: str = Field(default="BASIC")
+    debug_matrix: DebugMatrix = Field(default_factory=lambda: DebugMatrix(**build_preset_matrix("BASIC")))
+
+    @field_validator("debug_mode", mode="before")
+    @classmethod
+    def validate_debug_mode(cls, value: object) -> str:
+        return normalize_debug_mode(value)
+
+
+class DebugConfig(DebugConfigUpdate):
+    updated_at: Optional[datetime] = Field(default=None)
+
+
+class DebugSettingsResponse(DebugConfig):
+    presets: dict[str, DebugMatrix] = Field(
+        default_factory=lambda: {
+            mode: DebugMatrix(**matrix)
+            for mode, matrix in build_presets_map().items()
+        }
+    )
+
+
+class StoredDebugConfig(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    debug_mode: str = Field(default="BASIC")
+    debug_matrix: DebugMatrix = Field(default_factory=lambda: DebugMatrix(**build_preset_matrix("BASIC")))
+    updated_at: Optional[datetime] = Field(default=None)
+
+
+def build_default_debug_config(*, updated_at: Optional[datetime] = None) -> StoredDebugConfig:
+    return StoredDebugConfig(
+        debug_mode="BASIC",
+        debug_matrix=DebugMatrix(**build_preset_matrix("BASIC")),
+        updated_at=updated_at,
+    )
