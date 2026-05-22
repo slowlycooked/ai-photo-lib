@@ -41,7 +41,33 @@ DEFAULT_OCR_VECTOR_FIELD_WEIGHTS: Dict[str, float] = {
 # Tier multipliers for keyword scoring
 EXACT_TERM_MULTIPLIER: float = 1.0
 EXPANDED_TERM_MULTIPLIER: float = 0.7
+SUPPORT_TERM_MULTIPLIER: float = 0.5   # context-clue tier (between strong and weak)
 BROAD_TERM_MULTIPLIER: float = 0.3
+
+# Evidence level numeric scores (used in evidence-adjusted final scoring)
+EVIDENCE_SCORE_MAP: Dict[str, float] = {
+    "A": 1.0,
+    "B": 0.7,
+    "C": 0.45,
+    "D": 0.15,
+    "E": -0.5,
+    "F": -1.0,
+}
+
+# Ordered from strongest (index 0) to weakest (index 5)
+EVIDENCE_LEVEL_ORDER: List[str] = ["A", "B", "C", "D", "E", "F"]
+
+
+def evidence_level_passes(level: str, min_level: str) -> bool:
+    """Return True if *level* is at least as strong as *min_level*.
+
+    e.g. evidence_level_passes("B", "C") → True  (B stronger than C)
+         evidence_level_passes("D", "C") → False (D weaker than C)
+    """
+    try:
+        return EVIDENCE_LEVEL_ORDER.index(level) <= EVIDENCE_LEVEL_ORDER.index(min_level)
+    except ValueError:
+        return False
 
 
 # ── Settings dataclass ────────────────────────────────────────────────────────
@@ -51,9 +77,10 @@ class EffectiveSearchSettings:
     """Project-scoped merged search parameters.
 
     Sources (priority order):
-      1. project_search_settings table row
-      2. project_embedding_settings.search_*_vector_weight columns
-      3. config.py search_* defaults
+      1. project_search_settings.search_quality_settings JSONB (highest)
+      2. project_search_settings table row scalar columns
+      3. project_embedding_settings.search_*_vector_weight columns
+      4. config.py search_* defaults (lowest)
     """
 
     default_mode: SearchMode
@@ -69,6 +96,20 @@ class EffectiveSearchSettings:
     enable_query_understanding: bool
     enable_structured_filters: bool
     enable_semantic_tag_boost: bool
+
+    # ── Evidence quality settings (from search_quality_settings JSONB) ────────
+    # Vector score required to show a vector-only candidate (no keyword evidence)
+    vector_strict_score: float = 0.42
+    # Minimum evidence level to display a result: "A"/"B"/"C"/"D"
+    min_display_evidence_level: str = "C"
+    # Master switch: enable evidence-based filtering
+    enable_evidence_filter: bool = True
+    # Apply negative_term penalties to final score
+    enable_negative_penalty: bool = True
+    # Scaling factor for evidence_score component added to final_score
+    evidence_weight: float = 0.02
+    # Additional penalty subtracted from final_score per negative-term hit
+    negative_term_penalty: float = 0.01
 
 
 # ── Candidate / score dataclasses ─────────────────────────────────────────────
@@ -97,3 +138,15 @@ class SearchCandidate:
     vector_rank: Optional[int] = None
     keyword_explain: Dict = field(default_factory=dict)
     vector_explain: Dict = field(default_factory=dict)
+    # Tier-level evidence tracking
+    # hit_tiers: set of tiers that produced keyword hits
+    #   {"exact", "strong", "support", "weak", "negative"}
+    hit_tiers: set = field(default_factory=set)
+    # term_level_hits: {"exact": [...], "strong": [...], "support": [...], "weak": [...], "negative": [...]}
+    term_level_hits: Dict = field(default_factory=dict)
+    # evidence_level: "A"|"B"|"C"|"D"|"E"|"F" (computed post-fusion)
+    evidence_level: Optional[str] = None
+    # Why a candidate was filtered (for debug)
+    filter_reason: Optional[str] = None
+    # Score breakdown for debug explain
+    score_breakdown: Dict = field(default_factory=dict)

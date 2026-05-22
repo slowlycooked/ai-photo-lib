@@ -67,7 +67,7 @@ PRESET_DEBUG_MATRICES: dict[str, dict[str, str]] = {
         "backend_log_level": "DEBUG",
         "ai_log_level": "DEBUG",
         "search_log_level": "DEBUG",
-        "sql_log_level": "DEBUG",
+        "sql_log_level": "WARNING",
         "task_log_level": "DEBUG",
     },
     "TRACE": {
@@ -75,7 +75,7 @@ PRESET_DEBUG_MATRICES: dict[str, dict[str, str]] = {
         "backend_log_level": "TRACE",
         "ai_log_level": "TRACE",
         "search_log_level": "TRACE",
-        "sql_log_level": "TRACE",
+        "sql_log_level": "INFO",
         "task_log_level": "TRACE",
     },
 }

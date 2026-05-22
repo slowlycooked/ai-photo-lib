@@ -1,6 +1,6 @@
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
-import type { SearchMode } from "@/api/types";
+import type { SearchMode, TagField } from "@/api/types";
 
 const PAGE_SIZE = 50;
 
@@ -9,6 +9,8 @@ interface UseSearchOptions {
   debug?: boolean;
   folderId?: number | null;
   folderScope?: string;
+  tagField?: TagField | null;
+  tagValue?: string | null;
 }
 
 export function useSearch(
@@ -21,10 +23,14 @@ export function useSearch(
     debug = false,
     folderId = null,
     folderScope = "subtree",
+    tagField = null,
+    tagValue = null,
   } = options;
 
+  const isTagFilter = tagField != null && tagValue != null;
+
   return useInfiniteQuery({
-    queryKey: ["search", query, projectId, mode, debug, folderId, folderScope],
+    queryKey: ["search", query, projectId, mode, debug, folderId, folderScope, tagField, tagValue],
     queryFn: ({ pageParam = 1 }) =>
       api.projects.search(
         projectId!,
@@ -35,9 +41,11 @@ export function useSearch(
         folderScope as "subtree" | "direct",
         mode,
         debug,
+        tagField,
+        tagValue,
       ),
     initialPageParam: 1,
-    enabled: query.trim().length > 0 && projectId !== null,
+    enabled: (query.trim().length > 0 || isTagFilter) && projectId !== null,
     getNextPageParam: (last) => {
       const loaded = (last.page - 1) * last.page_size + last.items.length;
       return loaded < last.total ? last.page + 1 : undefined;

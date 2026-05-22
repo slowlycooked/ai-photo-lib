@@ -30,6 +30,7 @@ import type {
   ScanStatus,
   SearchMode,
   SearchResponse,
+  TagField,
   TagsResponse,
   TimelineResponse,
 } from "./types";
@@ -175,6 +176,8 @@ export const projectsApi = {
     folderScope: FolderScope = "subtree",
     mode: SearchMode = "hybrid",
     debug = false,
+    tagField?: TagField | null,
+    tagValue?: string | null,
   ) =>
     request<SearchResponse>(
       `/projects/${id}/search${qs({
@@ -185,6 +188,9 @@ export const projectsApi = {
         folder_scope: folderScope,
         mode,
         debug: debug || undefined,
+        filter: tagField && tagValue ? "tag" : undefined,
+        tag_field: tagField ?? undefined,
+        tag_value: tagValue ?? undefined,
       })}`,
     ),
 

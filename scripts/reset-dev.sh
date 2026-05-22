@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
-# scripts/reset-dev.sh — 开发调试专用：清空数据库 + Redis + 缩略图
+# scripts/reset-dev.sh — 开发调试专用：清空数据库 + 缩略图
 #
 # 可选模式（默认全部清空）:
 #   --db-only      只重置数据库（alembic downgrade → upgrade）
-#   --redis-only   只清空 Redis
 #   --thumbs       同时删除缩略图目录
 #   --yes / -y     跳过确认提示（CI / 脚本调用时使用）
 #
@@ -37,24 +36,21 @@ if [ -f "$ENV_FILE" ]; then
 fi
 
 POSTGRES_HOST_PORT="${POSTGRES_HOST_PORT:-5432}"
-REDIS_HOST_PORT="${REDIS_HOST_PORT:-6379}"
 POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-photo}"
 THUMBNAIL_PATH="${THUMBNAIL_PATH:-$ROOT/data/thumbs}"
 
 # ── 参数解析 ─────────────────────────────────────────────────────────────────
 DO_DB=true
-DO_REDIS=true
 DO_THUMBS=false
 AUTO_YES=false
 
 for arg in "$@"; do
   case "$arg" in
-    --db-only)    DO_REDIS=false ;;
-    --redis-only) DO_DB=false ;;
+    --db-only)    : ;;
     --thumbs)     DO_THUMBS=true ;;
     --yes|-y)     AUTO_YES=true ;;
     --help|-h)
-      sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'
       exit 0
       ;;
     *) log_error "未知参数: $arg"; exit 1 ;;
@@ -67,7 +63,6 @@ echo -e "${RED}${BOLD}⚠  开发调试数据清理 — 不可恢复！${RESET}"
 log_sep
 echo ""
 $DO_DB    && echo -e "  ${RED}●${RESET} PostgreSQL: 重置所有表 (alembic downgrade base → upgrade head)"
-$DO_REDIS && echo -e "  ${RED}●${RESET} Redis:      FLUSHALL"
 $DO_THUMBS && echo -e "  ${RED}●${RESET} 缩略图:     删除 $THUMBNAIL_PATH"
 echo ""
 log_sep
@@ -108,16 +103,6 @@ reset_db() {
   log_ok "数据库已重置为干净状态"
 }
 
-# ── 清空 Redis ────────────────────────────────────────────────────────────────
-flush_redis() {
-  check_container redis
-
-  log_info "清空 Redis (FLUSHALL)..."
-  docker compose -f "$ROOT/docker-compose.yml" exec -T redis \
-    redis-cli FLUSHALL > /dev/null
-  log_ok "Redis 已清空"
-}
-
 # ── 清除缩略图 ────────────────────────────────────────────────────────────────
 clear_thumbs() {
   if [ -d "$THUMBNAIL_PATH" ]; then
@@ -131,7 +116,6 @@ clear_thumbs() {
 
 # ── 执行 ─────────────────────────────────────────────────────────────────────
 $DO_DB     && reset_db
-$DO_REDIS  && flush_redis
 $DO_THUMBS && clear_thumbs
 
 echo ""

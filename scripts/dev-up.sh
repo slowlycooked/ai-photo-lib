@@ -18,11 +18,10 @@ fi
 
 # Defaults if not set
 POSTGRES_HOST_PORT="${POSTGRES_HOST_PORT:-5432}"
-REDIS_HOST_PORT="${REDIS_HOST_PORT:-6379}"
 
-echo "▶ Starting postgres (host port $POSTGRES_HOST_PORT) and redis (host port $REDIS_HOST_PORT)..."
+echo "▶ Starting postgres (host port $POSTGRES_HOST_PORT)..."
 cd "$ROOT"
-docker compose up -d postgres redis
+docker compose up -d postgres
 
 echo "▶ Waiting for postgres to be healthy..."
 until docker compose exec postgres pg_isready -U photo -d photo > /dev/null 2>&1; do
@@ -41,7 +40,7 @@ echo ""
 echo "✓ Infrastructure ready!"
 echo ""
 echo "  PostgreSQL : localhost:${POSTGRES_HOST_PORT} (db=photo, user=photo)"
-echo "  Redis      : localhost:${REDIS_HOST_PORT}"
+
 echo ""
 echo "Now start the API:"
 echo "  cd apps/api && uvicorn app.main:app --reload"

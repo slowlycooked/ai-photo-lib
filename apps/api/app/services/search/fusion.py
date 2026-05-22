@@ -1,7 +1,11 @@
 """RRF fusion of keyword and vector recall lists."""
 from __future__ import annotations
 
+import logging
+
 from .types import EffectiveSearchSettings, SearchCandidate, VectorMatchScores
+
+logger = logging.getLogger(__name__)
 
 
 def rrf_merge(
@@ -14,6 +18,11 @@ def rrf_merge(
     Merges a keyword ranked list and a vector score dict using per-project
     *keyword_weight*, *vector_weight* and *rrf_k* from *settings*.
     """
+    logger.debug(
+        "[fusion] rrf_merge kw_results=%d vec_results=%d rrf_k=%d kw_weight=%.2f vec_weight=%.2f",
+        len(keyword_results), len(vector_scores),
+        settings.rrf_k, settings.keyword_weight, settings.vector_weight,
+    )
     merged: dict[int, SearchCandidate] = {}
     rrf_k = settings.rrf_k
 
@@ -29,6 +38,14 @@ def rrf_merge(
         row.keyword_rank = rank
         row.rrf_score += fused
         row.final_score = row.rrf_score
+        # P2: propagate tier tracking from keyword recall
+        row.hit_tiers = row.hit_tiers | candidate.hit_tiers
+        if candidate.term_level_hits:
+            for tier, terms in candidate.term_level_hits.items():
+                existing = row.term_level_hits.setdefault(tier, [])
+                for t in terms:
+                    if t not in existing:
+                        existing.append(t)
         if "keyword" not in row.match_source:
             row.match_source.append("keyword")
 
@@ -62,4 +79,20 @@ def rrf_merge(
             if score > 0 and source_name not in row.match_source:
                 row.match_source.append(source_name)
 
-    return sorted(merged.values(), key=lambda item: item.final_score, reverse=True)
+    result = sorted(merged.values(), key=lambda item: item.final_score, reverse=True)
+    logger.debug(
+        "[fusion] rrf_merge done merged=%d top_scores=%s",
+        len(result),
+        [round(c.final_score, 6) for c in result[:5]],
+    )
+    if result and logger.isEnabledFor(5):  # TRACE level
+        for c in result[:10]:
+            logger.log(
+                5,
+                "[fusion] photo_id=%d final=%.6f kw_rank=%s vec_rank=%s kw_score=%.4f vec_score=%.4f sources=%s",
+                c.photo_id, c.final_score,
+                c.keyword_rank, c.vector_rank,
+                c.keyword_score, c.vector_score,
+                c.match_source,
+            )
+    return result

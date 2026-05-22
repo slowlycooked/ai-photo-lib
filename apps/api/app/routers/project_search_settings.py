@@ -1,10 +1,3 @@
-"""Router for per-project search settings.
-
-Routes:
-  GET  /projects/{project_id}/search-settings       → get/create settings
-  PUT  /projects/{project_id}/search-settings       → update settings
-  POST /projects/{project_id}/search-settings/reset → reset to defaults
-"""
 from __future__ import annotations
 
 import logging
@@ -12,7 +5,8 @@ import logging
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from ..api.deps import get_db
+from ..api.deps import get_db, require_project
+from ..models.project import Project
 from ..schemas.project_search_settings import (
     ProjectSearchSettingsResponse,
     ProjectSearchSettingsUpdate,
@@ -31,6 +25,7 @@ router = APIRouter(prefix="/projects/{project_id}/search-settings", tags=["searc
 @router.get("", response_model=ProjectSearchSettingsResponse)
 def get_search_settings(
     project_id: int,
+    project: Project = Depends(require_project),
     db: Session = Depends(get_db),
 ) -> ProjectSearchSettingsResponse:
     """Return (or initialise) the search settings for a project."""
@@ -42,6 +37,7 @@ def get_search_settings(
 def update_search_settings(
     project_id: int,
     body: ProjectSearchSettingsUpdate,
+    project: Project = Depends(require_project),
     db: Session = Depends(get_db),
 ) -> ProjectSearchSettingsResponse:
     """Update search settings for a project."""
@@ -53,6 +49,7 @@ def update_search_settings(
 @router.post("/reset", response_model=ProjectSearchSettingsResponse)
 def reset_search_settings(
     project_id: int,
+    project: Project = Depends(require_project),
     db: Session = Depends(get_db),
 ) -> ProjectSearchSettingsResponse:
     """Reset search settings to config defaults."""

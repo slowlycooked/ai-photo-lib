@@ -263,6 +263,7 @@ start_api() {
     app.main:app
     --host "$API_HOST"
     --port "$API_PORT"
+    --no-access-log
   )
   if [ "$API_RELOAD" = "1" ] || [ "$API_RELOAD" = "true" ]; then
     uvicorn_args+=(--reload)

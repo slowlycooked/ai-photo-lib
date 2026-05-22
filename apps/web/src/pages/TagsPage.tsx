@@ -37,16 +37,20 @@ function TagChip({
   );
 }
 
+type SectionKey = (typeof SECTIONS)[number]["key"];
+
 function TagSection({
   title,
   tags,
   color,
+  sectionKey,
   onTagClick,
 }: {
   title: string;
   tags: TagCount[];
   color: string;
-  onTagClick: (tag: string) => void;
+  sectionKey: SectionKey;
+  onTagClick: (field: SectionKey, tag: string) => void;
 }) {
   if (tags.length === 0) return null;
   return (
@@ -63,7 +67,7 @@ function TagSection({
             tag={tag}
             count={count}
             color={color}
-            onClick={() => onTagClick(tag)}
+            onClick={() => onTagClick(sectionKey, tag)}
           />
         ))}
       </div>
@@ -81,8 +85,10 @@ export function TagsPage() {
     staleTime: 60_000,
   });
 
-  const handleTagClick = (tag: string) => {
-    navigate(`/search?q=${encodeURIComponent(tag)}`);
+  const handleTagClick = (field: SectionKey, tag: string) => {
+    navigate(
+      `/search?filter=tag&tag_field=${field}&tag_value=${encodeURIComponent(tag)}`,
+    );
   };
 
   const totalTags = data
@@ -131,6 +137,7 @@ export function TagsPage() {
             title={label}
             tags={data[key]}
             color={color}
+            sectionKey={key}
             onTagClick={handleTagClick}
           />
         ))}

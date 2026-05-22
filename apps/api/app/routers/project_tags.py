@@ -16,9 +16,12 @@ def _count_tags(
     db: Session, field: str, project_id: int, limit: int = 100
 ) -> list[TagCount]:
     sql = text(
-        f"SELECT unnest(paa.{field}) AS tag, COUNT(*) AS cnt "  # noqa: S608
-        f"FROM photo_ai_analysis paa "
-        f"WHERE paa.project_id = :pid AND paa.{field} IS NOT NULL "
+        f"SELECT tag, COUNT(DISTINCT photo_id) AS cnt "  # noqa: S608
+        f"FROM ("
+        f"  SELECT paa.photo_id, unnest(paa.{field}) AS tag"
+        f"  FROM photo_ai_analysis paa"
+        f"  WHERE paa.project_id = :pid AND paa.{field} IS NOT NULL"
+        f") t "
         f"GROUP BY tag ORDER BY cnt DESC LIMIT :limit"
     )
     rows = db.execute(sql, {"pid": project_id, "limit": limit}).fetchall()

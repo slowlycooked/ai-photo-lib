@@ -216,6 +216,11 @@ export interface SearchResultItem {
   };
 }
 
+export interface SearchTraceStep {
+  stage: string;
+  [key: string]: unknown;
+}
+
 export interface SearchDebugPayload {
   original_query: string;
   normalized_query: string;
@@ -231,6 +236,7 @@ export interface SearchDebugPayload {
   vector_candidates: number;
   merged_candidates: number;
   fallback_reason?: string;
+  trace?: SearchTraceStep[];
   settings_snapshot?: {
     default_mode: string;
     keyword_top_k: number;
@@ -395,6 +401,13 @@ export interface PromptTemplateTestResponse {
 // ─── Embedding Settings ───────────────────────────────────────────────────────
 
 export type SearchMode = "keyword" | "vector" | "hybrid";
+
+export type TagField =
+  | "scene_tags"
+  | "object_tags"
+  | "activity_tags"
+  | "quality_tags"
+  | "search_keywords";
 
 export interface ProjectEmbeddingSettings {
   id: number;

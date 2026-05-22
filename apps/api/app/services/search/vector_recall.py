@@ -106,6 +106,13 @@ class VectorRecallService:
 
         embed_input = normalized_query if normalized_query.strip() else query
 
+        logger.debug(
+            "[vector_recall] embed_text model=%s input=%r endpoint=%s",
+            embedding_model,
+            embed_input,
+            endpoint_url,
+        )
+
         query_embedding = embed_text(
             embed_input,
             endpoint_url=endpoint_url,
@@ -158,6 +165,11 @@ class VectorRecallService:
             limit=top_k,
         )
 
+        logger.debug(
+            "[vector_recall] field_hits content=%d caption=%d tag=%d ocr=%d top_k=%d",
+            len(content_scores), len(caption_scores), len(tag_scores), len(ocr_scores), top_k,
+        )
+
         all_photo_ids = (
             set(content_scores) | set(caption_scores) | set(tag_scores) | set(ocr_scores)
         )
@@ -182,5 +194,19 @@ class VectorRecallService:
                 ocr_score=oc,
                 total_score=total,
             )
+
+        logger.debug(
+            "[vector_recall] done candidates=%d (after min_score=%.4f filter, union=%d)",
+            len(merged), self._settings.vector_min_score, len(all_photo_ids),
+        )
+        if merged and logger.isEnabledFor(5):  # TRACE level
+            top = sorted(merged.items(), key=lambda x: x[1].total_score, reverse=True)[:10]
+            for pid, scores in top:
+                logger.log(
+                    5,
+                    "[vector_recall] photo_id=%d total=%.4f content=%.4f caption=%.4f tag=%.4f ocr=%.4f",
+                    pid, scores.total_score, scores.content_score,
+                    scores.caption_score, scores.tag_score, scores.ocr_score,
+                )
 
         return merged, embedding_model, ""

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+import re
+import uuid
 from time import perf_counter
 
 from fastapi import FastAPI, Request
@@ -11,7 +13,13 @@ from sqlalchemy.exc import OperationalError
 from ._version import APP_VERSION
 from .config import settings
 from .database import SessionLocal
-from .logging_config import setup_logging, should_log_request_debug_middleware
+from .logging_config import (
+    _NOISY_PATH_RE,
+    project_id_ctx,
+    request_id_ctx,
+    setup_logging,
+    should_log_request_debug_middleware,
+)
 from .routers import (
     health,
     photos,
@@ -73,34 +81,74 @@ def load_runtime_debug_config() -> None:
         db.close()
 
 
+_PROJECT_ID_RE = re.compile(r"^/projects/(\d+)")
+
+
 @app.middleware("http")
-async def request_debug_middleware(request: Request, call_next):
-    if not should_log_request_debug_middleware():
-        return await call_next(request)
+async def request_context_middleware(request: Request, call_next):
+    """Attach request_id / project_id context vars and emit a single structured
+    request log line.  High-frequency noisy routes are suppressed at DEBUG unless
+    they are slow or return an error.
+    """
+    rid = str(uuid.uuid4())[:8]
+    path = request.url.path
+
+    # Derive project_id from path when present
+    m = _PROJECT_ID_RE.match(path)
+    pid = m.group(1) if m else None
+
+    req_token = request_id_ctx.set(rid)
+    proj_token = project_id_ctx.set(pid)
 
     request_logger = logging.getLogger("ai_photo_lib.backend.http")
+    is_debug_middleware = should_log_request_debug_middleware()
+    is_trace = request_logger.isEnabledFor(5)  # TRACE_LEVEL_NUM
+
+    # TRACE: log request start + query/body
+    if is_trace:
+        body = await request.body()
+
+        async def _receive():
+            return {"type": "http.request", "body": body, "more_body": False}
+
+        request = Request(request.scope, _receive)
+        request_logger.log(
+            5,
+            "http_request_start request_id=%s method=%s path=%s query=%s body=%s",
+            rid,
+            request.method,
+            path,
+            request.url.query,
+            body.decode("utf-8", errors="replace")[:500],
+        )
+
     started = perf_counter()
-    body = await request.body()
+    try:
+        response = await call_next(request)
+    finally:
+        request_id_ctx.reset(req_token)
+        project_id_ctx.reset(proj_token)
 
-    async def receive() -> dict[str, object]:
-        return {"type": "http.request", "body": body, "more_body": False}
+    duration_ms = (perf_counter() - started) * 1000
+    status_code = response.status_code
+    is_error = status_code >= 400
+    is_slow = duration_ms >= 1000
+    is_noisy = bool(_NOISY_PATH_RE.match(path))
 
-    debug_request = Request(request.scope, receive)
-    request_logger.debug(
-        "HTTP request start method=%s path=%s query=%s body=%s",
-        request.method,
-        request.url.path,
-        request.url.query,
-        body.decode("utf-8", errors="replace")[:2000],
-    )
-    response = await call_next(debug_request)
-    request_logger.debug(
-        "HTTP request end method=%s path=%s status_code=%s duration_ms=%.2f",
-        request.method,
-        request.url.path,
-        response.status_code,
-        (perf_counter() - started) * 1000,
-    )
+    if is_debug_middleware:
+        # Always log errors and slow requests; suppress noisy routes otherwise
+        if is_error or is_slow or not is_noisy:
+            request_logger.debug(
+                "http_request request_id=%s method=%s path=%s status=%d duration_ms=%.2f project_id=%s",
+                rid,
+                request.method,
+                path,
+                status_code,
+                duration_ms,
+                pid,
+                extra={"path": path, "status_code": status_code, "duration_ms": duration_ms},
+            )
+
     return response
 
 

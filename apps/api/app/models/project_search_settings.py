@@ -104,6 +104,13 @@ class ProjectSearchSettings(Base):
         Boolean, server_default="false", nullable=False
     )
 
+    # ── Evidence / quality settings (JSONB) ───────────────────────────────────
+    # Overrides for vector_strict_score, min_display_evidence_level, etc.
+    # See EffectiveSearchSettings for supported keys.
+    search_quality_settings: Mapped[Optional[dict]] = mapped_column(
+        JSONB, nullable=True
+    )
+
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP, server_default=func.now(), nullable=False
     )

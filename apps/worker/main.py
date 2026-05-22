@@ -32,7 +32,12 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import sessionmaker
 
 from app.config import settings
-from app.logging_config import setup_logging
+from app.logging_config import (
+    photo_id_ctx,
+    project_id_ctx,
+    setup_logging,
+    task_id_ctx,
+)
 from app.models.ai import AIJob
 from app.models.folder import ProjectFolder  # noqa: F401 — registers 'project_folders' table in metadata
 from app.models.project import Project  # noqa: F401 — registers 'projects' table in metadata
@@ -47,10 +52,19 @@ from app.services.runtime_settings_service import (
 setup_logging(build_default_debug_config())
 logger = logging.getLogger("worker")
 
-engine = create_engine(settings.database_url, pool_pre_ping=True)
+engine = create_engine(
+    settings.database_url,
+    pool_pre_ping=True,
+    hide_parameters=True,
+)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 _shutdown = False
+
+# Debug config refresh: only reload every 60 seconds to avoid per-cycle DB hits.
+_DEBUG_CONFIG_REFRESH_INTERVAL = 60
+_last_debug_config_refresh: float = 0.0
+_last_debug_matrix: dict | None = None
 
 
 def _handle_signal(signum, frame):
@@ -64,25 +78,47 @@ signal.signal(signal.SIGTERM, _handle_signal)
 
 
 # ---------------------------------------------------------------------------
+# Debug config refresh — throttled
+# ---------------------------------------------------------------------------
+
+
+def _maybe_refresh_debug_config(db) -> None:
+    global _last_debug_config_refresh, _last_debug_matrix
+    now = time.monotonic()
+    if now - _last_debug_config_refresh < _DEBUG_CONFIG_REFRESH_INTERVAL:
+        return
+    _last_debug_config_refresh = now
+    try:
+        config = RuntimeSettingsService.get_debug_config(db)
+        new_matrix = config.debug_matrix.model_dump()
+        if new_matrix != _last_debug_matrix:
+            setup_logging(config)
+            _last_debug_matrix = new_matrix
+            logger.debug("worker_debug_config_refreshed matrix=%s", new_matrix)
+    except RuntimeSettingsStorageUnavailableError as exc:
+        logger.warning("Worker debug config unavailable: %s", exc)
+
+
+# ---------------------------------------------------------------------------
 # Core processing — delegated to AIJobAppService
 # ---------------------------------------------------------------------------
 
 
 def run() -> None:
     logger.info(
-        "Worker started. model=%s base_url=%s max_retries=%d",
+        "worker_started model=%s base_url=%s max_retries=%d",
         settings.openai_vision_model,
         settings.openai_base_url,
         settings.ai_max_retries,
     )
 
+    idle_polls: int = 0
+    idle_report_interval: int = 6   # report after every 6 × 10 s = 60 s idle
+
     while not _shutdown:
         try:
             with SessionLocal() as db:
-                try:
-                    setup_logging(RuntimeSettingsService.get_debug_config(db))
-                except RuntimeSettingsStorageUnavailableError as exc:
-                    logger.warning("Worker debug config unavailable: %s", exc)
+                _maybe_refresh_debug_config(db)
 
                 job = (
                     db.query(AIJob)
@@ -93,9 +129,26 @@ def run() -> None:
                 )
 
                 if job is None:
-                    pass  # nothing to do this cycle
+                    idle_polls += 1
+                    # Emit a single aggregated idle log instead of per-cycle noise
+                    if idle_polls % idle_report_interval == 0:
+                        logger.debug(
+                            "worker_idle polls=%d duration_sec=%d",
+                            idle_polls,
+                            idle_polls * 10,
+                        )
                 else:
-                    AIJobAppService(db).process_job(job)
+                    idle_polls = 0
+                    # Set per-job context vars so log lines carry identifiers
+                    tok_proj = project_id_ctx.set(str(job.project_id) if job.project_id else None)
+                    tok_task = task_id_ctx.set(str(job.id))
+                    tok_photo = photo_id_ctx.set(str(job.photo_id) if job.photo_id else None)
+                    try:
+                        AIJobAppService(db).process_job(job)
+                    finally:
+                        project_id_ctx.reset(tok_proj)
+                        task_id_ctx.reset(tok_task)
+                        photo_id_ctx.reset(tok_photo)
                     continue  # immediately pick next job
 
         except OperationalError as exc:

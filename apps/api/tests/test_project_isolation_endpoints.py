@@ -183,12 +183,16 @@ INSERT INTO projects (id, name, photo_library_path, thumbnail_path, is_default)
 VALUES (1, 'Project A', '/tmp/a', '/tmp/a-thumb', 1),
        (2, 'Project B', '/tmp/b', '/tmp/b-thumb', 0);
 
-INSERT INTO photos (id, project_id, file_path, file_name, status)
-VALUES (101, 1, '/tmp/a/a.jpg', 'a.jpg', 'indexed'),
-       (202, 2, '/tmp/b/b.jpg', 'b.jpg', 'indexed');
+INSERT INTO photos (id, project_id, file_path, file_name, status, created_at, updated_at)
+VALUES (101, 1, '/tmp/a/a.jpg',   'a.jpg',   'indexed', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+       (102, 1, '/tmp/a/cat.jpg', 'cat.jpg', 'indexed', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+       (103, 1, '/tmp/a/dog.jpg', 'dog.jpg', 'indexed', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+       (202, 2, '/tmp/b/b.jpg',   'b.jpg',   'indexed', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
 
-INSERT INTO photo_ai_analysis (id, project_id, photo_id, caption)
-VALUES (1, 2, 202, 'from project b');
+INSERT INTO photo_ai_analysis (id, project_id, photo_id, caption, object_tags)
+VALUES (2, 1, 102, 'a cat photo', '["猫"]'),
+       (3, 1, 103, 'a dog photo', '["狗"]'),
+       (4, 2, 202, 'from project b', '["猫"]');
 
 INSERT INTO project_prompt_templates (id, project_id, name, user_prompt, is_active, version)
 VALUES (1001, 1, 'Prompt A', 'A prompt', 1, 1),
@@ -314,6 +318,63 @@ class ProjectIsolationEndpointsTest(unittest.TestCase):
         body = res.json()
         self.assertEqual(body["created_jobs"], 1)
         self.assertEqual(body["total_checked"], 1)
+
+    # ── Tag filter tests ──────────────────────────────────────────────────────
+
+    def test_tag_filter_count_equals_tag_search_total(self) -> None:
+        """Tags page shows 猫=1 for project 1; tag filter must return total=1."""
+        res = self.client.get(
+            "/projects/1/search?filter=tag&tag_field=object_tags&tag_value=%E7%8C%AB"
+        )
+        self.assertEqual(res.status_code, 200)
+        body = res.json()
+        self.assertEqual(body["total"], 1)
+        self.assertEqual(len(body["items"]), 1)
+        self.assertEqual(body["items"][0]["photo_id"], 102)
+
+    def test_tag_filter_field_isolation(self) -> None:
+        """object_tags:猫=1 in project 1; search_keywords must not add extra results."""
+        # Only photo 102 has object_tags=["猫"] in project 1.
+        res = self.client.get(
+            "/projects/1/search?filter=tag&tag_field=object_tags&tag_value=%E7%8C%AB"
+        )
+        self.assertEqual(res.status_code, 200)
+        body = res.json()
+        # Must not return photo 103 (狗) or cross-project photo 202.
+        photo_ids = [item["photo_id"] for item in body["items"]]
+        self.assertNotIn(103, photo_ids)
+        self.assertNotIn(202, photo_ids)
+
+    def test_tag_filter_project_isolation(self) -> None:
+        """Both projects have 猫 in object_tags; each project sees only its own photos."""
+        res_p1 = self.client.get(
+            "/projects/1/search?filter=tag&tag_field=object_tags&tag_value=%E7%8C%AB"
+        )
+        res_p2 = self.client.get(
+            "/projects/2/search?filter=tag&tag_field=object_tags&tag_value=%E7%8C%AB"
+        )
+        self.assertEqual(res_p1.status_code, 200)
+        self.assertEqual(res_p2.status_code, 200)
+        ids_p1 = {item["photo_id"] for item in res_p1.json()["items"]}
+        ids_p2 = {item["photo_id"] for item in res_p2.json()["items"]}
+        self.assertIn(102, ids_p1)
+        self.assertNotIn(202, ids_p1)
+        self.assertIn(202, ids_p2)
+        self.assertNotIn(102, ids_p2)
+
+    def test_tag_filter_invalid_field_rejected(self) -> None:
+        """tag_field not in allowlist must return 422."""
+        res = self.client.get(
+            "/projects/1/search?filter=tag&tag_field=caption&tag_value=test"
+        )
+        self.assertEqual(res.status_code, 422)
+
+    def test_tag_filter_missing_tag_value_rejected(self) -> None:
+        """filter=tag without tag_value must return 422."""
+        res = self.client.get(
+            "/projects/1/search?filter=tag&tag_field=object_tags"
+        )
+        self.assertEqual(res.status_code, 422)
 
 
 if __name__ == "__main__":

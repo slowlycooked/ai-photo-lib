@@ -1,125 +1,513 @@
 """Rule-based query understanding service.
 
-Three-tier term model
----------------------
-exact_terms     Words that appear directly in the user's query.
-expanded_terms  Close synonyms / direct variants (score × 0.7).
-broad_terms     Generic category terms (score × 0.3).
+Five-tier term model
+--------------------
+must_terms (exact_terms)
+    Words taken directly from the user's query.  Strongest evidence.
 
-normalized_query joins all three tiers for embedding.
+strong_terms (expanded_terms)
+    Direct synonyms / near-equivalent terms (score × 0.7).
+    Can independently trigger keyword recall.
+
+support_terms
+    Context clues that need combining with other evidence (score × 0.5).
+    NOT sole recall triggers — only boost already-recalled photos.
+
+weak_terms (broad_terms)
+    Generic category terms (score × 0.3).
+    Boost-only, never sole recall triggers.
+
+negative_terms
+    Conflicting / contradictory terms — penalise matching photos.
+
+``intent_facets``  maps facet names to associated terms from the query.
+``query_constraints``  per-query evidence requirements for display.
+
+Backward-compatible aliases:
+    exact_terms    = must_terms
+    expanded_terms = strong_terms  (recall_terms = exact + expanded)
+    broad_terms    = weak_terms
 """
 
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Literal, Optional, TypedDict
+from typing import Any, Dict, Literal, Optional, TypedDict
 
 
 # ── Tiered expansion dictionaries ─────────────────────────────────────────────
+#
+# Each entry may contain these keys (all optional except expanded/broad):
+#   expanded  — strong synonyms that can independently recall (scored × 0.7)
+#   support   — context clues that need combination (scored × 0.5, no recall)
+#   broad     — weak category terms, boost-only (scored × 0.3, no recall)
+#   negative  — conflicting terms; photos matching these are penalised
+#   facets    — list of primary intent facets (e.g. ["time", "lighting"])
 
-class _TieredTerms(TypedDict):
-    expanded: list[str]
-    broad: list[str]
+class _TieredTerms(TypedDict, total=False):
+    expanded: list
+    support: list
+    broad: list
+    negative: list
+    facets: list
 
 
-_OUTDOOR_TERMS_TIERED: dict[str, _TieredTerms] = {
-    "爬山": {"expanded": ["登山", "徒步", "山路", "山顶", "山峰"], "broad": ["户外", "背包", "登山杖"]},
-    "登山": {"expanded": ["爬山", "徒步", "山路", "山顶", "山峰"], "broad": ["户外", "背包"]},
-    "徒步": {"expanded": ["登山", "山路", "步道"], "broad": ["户外", "背包"]},
-    "户外": {"expanded": ["自然", "山地", "步道", "草地", "树林"], "broad": []},
-    "山顶": {"expanded": ["山峰", "登山", "爬山"], "broad": ["远眺"]},
-    "山峰": {"expanded": ["山顶", "登山", "爬山"], "broad": ["壮观"]},
-    "步道": {"expanded": ["徒步", "山路", "登山"], "broad": ["户外"]},
-    "远足": {"expanded": ["徒步", "户外", "山路"], "broad": ["背包"]},
-    "hiking": {"expanded": ["徒步", "登山"], "broad": ["户外", "背包", "山路"]},
-    "山": {"expanded": ["山地", "山峰", "山顶"], "broad": ["户外", "自然"]},
+_OUTDOOR_TERMS_TIERED: Dict[str, Any] = {
+    "爬山": {
+        "expanded": ["登山", "徒步", "山路"],
+        "support": ["山顶", "山峰", "登山杖", "背包"],
+        "broad": ["户外", "自然"],
+        "negative": ["室内", "城市", "海边"],
+        "facets": ["activity", "scene"],
+    },
+    "登山": {
+        "expanded": ["爬山", "徒步", "山路"],
+        "support": ["山顶", "山峰", "背包"],
+        "broad": ["户外", "自然"],
+        "negative": ["室内", "城市"],
+        "facets": ["activity", "scene"],
+    },
+    "徒步": {
+        "expanded": ["登山", "山路", "步道"],
+        "support": ["背包", "登山杖"],
+        "broad": ["户外", "自然"],
+        "facets": ["activity"],
+    },
+    "户外": {
+        "expanded": ["自然", "山地", "步道", "草地", "树林"],
+        "broad": [],
+        "facets": ["scene"],
+    },
+    "山顶": {
+        "expanded": ["山峰", "登山", "爬山"],
+        "broad": ["远眺"],
+        "facets": ["scene"],
+    },
+    "山峰": {
+        "expanded": ["山顶", "登山", "爬山"],
+        "broad": ["壮观"],
+        "facets": ["scene"],
+    },
+    "步道": {
+        "expanded": ["徒步", "山路", "登山"],
+        "broad": ["户外"],
+        "facets": ["activity"],
+    },
+    "远足": {
+        "expanded": ["徒步", "户外", "山路"],
+        "broad": ["背包"],
+        "facets": ["activity"],
+    },
+    "hiking": {
+        "expanded": ["徒步", "登山"],
+        "support": ["背包", "登山杖"],
+        "broad": ["户外", "山路"],
+        "facets": ["activity"],
+    },
+    "山": {
+        "expanded": ["山地", "山峰", "山顶"],
+        "broad": ["户外", "自然"],
+        "facets": ["scene"],
+    },
 }
 
-_WEATHER_TERMS_TIERED: dict[str, _TieredTerms] = {
-    "下雨": {"expanded": ["雨天", "雨伞", "雨衣", "雨滴"], "broad": ["积水", "湿地面", "阴天"]},
-    "下雨天": {"expanded": ["下雨", "雨天", "雨伞", "雨滴"], "broad": ["积水", "湿地面", "阴天"]},
-    "雨天": {"expanded": ["下雨", "雨伞", "雨滴"], "broad": ["积水", "阴天"]},
-    "下雪": {"expanded": ["雪天", "雪地", "雪花"], "broad": ["积雪", "寒冷"]},
-    "雪天": {"expanded": ["下雪", "雪地", "积雪"], "broad": ["寒冷"]},
-    "晴天": {"expanded": ["阳光", "蓝天", "白云"], "broad": ["户外"]},
-    "出太阳": {"expanded": ["晴天", "阳光", "蓝天"], "broad": ["白云", "户外", "日照"]},
-    "太阳": {"expanded": ["晴天", "阳光", "蓝天"], "broad": ["白云", "户外", "日照"]},
-    "阳光": {"expanded": ["晴天", "蓝天", "白云"], "broad": ["户外", "日照"]},
-    "晴朗": {"expanded": ["晴天", "阳光", "蓝天"], "broad": ["白云", "户外"]},
-    "阴天": {"expanded": ["多云", "乌云"], "broad": ["灰色天空"]},
-    "大风": {"expanded": ["风大", "风吹"], "broad": ["户外", "飞扬"]},
-    "雨伞": {"expanded": ["下雨", "雨天"], "broad": ["防雨"]},
-    "rain": {"expanded": ["下雨", "雨天", "雨伞", "雨滴"], "broad": ["积水", "阴天"]},
-    "snow": {"expanded": ["下雪", "雪天", "雪地"], "broad": ["积雪"]},
-    "sunny": {"expanded": ["晴天", "阳光", "蓝天", "白云"], "broad": ["户外"]},
-    "sunshine": {"expanded": ["阳光", "晴天", "蓝天", "白云"], "broad": ["户外"]},
+_WEATHER_TERMS_TIERED: Dict[str, Any] = {
+    # Rain group — core evidence: 下雨/雨天/雨滴/雨中
+    #              context clues: 雨伞/雨衣/积水/湿地面/淋湿 (support)
+    #              weak context:  阴天/多云/潮湿 (broad)
+    #              negative:      晴天/阳光/干燥/沙地
+    "下雨": {
+        "expanded": ["雨天", "雨滴", "雨中"],
+        "support": ["雨伞", "雨衣", "积水", "湿地面", "淋湿"],
+        "broad": ["阴天", "多云", "潮湿"],
+        "negative": ["晴天", "阳光", "干燥", "沙地"],
+        "facets": ["weather"],
+    },
+    "下雨天": {
+        "expanded": ["下雨", "雨天", "雨滴", "雨中"],
+        "support": ["雨伞", "雨衣", "积水", "湿地面", "淋湿"],
+        "broad": ["阴天", "多云", "灰蒙蒙", "潮湿"],
+        "negative": ["晴天", "阳光", "沙地", "干燥"],
+        "facets": ["weather"],
+    },
+    "雨天": {
+        "expanded": ["下雨", "雨滴", "雨中"],
+        "support": ["雨伞", "雨衣", "积水", "湿地面", "淋湿"],
+        "broad": ["阴天", "多云", "潮湿"],
+        "negative": ["晴天", "阳光"],
+        "facets": ["weather"],
+    },
+    "下雪": {
+        "expanded": ["雪天", "雪地", "雪花", "积雪"],
+        "broad": ["寒冷", "冬天"],
+        "negative": ["晴天", "阳光", "海边", "夏天"],
+        "facets": ["weather"],
+    },
+    "雪天": {
+        "expanded": ["下雪", "雪地", "积雪", "雪花"],
+        "broad": ["寒冷", "冬天"],
+        "negative": ["晴天", "阳光", "海边", "夏天"],
+        "facets": ["weather"],
+    },
+    "晴天": {
+        "expanded": ["阳光", "蓝天", "白云"],
+        "broad": ["户外"],
+        "negative": ["阴天", "多云", "雨天", "雨伞", "积水"],
+        "facets": ["weather", "lighting"],
+    },
+    "出太阳": {
+        "expanded": ["晴天", "阳光", "蓝天"],
+        "broad": ["白云", "户外", "日照"],
+        "negative": ["阴天", "多云", "雨天"],
+        "facets": ["weather", "lighting"],
+    },
+    "太阳": {
+        "expanded": ["晴天", "阳光", "蓝天"],
+        "broad": ["白云", "户外", "日照"],
+        "negative": ["阴天", "多云"],
+        "facets": ["lighting"],
+    },
+    "阳光": {
+        "expanded": ["晴天", "蓝天", "白云"],
+        "broad": ["户外", "日照"],
+        "negative": ["阴天", "多云", "夜晚", "夜色"],
+        "facets": ["lighting", "weather"],
+    },
+    "晴朗": {
+        "expanded": ["晴天", "阳光", "蓝天"],
+        "broad": ["白云", "户外"],
+        "negative": ["阴天", "多云"],
+        "facets": ["weather"],
+    },
+    "阴天": {
+        "expanded": ["多云", "乌云"],
+        "broad": ["灰色天空", "灰蒙蒙"],
+        "negative": ["晴天", "阳光", "蓝天"],
+        "facets": ["weather"],
+    },
+    "大风": {
+        "expanded": ["风大", "风吹"],
+        "broad": ["户外", "飞扬"],
+        "facets": ["weather"],
+    },
+    "雨伞": {
+        "expanded": ["下雨", "雨天"],
+        "broad": ["防雨"],
+        "facets": ["weather", "object"],
+    },
+    "rain": {
+        "expanded": ["下雨", "雨天", "雨滴", "雨中"],
+        "support": ["雨伞", "雨衣", "积水", "湿地面", "淋湿"],
+        "broad": ["阴天", "多云", "潮湿", "灰蒙蒙"],
+        "negative": ["晴天", "阳光", "沙地"],
+        "facets": ["weather"],
+    },
+    "snow": {
+        "expanded": ["下雪", "雪天", "雪地", "积雪", "雪花"],
+        "broad": ["寒冷", "冬天"],
+        "negative": ["晴天", "阳光", "海边", "夏天"],
+        "facets": ["weather"],
+    },
+    "sunny": {
+        "expanded": ["晴天", "阳光", "蓝天", "白云"],
+        "broad": ["户外"],
+        "negative": ["阴天", "多云", "雨天"],
+        "facets": ["weather", "lighting"],
+    },
+    "sunshine": {
+        "expanded": ["阳光", "晴天", "蓝天", "白云"],
+        "broad": ["户外"],
+        "negative": ["阴天", "多云"],
+        "facets": ["lighting", "weather"],
+    },
 }
 
-_ANIMAL_TERMS_TIERED: dict[str, _TieredTerms] = {
-    "猫": {"expanded": ["小猫", "猫咪"], "broad": ["宠物", "动物"]},
-    "狗": {"expanded": ["小狗", "狗狗"], "broad": ["宠物", "动物"]},
-    "鸟": {"expanded": ["小鸟", "飞鸟", "禽鸟"], "broad": ["动物"]},
-    "动物": {"expanded": ["猫", "狗", "鸟", "马", "鹿"], "broad": ["宠物", "野生动物", "动物园"]},
-    "猫狗": {"expanded": ["猫", "狗"], "broad": ["宠物", "动物"]},
-    "宠物": {"expanded": ["猫", "狗"], "broad": ["动物"]},
-    "野生动物": {"expanded": ["动物", "野外"], "broad": ["自然", "户外"]},
-    "动物园": {"expanded": ["动物", "野生动物"], "broad": []},
-    "马": {"expanded": ["骏马", "骑马"], "broad": ["动物"]},
-    "鹿": {"expanded": ["梅花鹿", "野鹿"], "broad": ["动物"]},
-    "兔子": {"expanded": ["小兔"], "broad": ["宠物", "动物"]},
-    "鱼": {"expanded": ["水族"], "broad": ["海洋", "动物"]},
-    "蝴蝶": {"expanded": ["昆虫"], "broad": ["花园", "动物"]},
-    "animal": {"expanded": ["动物", "猫", "狗", "鸟"], "broad": ["宠物", "野生动物"]},
-    "cat": {"expanded": ["猫", "小猫"], "broad": ["宠物", "动物"]},
-    "dog": {"expanded": ["狗", "小狗"], "broad": ["宠物", "动物"]},
-    "bird": {"expanded": ["鸟", "小鸟", "飞鸟"], "broad": ["动物"]},
+_ANIMAL_TERMS_TIERED: Dict[str, Any] = {
+    "猫": {
+        "expanded": ["小猫", "猫咪"],
+        "broad": ["宠物", "动物"],
+        "negative": ["狗", "小狗", "狗狗", "兔子"],
+        "facets": ["object"],
+    },
+    "狗": {
+        "expanded": ["小狗", "狗狗"],
+        "broad": ["宠物", "动物"],
+        "negative": ["猫", "小猫", "猫咪"],
+        "facets": ["object"],
+    },
+    "鸟": {
+        "expanded": ["小鸟", "飞鸟", "禽鸟"],
+        "broad": ["动物"],
+        "facets": ["object"],
+    },
+    "动物": {
+        "expanded": ["猫", "狗", "鸟", "马", "鹿"],
+        "broad": ["宠物", "野生动物", "动物园"],
+        "facets": ["object"],
+    },
+    "猫狗": {
+        "expanded": ["猫", "狗"],
+        "broad": ["宠物", "动物"],
+        "facets": ["object"],
+    },
+    "宠物": {
+        "expanded": ["猫", "狗"],
+        "broad": ["动物"],
+        "facets": ["object"],
+    },
+    "野生动物": {
+        "expanded": ["动物", "野外"],
+        "broad": ["自然", "户外"],
+        "facets": ["object", "scene"],
+    },
+    "动物园": {
+        "expanded": ["动物", "野生动物"],
+        "broad": [],
+        "facets": ["scene", "object"],
+    },
+    "马": {
+        "expanded": ["骏马", "骑马"],
+        "broad": ["动物"],
+        "facets": ["object"],
+    },
+    "鹿": {
+        "expanded": ["梅花鹿", "野鹿"],
+        "broad": ["动物"],
+        "facets": ["object"],
+    },
+    "兔子": {
+        "expanded": ["小兔"],
+        "broad": ["宠物", "动物"],
+        "negative": ["猫", "狗"],
+        "facets": ["object"],
+    },
+    "鱼": {
+        "expanded": ["水族"],
+        "broad": ["海洋", "动物"],
+        "facets": ["object"],
+    },
+    "蝴蝶": {
+        "expanded": ["昆虫"],
+        "broad": ["花园", "动物"],
+        "facets": ["object"],
+    },
+    "animal": {
+        "expanded": ["动物", "猫", "狗", "鸟"],
+        "broad": ["宠物", "野生动物"],
+        "facets": ["object"],
+    },
+    "cat": {
+        "expanded": ["猫", "小猫"],
+        "broad": ["宠物", "动物"],
+        "negative": ["狗", "dog"],
+        "facets": ["object"],
+    },
+    "dog": {
+        "expanded": ["狗", "小狗"],
+        "broad": ["宠物", "动物"],
+        "negative": ["猫", "cat"],
+        "facets": ["object"],
+    },
+    "bird": {
+        "expanded": ["鸟", "小鸟", "飞鸟"],
+        "broad": ["动物"],
+        "facets": ["object"],
+    },
 }
 
-_PEOPLE_TERMS_TIERED: dict[str, _TieredTerms] = {
-    "孩子": {"expanded": ["小孩", "儿童", "玩耍"], "broad": ["童年", "幼儿"]},
-    "儿童": {"expanded": ["孩子", "小孩", "玩耍"], "broad": []},
-    "小孩": {"expanded": ["孩子", "儿童", "玩耍"], "broad": []},
-    "婴儿": {"expanded": ["宝宝", "小孩"], "broad": ["孩子"]},
-    "老人": {"expanded": ["长辈", "老年人"], "broad": []},
-    "全家福": {"expanded": ["家庭", "合影", "多人"], "broad": []},
-    "自拍": {"expanded": ["selfie", "单人"], "broad": []},
-    "合影": {"expanded": ["集体照", "合照", "多人"], "broad": []},
+_PEOPLE_TERMS_TIERED: Dict[str, Any] = {
+    "孩子": {
+        "expanded": ["小孩", "儿童", "玩耍"],
+        "broad": ["童年", "幼儿"],
+        "facets": ["people"],
+    },
+    "儿童": {
+        "expanded": ["孩子", "小孩", "玩耍"],
+        "broad": [],
+        "facets": ["people"],
+    },
+    "小孩": {
+        "expanded": ["孩子", "儿童", "玩耍"],
+        "broad": [],
+        "facets": ["people"],
+    },
+    "婴儿": {
+        "expanded": ["宝宝", "小孩"],
+        "broad": ["孩子"],
+        "facets": ["people"],
+    },
+    "老人": {
+        "expanded": ["长辈", "老年人"],
+        "broad": [],
+        "facets": ["people"],
+    },
+    "全家福": {
+        "expanded": ["家庭", "合影", "多人"],
+        "broad": [],
+        "facets": ["people"],
+    },
+    "自拍": {
+        "expanded": ["selfie", "单人"],
+        "broad": [],
+        "facets": ["people"],
+    },
+    "合影": {
+        "expanded": ["集体照", "合照", "多人"],
+        "broad": [],
+        "facets": ["people"],
+    },
 }
 
-_FOOD_TERMS_TIERED: dict[str, _TieredTerms] = {
-    "食物": {"expanded": ["美食", "饭菜", "料理"], "broad": ["餐厅"]},
-    "美食": {"expanded": ["食物", "料理", "饭菜"], "broad": []},
-    "餐厅": {"expanded": ["饭馆", "美食", "食物"], "broad": []},
-    "咖啡": {"expanded": ["coffee", "咖啡馆"], "broad": ["饮品"]},
-    "甜点": {"expanded": ["蛋糕", "甜食"], "broad": ["美食"]},
+_FOOD_TERMS_TIERED: Dict[str, Any] = {
+    "食物": {
+        "expanded": ["美食", "饭菜", "料理"],
+        "broad": ["餐厅"],
+        "facets": ["object"],
+    },
+    "美食": {
+        "expanded": ["食物", "料理", "饭菜"],
+        "broad": [],
+        "facets": ["object"],
+    },
+    "餐厅": {
+        "expanded": ["饭馆", "美食", "食物"],
+        "broad": [],
+        "facets": ["scene", "object"],
+    },
+    "咖啡": {
+        "expanded": ["coffee", "咖啡馆"],
+        "broad": ["饮品"],
+        "facets": ["object"],
+    },
+    "甜点": {
+        "expanded": ["蛋糕", "甜食"],
+        "broad": ["美食"],
+        "facets": ["object"],
+    },
 }
 
-_TRAVEL_TERMS_TIERED: dict[str, _TieredTerms] = {
-    "旅行": {"expanded": ["旅游", "出行"], "broad": ["风景", "景点"]},
-    "旅游": {"expanded": ["旅行", "出行"], "broad": ["风景", "景点"]},
-    "海边": {"expanded": ["海滩", "海岸", "海浪", "大海", "沙滩"], "broad": []},
-    "沙滩": {"expanded": ["海边", "海滩", "海浪"], "broad": ["大海"]},
-    "大海": {"expanded": ["海洋", "海边", "海浪"], "broad": ["海景"]},
-    "海洋": {"expanded": ["大海", "海边", "海浪"], "broad": []},
-    "城市": {"expanded": ["街道", "建筑", "都市"], "broad": ["夜景"]},
-    "建筑": {"expanded": ["楼房", "高楼", "城市"], "broad": ["结构"]},
-    "风景": {"expanded": ["自然", "景色"], "broad": ["户外"]},
-    "日落": {"expanded": ["黄昏", "夕阳", "晚霞"], "broad": ["天空"]},
-    "日出": {"expanded": ["清晨", "朝霞", "晨光"], "broad": ["天空"]},
-    "夜景": {"expanded": ["夜晚", "灯光", "夜色"], "broad": ["城市"]},
-    "sunset": {"expanded": ["日落", "黄昏", "夕阳", "晚霞"], "broad": []},
-    "sunrise": {"expanded": ["日出", "清晨", "朝霞"], "broad": []},
+_TRAVEL_TERMS_TIERED: Dict[str, Any] = {
+    "旅行": {
+        "expanded": ["旅游", "出行"],
+        "broad": ["风景", "景点"],
+        "facets": ["activity", "scene"],
+    },
+    "旅游": {
+        "expanded": ["旅行", "出行"],
+        "broad": ["风景", "景点"],
+        "facets": ["activity", "scene"],
+    },
+    "海边": {
+        "expanded": ["海滩", "海岸", "海浪", "大海", "沙滩"],
+        "broad": [],
+        "negative": ["室内", "山地"],
+        "facets": ["scene", "location"],
+    },
+    "沙滩": {
+        "expanded": ["海边", "海滩", "海浪"],
+        "broad": ["大海"],
+        "facets": ["scene", "location"],
+    },
+    "大海": {
+        "expanded": ["海洋", "海边", "海浪"],
+        "broad": ["海景"],
+        "facets": ["scene", "location"],
+    },
+    "海洋": {
+        "expanded": ["大海", "海边", "海浪"],
+        "broad": [],
+        "facets": ["scene"],
+    },
+    "城市": {
+        "expanded": ["街道", "建筑", "都市"],
+        "support": ["地标", "广场", "商业区"],
+        "broad": ["行人"],
+        "facets": ["scene", "location"],
+    },
+    "建筑": {
+        "expanded": ["楼房", "高楼", "城市"],
+        "broad": ["结构"],
+        "facets": ["scene", "object"],
+    },
+    "风景": {
+        "expanded": ["自然", "景色"],
+        "broad": ["户外"],
+        "facets": ["scene"],
+    },
+    # Time / lighting terms — core facets: time + lighting
+    "日落": {
+        "expanded": ["黄昏", "夕阳", "晚霞"],
+        "support": ["橙色天空", "暖色调"],
+        "broad": ["天空"],
+        "negative": ["夜晚", "夜色", "黑暗"],
+        "facets": ["time", "lighting"],
+    },
+    "日出": {
+        "expanded": ["清晨", "朝霞", "晨光"],
+        "support": ["橙色天空", "暖色调"],
+        "broad": ["天空"],
+        "negative": ["夜晚", "夜色", "黑暗"],
+        "facets": ["time", "lighting"],
+    },
+    "夜景": {
+        "expanded": ["夜晚", "夜色"],
+        "support": ["灯光", "霓虹", "路灯", "暗光", "长曝光"],
+        "broad": ["城市", "建筑", "街道", "地标"],
+        "negative": ["白天", "日间", "阳光", "晴天"],
+        "facets": ["time", "lighting"],
+    },
+    "sunset": {
+        "expanded": ["日落", "黄昏", "夕阳", "晚霞"],
+        "broad": [],
+        "negative": ["夜晚", "黑暗"],
+        "facets": ["time", "lighting"],
+    },
+    "sunrise": {
+        "expanded": ["日出", "清晨", "朝霞"],
+        "broad": [],
+        "negative": ["夜晚", "黑暗"],
+        "facets": ["time", "lighting"],
+    },
 }
 
-_INDOOR_TERMS_TIERED: dict[str, _TieredTerms] = {
-    "室内": {"expanded": ["家", "家庭", "客厅", "卧室"], "broad": []},
-    "家": {"expanded": ["室内", "家庭", "生活"], "broad": []},
-    "客厅": {"expanded": ["沙发", "室内"], "broad": ["家"]},
-    "卧室": {"expanded": ["床", "室内"], "broad": ["家"]},
-    "厨房": {"expanded": ["烹饪", "室内"], "broad": ["家"]},
-    "图书馆": {"expanded": ["书架", "阅读"], "broad": ["室内"]},
-    "博物馆": {"expanded": ["展览", "展品"], "broad": ["室内"]},
+_INDOOR_TERMS_TIERED: Dict[str, Any] = {
+    "室内": {
+        "expanded": ["家", "家庭", "客厅", "卧室"],
+        "broad": [],
+        "negative": ["户外", "自然", "海边"],
+        "facets": ["scene"],
+    },
+    "家": {
+        "expanded": ["室内", "家庭", "生活"],
+        "broad": [],
+        "facets": ["scene"],
+    },
+    "客厅": {
+        "expanded": ["沙发", "室内"],
+        "broad": ["家"],
+        "facets": ["scene"],
+    },
+    "卧室": {
+        "expanded": ["床", "室内"],
+        "broad": ["家"],
+        "facets": ["scene"],
+    },
+    "厨房": {
+        "expanded": ["烹饪", "室内"],
+        "broad": ["家"],
+        "facets": ["scene"],
+    },
+    "图书馆": {
+        "expanded": ["书架", "阅读"],
+        "broad": ["室内"],
+        "facets": ["scene"],
+    },
+    "博物馆": {
+        "expanded": ["展览", "展品"],
+        "broad": ["室内"],
+        "facets": ["scene"],
+    },
 }
 
 _OUTDOOR_KEYS = set(_OUTDOOR_TERMS_TIERED.keys())
@@ -130,16 +518,32 @@ _FOOD_KEYS = set(_FOOD_TERMS_TIERED.keys())
 _TRAVEL_KEYS = set(_TRAVEL_TERMS_TIERED.keys())
 _INDOOR_KEYS = set(_INDOOR_TERMS_TIERED.keys())
 
-_ALL_TIERED_DICTS: tuple = (
-    _OUTDOOR_TERMS_TIERED,
-    _WEATHER_TERMS_TIERED,
-    _ANIMAL_TERMS_TIERED,
-    _PEOPLE_TERMS_TIERED,
-    _FOOD_TERMS_TIERED,
-    _TRAVEL_TERMS_TIERED,
-    _INDOOR_TERMS_TIERED,
-)
+# (primary_facet, dict) — used to derive intent_facets in understand_query
+_ALL_TIERED_DICTS_WITH_FACETS: list = [
+    ("activity", _OUTDOOR_TERMS_TIERED),
+    ("weather", _WEATHER_TERMS_TIERED),
+    ("object", _ANIMAL_TERMS_TIERED),
+    ("people", _PEOPLE_TERMS_TIERED),
+    ("object", _FOOD_TERMS_TIERED),
+    ("scene", _TRAVEL_TERMS_TIERED),
+    ("scene", _INDOOR_TERMS_TIERED),
+]
 
+# Backward-compat tuple (order preserved)
+_ALL_TIERED_DICTS: tuple = tuple(d for _, d in _ALL_TIERED_DICTS_WITH_FACETS)
+
+
+# ── Penalize tags for semantic_tag_boost (per weather sub-type) ──────────────
+
+_PENALIZE_TAGS_RAIN: list[str] = [
+    "室内", "台灯", "动物特写", "月亮", "花朵", "沙地", "晴天", "蓝天", "阳光", "干燥",
+]
+_PENALIZE_TAGS_SNOW: list[str] = [
+    "室内", "花朵", "沙地", "晴天", "蓝天", "阳光", "海边", "夏天",
+]
+_PENALIZE_TAGS_SUNNY: list[str] = [
+    "室内", "阴天", "多云", "雨天", "雨伞", "积水",
+]
 
 # ── Intent classification ─────────────────────────────────────────────────────
 
@@ -240,31 +644,103 @@ def _infer_filters(query: str, intent: str) -> dict:
 class SearchQueryPlan:
     """Structured representation of a parsed search query.
 
-    exact_terms     Words taken directly from the user's query.
-    expanded_terms  Close synonyms / direct variants (scored × 0.7).
-    broad_terms     Generic category terms (scored × 0.3).
+    Five-tier term model
+    --------------------
+    must_terms / exact_terms
+        Words from the user's original query.  Strongest evidence (× 1.0).
 
-    ``all_terms`` is a convenience property returning the union of all three
-    tiers — use it for SQL ILIKE filter construction.
+    strong_terms / expanded_terms
+        Direct synonyms / near-equivalent terms (× 0.7).
+        Can independently trigger keyword recall.
+
+    support_terms
+        Context clues that need combining with other evidence (× 0.5).
+        NOT sole recall triggers — only boost already-recalled photos.
+
+    weak_terms / broad_terms
+        Generic category terms (× 0.3).  Boost-only, no recall.
+
+    negative_terms
+        Conflicting/contradictory terms.  Photos matching these are penalised.
+
+    intent_facets
+        dict[facet_name, list[terms]] capturing what kind of evidence the
+        query requires (e.g. {"time": ["夜晚"], "lighting": ["暗光"]}).
+
+    query_constraints
+        Default display/evidence requirements for this query.
+
+    Backward-compatible aliases:
+        exact_terms    = must_terms
+        expanded_terms = strong_terms
+        broad_terms    = weak_terms
     """
 
     original_query: str
     normalized_query: str
-    exact_terms: list[str] = field(default_factory=list)
-    expanded_terms: list[str] = field(default_factory=list)
-    broad_terms: list[str] = field(default_factory=list)
+    # ── backward-compatible fields (kept as primary storage) ─────────────────
+    exact_terms: list[str] = field(default_factory=list)     # == must_terms
+    expanded_terms: list[str] = field(default_factory=list)  # == strong_terms
+    broad_terms: list[str] = field(default_factory=list)     # == weak_terms
+    # ── new tiers ─────────────────────────────────────────────────────────────
+    support_terms: list[str] = field(default_factory=list)
+    negative_terms: list[str] = field(default_factory=list)
+    # ── facet / constraint metadata ───────────────────────────────────────────
+    intent_facets: dict = field(default_factory=dict)
+    query_constraints: dict = field(default_factory=dict)
+    # ── existing metadata ─────────────────────────────────────────────────────
     semantic_tags: list[str] = field(default_factory=list)
     intent: str = "semantic_photo_search"
     search_mode: Literal["keyword", "vector", "hybrid"] = "hybrid"
     filters: dict = field(default_factory=dict)
     recommended_profile: str = "default_semantic"
+    penalize_tags: list[str] = field(default_factory=list)
+
+    # ── convenience aliases ───────────────────────────────────────────────────
+
+    @property
+    def must_terms(self) -> list[str]:
+        """Alias for exact_terms."""
+        return self.exact_terms
+
+    @property
+    def strong_terms(self) -> list[str]:
+        """Alias for expanded_terms."""
+        return self.expanded_terms
+
+    @property
+    def weak_terms(self) -> list[str]:
+        """Alias for broad_terms."""
+        return self.broad_terms
 
     @property
     def all_terms(self) -> list[str]:
-        """Union of all three tiers (deduplicated, order-preserving)."""
+        """Union of all positive tiers (deduplicated, order-preserving)."""
         seen: set[str] = set()
         result: list[str] = []
-        for term in self.exact_terms + self.expanded_terms + self.broad_terms:
+        for term in (
+            self.exact_terms
+            + self.expanded_terms
+            + self.support_terms
+            + self.broad_terms
+        ):
+            tl = term.lower()
+            if tl not in seen:
+                seen.add(tl)
+                result.append(term)
+        return result
+
+    @property
+    def recall_terms(self) -> list[str]:
+        """Terms that MAY trigger keyword recall: exact + expanded (strong) only.
+
+        support_terms, broad_terms and negative_terms are excluded from recall.
+        Support terms may only boost scores of photos already recalled by
+        stronger evidence (exact or expanded).
+        """
+        seen: set[str] = set()
+        result: list[str] = []
+        for term in self.exact_terms + self.expanded_terms:
             tl = term.lower()
             if tl not in seen:
                 seen.add(tl)
@@ -294,26 +770,77 @@ def understand_query(
     exact_terms: list[str] = [w for w in query.split() if w]
     exact_lower: set[str] = {t.lower() for t in exact_terms}
 
-    # Expanded / broad terms from tiered dicts
-    expanded_set: set[str] = set()
-    broad_set: set[str] = set()
+    # Collect terms from all tiers of matched tiered-dict entries
+    expanded_set: set[str] = set()   # strong (= expanded)
+    support_set: set[str] = set()    # context clues (new tier)
+    broad_set: set[str] = set()      # weak (= broad)
+    negative_set: set[str] = set()   # conflict terms (new tier)
 
-    for tiered_dict in _ALL_TIERED_DICTS:
+    # intent_facets: facet → list of associated terms from the query
+    facet_terms: dict[str, list[str]] = {}  # facet → terms
+
+    for primary_facet, tiered_dict in _ALL_TIERED_DICTS_WITH_FACETS:
         for key, tiers in tiered_dict.items():
-            if key in q_lower:
-                for t in tiers["expanded"]:
-                    if t.lower() not in exact_lower:
-                        expanded_set.add(t)
-                for t in tiers["broad"]:
-                    tl = t.lower()
-                    if tl not in exact_lower and t not in expanded_set:
-                        broad_set.add(t)
+            if key not in q_lower:
+                continue
+
+            # The entry's explicit facets override the dict-level primary_facet
+            entry_facets: list[str] = tiers.get("facets", [primary_facet])
+
+            for fct in entry_facets:
+                if fct not in facet_terms:
+                    facet_terms[fct] = []
+                if key not in facet_terms[fct]:
+                    facet_terms[fct].append(key)
+
+            for t in tiers.get("expanded", []):
+                if t.lower() not in exact_lower:
+                    expanded_set.add(t)
+                    for fct in entry_facets:
+                        facet_terms.setdefault(fct, [])
+            for t in tiers.get("support", []):
+                tl = t.lower()
+                if tl not in exact_lower and t not in expanded_set:
+                    support_set.add(t)
+            for t in tiers.get("broad", []):
+                tl = t.lower()
+                if tl not in exact_lower and t not in expanded_set and t not in support_set:
+                    broad_set.add(t)
+            for t in tiers.get("negative", []):
+                tl = t.lower()
+                if tl not in exact_lower:
+                    negative_set.add(t)
 
     expanded_terms = sorted(t for t in expanded_set)
-    broad_terms = sorted(t for t in broad_set if t not in expanded_set)
+    support_terms = sorted(t for t in support_set if t not in expanded_set)
+    broad_terms = sorted(t for t in broad_set if t not in expanded_set and t not in support_set)
+    negative_terms = sorted(t for t in negative_set)
+
+    # intent_facets: deduplicate term lists per facet
+    intent_facets: dict[str, list[str]] = {}
+    for fct, terms in facet_terms.items():
+        seen_f: set[str] = set()
+        deduped_f: list[str] = []
+        for t in terms:
+            if t.lower() not in seen_f:
+                seen_f.add(t.lower())
+                deduped_f.append(t)
+        intent_facets[fct] = deduped_f
+
+    # Core facets: derived from must (exact) + strong (expanded) term matches
+    core_facets: list[str] = []
+    if intent_facets:
+        # facets from entries whose key appears in exact_terms are "core"
+        for primary_facet, tiered_dict in _ALL_TIERED_DICTS_WITH_FACETS:
+            for key, tiers in tiered_dict.items():
+                if key in q_lower:
+                    entry_facets_core = tiers.get("facets", [primary_facet])
+                    for fct in entry_facets_core:
+                        if fct not in core_facets:
+                            core_facets.append(fct)
 
     # Normalised query = all terms joined (for vector embedding)
-    all_for_norm: list[str] = exact_terms + expanded_terms + broad_terms
+    all_for_norm: list[str] = exact_terms + expanded_terms + support_terms + broad_terms
     seen_n: set[str] = set()
     deduped: list[str] = []
     for t in all_for_norm:
@@ -332,16 +859,44 @@ def understand_query(
     }.get(intent, [])
 
     filters = _infer_filters(query, intent)
+    penalize_tags = _build_penalize_tags(intent, filters)
+
+    # query_constraints: per-query evidence requirements (can be project-overridden later)
+    query_constraints: dict = {
+        "requires_visual_evidence": True,
+        "allow_weak_only_match": False,
+        "min_evidence_level": "C",
+        "query_core_facets": core_facets,
+    }
 
     return SearchQueryPlan(
         original_query=query,
         normalized_query=normalized_query,
         exact_terms=exact_terms,
         expanded_terms=expanded_terms,
+        support_terms=support_terms,
         broad_terms=broad_terms,
+        negative_terms=negative_terms,
+        intent_facets=intent_facets,
+        query_constraints=query_constraints,
         semantic_tags=semantic_tags,
         intent=intent,
         search_mode=search_mode,
         filters=filters,
         recommended_profile=profile,
+        penalize_tags=penalize_tags,
     )
+
+
+def _build_penalize_tags(intent: str, filters: dict) -> list[str]:
+    """Return intent-specific tags to penalise in semantic_tag_boost."""
+    if intent == "weather_search":
+        weather = filters.get("weather")
+        if weather == "rain":
+            return list(_PENALIZE_TAGS_RAIN)
+        if weather == "snow":
+            return list(_PENALIZE_TAGS_SNOW)
+        # sunny / generic weather
+        if weather in ("sunny",):
+            return list(_PENALIZE_TAGS_SUNNY)
+    return []

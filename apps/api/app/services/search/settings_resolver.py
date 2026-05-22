@@ -47,7 +47,7 @@ class SearchSettingsResolver:
             ocr_vector_field_weights=dict(DEFAULT_OCR_VECTOR_FIELD_WEIGHTS),
             enable_query_understanding=True,
             enable_structured_filters=False,
-            enable_semantic_tag_boost=False,
+            enable_semantic_tag_boost=True,  # P3: enabled by default
         )
 
     # ── Main resolver ─────────────────────────────────────────────────────────
@@ -63,6 +63,8 @@ class SearchSettingsResolver:
             .first()
         )
         if row is not None:
+            # Read optional search_quality_settings JSONB overrides
+            _q: dict = row.search_quality_settings or {}
             return EffectiveSearchSettings(
                 default_mode=_safe_mode(row.default_mode),
                 keyword_top_k=row.keyword_top_k,
@@ -83,6 +85,13 @@ class SearchSettingsResolver:
                 enable_query_understanding=row.enable_query_understanding,
                 enable_structured_filters=row.enable_structured_filters,
                 enable_semantic_tag_boost=row.enable_semantic_tag_boost,
+                # Evidence quality overrides from JSONB (fall back to dataclass defaults)
+                vector_strict_score=float(_q.get("vector_strict_score", 0.42)),
+                min_display_evidence_level=str(_q.get("min_display_evidence_level", "C")),
+                enable_evidence_filter=bool(_q.get("enable_evidence_filter", True)),
+                enable_negative_penalty=bool(_q.get("enable_negative_penalty", True)),
+                evidence_weight=float(_q.get("evidence_weight", 0.02)),
+                negative_term_penalty=float(_q.get("negative_term_penalty", 0.01)),
             )
 
         # 2. project_embedding_settings (partial fallback — vector weights only)

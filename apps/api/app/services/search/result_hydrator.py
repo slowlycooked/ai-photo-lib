@@ -10,6 +10,15 @@ from ...models.ai import PhotoAIAnalysis
 from ...models.photo import Photo
 from .types import SearchCandidate, SearchMode
 
+# Evidence level → human-readable rank reason
+_RANK_REASON: dict[str, str] = {
+    "A": "exact query term matched",
+    "B": "strong expanded term matched",
+    "C": "strong vector semantic match",
+    "D": "only weak/broad term matched, not primary evidence",
+    "E": "only weak vector signal, filtered",
+}
+
 
 def build_result_items(
     db: Session,
@@ -77,6 +86,8 @@ def build_result_items(
             "caption": ai.caption,
             "matched_tags": candidate.matched_tags,
             "score": round(float(score), 6),
+            # P2: evidence level always present (frontend uses for fold/filter UI)
+            "evidence_level": candidate.evidence_level or "E",
         }
 
         if debug and should_include_search_debug_payload():
@@ -84,8 +95,18 @@ def build_result_items(
             item["vector_score"] = round(float(candidate.vector_score), 6)
             item["rrf_score"] = round(float(candidate.rrf_score), 6)
             item["match_source"] = list(candidate.match_source)
+            item["should_display"] = (candidate.evidence_level or "E") not in ("D", "E", "F")
+            item["rank_reason"] = _RANK_REASON.get(candidate.evidence_level or "E", "unknown")
+            # Five-tier term breakdown
+            if candidate.term_level_hits:
+                item["term_level_hits"] = {
+                    k: list(v) for k, v in candidate.term_level_hits.items() if v
+                }
             if candidate.field_scores:
                 item["field_scores"] = candidate.field_scores
+            # Evidence scoring breakdown
+            if candidate.score_breakdown:
+                item["score_breakdown"] = candidate.score_breakdown
             # Per-result explain payload
             explain: dict = {}
             if candidate.keyword_explain:

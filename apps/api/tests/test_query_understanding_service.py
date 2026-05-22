@@ -77,3 +77,62 @@ class TestUnderstandQuery:
     def test_expanded_terms_are_list_of_strings(self):
         plan = understand_query("travel adventure")
         assert all(isinstance(t, str) for t in plan.expanded_terms)
+
+    # ── P1: recall_terms excludes weak/broad terms ────────────────────────────
+
+    def test_recall_terms_excludes_broad(self):
+        """broad_terms must NOT appear in recall_terms."""
+        plan = understand_query("下雨天")
+        recall = set(plan.recall_terms)
+        for broad in plan.broad_terms:
+            assert broad not in recall, f"broad term {broad!r} leaked into recall_terms"
+
+    def test_recall_terms_contains_exact_and_expanded(self):
+        """recall_terms should contain exact and expanded (strong) terms only."""
+        plan = understand_query("下雨天")
+        recall = set(plan.recall_terms)
+        # exact terms must be in recall
+        for t in plan.exact_terms:
+            assert t in recall
+        # expanded (strong) terms must be in recall
+        for t in plan.expanded_terms:
+            assert t in recall
+
+    def test_weather_rain_strong_terms(self):
+        """积水/湿地面/雨衣 should be strong (expanded), not broad."""
+        plan = understand_query("下雨天")
+        expanded_lower = {t.lower() for t in plan.expanded_terms}
+        broad_lower = {t.lower() for t in plan.broad_terms}
+        # These were previously in broad — now must be in expanded
+        for strong in ("积水", "湿地面", "雨衣", "淋湿", "雨中"):
+            assert strong in expanded_lower, f"{strong!r} should be in expanded_terms"
+            assert strong not in broad_lower, f"{strong!r} should not be in broad_terms"
+
+    def test_weather_rain_weak_terms(self):
+        """阴天/多云/灰蒙蒙/潮湿 should be weak (broad), not strong."""
+        plan = understand_query("下雨天")
+        broad_lower = {t.lower() for t in plan.broad_terms}
+        expanded_lower = {t.lower() for t in plan.expanded_terms}
+        for weak in ("阴天", "多云", "灰蒙蒙", "潮湿"):
+            assert weak in broad_lower, f"{weak!r} should be in broad_terms"
+            assert weak not in expanded_lower, f"{weak!r} should not be in expanded_terms"
+
+    def test_rain_penalize_tags_populated(self):
+        """下雨天 should produce non-empty penalize_tags."""
+        plan = understand_query("下雨天")
+        assert len(plan.penalize_tags) > 0
+        # 室内 should definitely be penalized for rain search
+        assert "室内" in plan.penalize_tags
+
+    def test_no_penalize_tags_for_generic_query(self):
+        """A generic non-weather query should have empty penalize_tags."""
+        plan = understand_query("beautiful landscape")
+        assert plan.penalize_tags == []
+
+    def test_recall_terms_is_subset_of_all_terms(self):
+        """recall_terms ⊆ all_terms always."""
+        for query in ("下雨天", "爬山", "cat", "日落海边", "美食"):
+            plan = understand_query(query)
+            all_set = set(plan.all_terms)
+            for t in plan.recall_terms:
+                assert t in all_set, f"{t!r} in recall_terms but not in all_terms for query {query!r}"
