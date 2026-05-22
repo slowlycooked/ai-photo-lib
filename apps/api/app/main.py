@@ -19,7 +19,7 @@ from .routers import (
     ai,
     search,
     tags,
-    settings,
+    settings as settings_router,
     projects,
     folders,
     project_scan,
@@ -119,7 +119,7 @@ app.include_router(scan.router)
 app.include_router(ai.router)
 app.include_router(search.router)
 app.include_router(tags.router)
-app.include_router(settings.router)
+app.include_router(settings_router.router)
 # ── project-scoped routers (Phase 1 split) ───────────────────────────────────
 app.include_router(project_photos.router)
 app.include_router(project_scan.router)

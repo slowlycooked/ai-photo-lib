@@ -156,6 +156,10 @@ function EmbeddingSettingsSection({ projectId }: { projectId: number }) {
       input_prefix_query: settings.input_prefix_query,
       input_prefix_document: settings.input_prefix_document,
       enabled: settings.enabled,
+      search_content_vector_weight: settings.search_content_vector_weight,
+      search_tag_vector_weight: settings.search_tag_vector_weight,
+      search_caption_vector_weight: settings.search_caption_vector_weight,
+      search_ocr_vector_weight: settings.search_ocr_vector_weight,
     });
   }, [settings]);
 
@@ -337,6 +341,84 @@ function EmbeddingSettingsSection({ projectId }: { projectId: number }) {
             <RefreshCw className="w-3 h-3" /> 强制全量重建
           </button>
         </div>
+      </div>
+
+      {/* Vector search weights */}
+      <div className="border-t border-hairline pt-3 space-y-3">
+        <div>
+          <h3 className="text-body-sm font-semibold text-ink">语义检索权重</h3>
+          <p className="text-caption-sm text-mute mt-0.5">
+            控制向量搜索时不同字段的贡献比例，系统会按总和自动归一化。默认推荐：综合内容 0.50，标签 0.25，描述 0.20，OCR 0.05。
+          </p>
+        </div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <div>
+            <Label>综合内容</Label>
+            <input
+              type="number"
+              step="0.01"
+              min="0"
+              className="input-base w-full"
+              value={form.search_content_vector_weight ?? 0.5}
+              onChange={(e) =>
+                setForm((f) => ({ ...f, search_content_vector_weight: Number(e.target.value) }))
+              }
+            />
+          </div>
+          <div>
+            <Label>标签</Label>
+            <input
+              type="number"
+              step="0.01"
+              min="0"
+              className="input-base w-full"
+              value={form.search_tag_vector_weight ?? 0.25}
+              onChange={(e) =>
+                setForm((f) => ({ ...f, search_tag_vector_weight: Number(e.target.value) }))
+              }
+            />
+          </div>
+          <div>
+            <Label>描述</Label>
+            <input
+              type="number"
+              step="0.01"
+              min="0"
+              className="input-base w-full"
+              value={form.search_caption_vector_weight ?? 0.2}
+              onChange={(e) =>
+                setForm((f) => ({ ...f, search_caption_vector_weight: Number(e.target.value) }))
+              }
+            />
+          </div>
+          <div>
+            <Label>OCR 文本</Label>
+            <input
+              type="number"
+              step="0.01"
+              min="0"
+              className="input-base w-full"
+              value={form.search_ocr_vector_weight ?? 0.05}
+              onChange={(e) =>
+                setForm((f) => ({ ...f, search_ocr_vector_weight: Number(e.target.value) }))
+              }
+            />
+          </div>
+        </div>
+        <p className="text-caption-sm text-mute">
+          提示：搜索"猫"容易召回无关结果时，可适当提高标签权重；搜索发票、订单号、门牌号时，可提高 OCR 权重。
+        </p>
+        <button
+          onClick={() => saveMut.mutate(form)}
+          disabled={saveMut.isPending}
+          className="btn-primary flex items-center gap-1.5 text-sm"
+        >
+          {saveMut.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+          保存权重
+        </button>
+        {rebuildMsg && (
+          <p className="text-body-sm text-green-700">{rebuildMsg}</p>
+        )}
       </div>
     </SettingsCard>
   );

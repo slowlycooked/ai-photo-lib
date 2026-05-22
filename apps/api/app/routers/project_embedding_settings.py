@@ -47,6 +47,10 @@ class ProjectEmbeddingSettingsResponse(BaseModel):
     input_prefix_query: Optional[str]
     input_prefix_document: Optional[str]
     enabled: bool
+    search_content_vector_weight: float
+    search_tag_vector_weight: float
+    search_caption_vector_weight: float
+    search_ocr_vector_weight: float
 
     class Config:
         from_attributes = True
@@ -63,6 +67,10 @@ class ProjectEmbeddingSettingsUpdate(BaseModel):
     input_prefix_query: Optional[str] = None
     input_prefix_document: Optional[str] = None
     enabled: Optional[bool] = None
+    search_content_vector_weight: Optional[float] = None
+    search_tag_vector_weight: Optional[float] = None
+    search_caption_vector_weight: Optional[float] = None
+    search_ocr_vector_weight: Optional[float] = None
 
 
 class EmbeddingTestRequest(BaseModel):

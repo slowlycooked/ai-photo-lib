@@ -254,7 +254,6 @@ export interface AppSettings {
   openai_base_url: string;
   openai_model: string;
   openai_vision_model: string;
-  ai_worker_concurrency: number;
   ai_max_retries: number;
 }
 
@@ -381,6 +380,10 @@ export interface ProjectEmbeddingSettings {
   input_prefix_query: string;
   input_prefix_document: string;
   enabled: boolean;
+  search_content_vector_weight: number;
+  search_tag_vector_weight: number;
+  search_caption_vector_weight: number;
+  search_ocr_vector_weight: number;
   created_at: string;
   updated_at: string;
 }
@@ -396,6 +399,10 @@ export interface ProjectEmbeddingSettingsUpdate {
   input_prefix_query?: string;
   input_prefix_document?: string;
   enabled?: boolean;
+  search_content_vector_weight?: number;
+  search_tag_vector_weight?: number;
+  search_caption_vector_weight?: number;
+  search_ocr_vector_weight?: number;
 }
 
 export interface EmbeddingTestRequest {

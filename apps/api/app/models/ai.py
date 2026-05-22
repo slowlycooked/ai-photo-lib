@@ -116,6 +116,18 @@ class ProjectEmbeddingSettings(Base):
     input_prefix_query: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     input_prefix_document: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     enabled: Mapped[bool] = mapped_column(Boolean, server_default="true", nullable=False)
+    search_content_vector_weight: Mapped[float] = mapped_column(
+        Float, server_default="0.5", nullable=False
+    )
+    search_tag_vector_weight: Mapped[float] = mapped_column(
+        Float, server_default="0.25", nullable=False
+    )
+    search_caption_vector_weight: Mapped[float] = mapped_column(
+        Float, server_default="0.2", nullable=False
+    )
+    search_ocr_vector_weight: Mapped[float] = mapped_column(
+        Float, server_default="0.05", nullable=False
+    )
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP, server_default=func.now(), nullable=False
     )

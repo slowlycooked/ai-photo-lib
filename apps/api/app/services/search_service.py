@@ -41,12 +41,6 @@ _WEIGHTS = {
 _MAX_PER_TERM = sum(_WEIGHTS.values())
 _DB_EMBEDDING_DIMENSION = DB_EMBEDDING_DIMENSION
 
-# Default vector field weights: content (semantic composite) gets the highest weight
-_DEFAULT_CONTENT_WEIGHT = 0.50
-_DEFAULT_TAG_WEIGHT = 0.25
-_DEFAULT_CAPTION_WEIGHT = 0.20
-_DEFAULT_OCR_WEIGHT = 0.05
-
 # OCR-heavy query overrides
 _OCR_CONTENT_WEIGHT = 0.35
 _OCR_TAG_WEIGHT = 0.15
@@ -212,7 +206,21 @@ def _is_ocr_like_query(query: str) -> bool:
     return has_order_token or digit_count >= 4 or ascii_count >= max(6, len(query) // 2)
 
 
-def _vector_field_weights(query: str) -> dict[str, float]:
+def _normalise_weights(weights: dict[str, float]) -> dict[str, float]:
+    cleaned = {k: max(0.0, float(v or 0.0)) for k, v in weights.items()}
+    total = sum(cleaned.values())
+    if total <= 0:
+        # Hard fallback to safe defaults if all weights are zero
+        return {
+            "content_embedding": 0.50,
+            "tag_embedding": 0.25,
+            "caption_embedding": 0.20,
+            "ocr_embedding": 0.05,
+        }
+    return {k: v / total for k, v in cleaned.items()}
+
+
+def _vector_field_weights(query: str, configured_weights: dict[str, float]) -> dict[str, float]:
     """Return per-field vector weights for a query.
 
     content_embedding gets the highest weight by default because it
@@ -227,12 +235,7 @@ def _vector_field_weights(query: str) -> dict[str, float]:
             "ocr_embedding": _OCR_OCR_WEIGHT,
         }
 
-    return {
-        "content_embedding": _DEFAULT_CONTENT_WEIGHT,
-        "tag_embedding": _DEFAULT_TAG_WEIGHT,
-        "caption_embedding": _DEFAULT_CAPTION_WEIGHT,
-        "ocr_embedding": _DEFAULT_OCR_WEIGHT,
-    }
+    return _normalise_weights(configured_weights)
 
 
 def _vector_field_search(
@@ -308,6 +311,7 @@ def _vector_search(
         api_key = settings.embedding_api_key or settings.openai_api_key
         embedding_model = settings.embedding_model or settings.openai_model
         timeout_seconds = settings.embedding_timeout_seconds
+        embed_cfg = {}
 
     # Use the semantically expanded/normalised query for embedding
     embed_input = normalized_query if normalized_query.strip() else query
@@ -332,7 +336,13 @@ def _vector_search(
         )
 
     vector_literal = _query_vector_literal(query_embedding)
-    field_weights = _vector_field_weights(query)
+    search_field_weights = embed_cfg.get("search_field_weights") or {
+        "content_embedding": settings.search_content_vector_weight,
+        "tag_embedding": settings.search_tag_vector_weight,
+        "caption_embedding": settings.search_caption_vector_weight,
+        "ocr_embedding": settings.search_ocr_vector_weight,
+    }
+    field_weights = _vector_field_weights(query, search_field_weights)
 
     content_scores = _vector_field_search(
         db,

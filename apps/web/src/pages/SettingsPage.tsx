@@ -743,7 +743,6 @@ export function SettingsPage() {
               </SettingsCard>
 
               <SettingsCard title="Worker 配置">
-                <SettingRow label="并发数" value={data.ai_worker_concurrency} />
                 <SettingRow label="最大重试次数" value={data.ai_max_retries} />
               </SettingsCard>
             </div>

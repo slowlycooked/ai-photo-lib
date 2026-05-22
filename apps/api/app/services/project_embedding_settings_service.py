@@ -76,6 +76,10 @@ def get_or_create_project_embedding_settings(
         input_prefix_query=None,
         input_prefix_document=None,
         enabled=True,
+        search_content_vector_weight=settings.search_content_vector_weight,
+        search_tag_vector_weight=settings.search_tag_vector_weight,
+        search_caption_vector_weight=settings.search_caption_vector_weight,
+        search_ocr_vector_weight=settings.search_ocr_vector_weight,
     )
     db.add(row)
     db.commit()
@@ -107,6 +111,10 @@ def update_project_embedding_settings(
         "input_prefix_query",
         "input_prefix_document",
         "enabled",
+        "search_content_vector_weight",
+        "search_tag_vector_weight",
+        "search_caption_vector_weight",
+        "search_ocr_vector_weight",
     }
     for key, value in payload.items():
         if key in allowed_fields:
@@ -143,6 +151,12 @@ def resolve_embedding_settings(
             "timeout_seconds": row.timeout_seconds,
             "input_prefix_query": row.input_prefix_query,
             "input_prefix_document": row.input_prefix_document,
+            "search_field_weights": {
+                "content_embedding": row.search_content_vector_weight,
+                "tag_embedding": row.search_tag_vector_weight,
+                "caption_embedding": row.search_caption_vector_weight,
+                "ocr_embedding": row.search_ocr_vector_weight,
+            },
         }
 
     # Fallback to global config; raise if nothing usable is found
@@ -163,4 +177,10 @@ def resolve_embedding_settings(
         "timeout_seconds": settings.embedding_timeout_seconds,
         "input_prefix_query": None,
         "input_prefix_document": None,
+        "search_field_weights": {
+            "content_embedding": settings.search_content_vector_weight,
+            "tag_embedding": settings.search_tag_vector_weight,
+            "caption_embedding": settings.search_caption_vector_weight,
+            "ocr_embedding": settings.search_ocr_vector_weight,
+        },
     }

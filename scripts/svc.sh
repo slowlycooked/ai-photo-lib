@@ -2,7 +2,7 @@
 # scripts/svc.sh — 统一服务管理脚本
 # 用法: ./scripts/svc.sh {start|stop|restart|status} [服务名...]
 #
-# 服务名: postgres  redis  api  web  all（默认）
+# 服务名: postgres  ai  embed  api  worker  web  all（默认）
 #
 # 示例:
 #   ./scripts/svc.sh start           # 启动全部
@@ -35,7 +35,6 @@ if [ -f "$ENV_FILE" ]; then
 fi
 
 POSTGRES_HOST_PORT="${POSTGRES_HOST_PORT:-5432}"
-REDIS_HOST_PORT="${REDIS_HOST_PORT:-6379}"
 API_HOST="${API_HOST:-127.0.0.1}"
 API_PORT="${API_PORT:-8000}"
 API_RELOAD="${API_RELOAD:-0}"
@@ -243,17 +242,7 @@ start_postgres() {
   wait_healthy postgres 60
 }
 
-start_redis() {
-  if docker compose -f "$ROOT/docker-compose.yml" ps redis \
-     | grep -q "healthy" 2>/dev/null; then
-    log_ok "redis 已在运行 (port $REDIS_HOST_PORT)"
-    return 0
-  fi
-  log_info "启动 redis (port $REDIS_HOST_PORT)..."
-  cd "$ROOT"
-  docker compose up -d redis
-  wait_healthy redis 30
-}
+
 
 start_api() {
   if is_running api; then
@@ -361,12 +350,7 @@ stop_postgres() {
   log_ok "postgres 已停止"
 }
 
-stop_redis() {
-  log_info "停止 redis..."
-  cd "$ROOT"
-  docker compose stop redis
-  log_ok "redis 已停止"
-}
+
 
 start_worker() {
   if is_running worker; then
@@ -681,7 +665,6 @@ show_status() {
   echo ""
   echo -e "${BOLD}── 服务状态 ─────────────────────────────────────────${RESET}"
   status_docker  "postgres" "PostgreSQL" "$POSTGRES_HOST_PORT"
-  status_docker  "redis"    "Redis"      "$REDIS_HOST_PORT"
   status_process "api"      "API"        "$API_PORT"
   status_process "web"      "Web"        "$WEB_PORT"
   status_process "worker"   "Worker"     "-"
@@ -700,7 +683,7 @@ show_status() {
 resolve_services() {
   # 如果没有指定服务，默认操作全部
   if [ $# -eq 0 ]; then
-    echo "postgres redis ai embed api worker web"
+    echo "postgres ai embed api worker web"
   else
     echo "$@"
   fi
@@ -714,13 +697,12 @@ do_start() {
   for svc in $services; do
     case "$svc" in
       postgres) start_postgres ;;
-      redis)    start_redis ;;
       api)      start_api ;;
       worker)   start_worker ;;
       ai)       start_ai ;;
       embed)    start_embed ;;
       web)      start_web ;;
-      all)      start_postgres; start_redis; start_ai; start_embed; start_api; start_worker; start_web ;;
+      all)      start_postgres; start_ai; start_embed; start_api; start_worker; start_web ;;
       *)        log_error "未知服务: $svc"; exit 1 ;;
     esac
   done
@@ -732,7 +714,7 @@ do_stop() {
   local services; services="$(resolve_services "$@")"
   # 停止顺序：先应用层，再基础设施
   local ordered=""
-  for s in web worker api embed ai redis postgres; do
+  for s in web worker api embed ai postgres; do
     if echo "$services" | grep -qw "$s"; then
       ordered="$ordered $s"
     fi
@@ -743,13 +725,12 @@ do_stop() {
   for svc in $ordered; do
     case "$svc" in
       postgres) stop_postgres ;;
-      redis)    stop_redis ;;
       api)      stop_api ;;
       worker)   stop_worker ;;
       ai)       stop_ai ;;
       embed)    stop_embed ;;
       web)      stop_web ;;
-      all)      stop_web; stop_worker; stop_embed; stop_ai; stop_api; stop_redis; stop_postgres ;;
+      all)      stop_web; stop_worker; stop_embed; stop_ai; stop_api; stop_postgres ;;
       *)        log_error "未知服务: $svc"; exit 1 ;;
     esac
   done
@@ -798,7 +779,6 @@ case "$COMMAND" in
     echo ""
     echo -e "${BOLD}服务名:${RESET}"
     echo "  postgres  — PostgreSQL    (Docker)"
-    echo "  redis     — Redis          (Docker)"
     echo "  ai        — llama-server  (本地进程, OPENAI_BASE_URL, port LLAMA_PORT)"
     echo "  embed     — llama-embed   (本地进程, Qwen3-Embedding, port EMBED_PORT)"
     echo "  api       — FastAPI        (uvicorn, 本地进程, port API_PORT)"
