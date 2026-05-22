@@ -178,6 +178,7 @@ export default function ProjectSearchSettingsPanel({ projectId }: Props) {
               <option value="hybrid">混合 (hybrid)</option>
               <option value="keyword">关键词 (keyword)</option>
               <option value="vector">向量 (vector)</option>
+              <option value="auto">自动 (auto)</option>
             </select>
           </label>
           <label className="flex flex-col gap-1 text-xs">
@@ -338,6 +339,106 @@ export default function ProjectSearchSettingsPanel({ projectId }: Props) {
           保存失败，请重试
         </p>
       )}
+
+      {/* G. Search quality settings */}
+      <section>
+        <h4 className="text-sm font-semibold text-gray-700 mb-3 border-b pb-1">
+          G. 搜索质量控制
+        </h4>
+        <div className="grid grid-cols-2 gap-4">
+          <label className="flex flex-col gap-1 text-xs">
+            <span className="text-gray-600">向量严格阈值 vector_strict_score (0–1)</span>
+            <input
+              type="number"
+              step="0.01"
+              min="0"
+              max="1"
+              className="border rounded px-2 py-1 text-xs"
+              value={(effective.search_quality_settings?.["vector_strict_score"] as number) ?? 0.42}
+              onChange={(e) =>
+                setField("search_quality_settings", {
+                  ...(effective.search_quality_settings ?? {}),
+                  vector_strict_score: parseFloat(e.target.value) || 0,
+                })
+              }
+            />
+          </label>
+          <label className="flex flex-col gap-1 text-xs">
+            <span className="text-gray-600">最低展示证据等级 min_display_evidence_level</span>
+            <select
+              className="border rounded px-2 py-1 text-xs"
+              value={(effective.search_quality_settings?.["min_display_evidence_level"] as string) ?? "C"}
+              onChange={(e) =>
+                setField("search_quality_settings", {
+                  ...(effective.search_quality_settings ?? {}),
+                  min_display_evidence_level: e.target.value,
+                })
+              }
+            >
+              <option value="A">A — 仅精确匹配</option>
+              <option value="B">B — 精确 + 强扩展</option>
+              <option value="C">C — 含向量严格匹配 (推荐)</option>
+              <option value="D">D — 弱证据也展示</option>
+            </select>
+          </label>
+          <label className="flex flex-col gap-1 text-xs">
+            <span className="text-gray-600">证据权重 evidence_weight</span>
+            <input
+              type="number"
+              step="0.001"
+              min="0"
+              className="border rounded px-2 py-1 text-xs"
+              value={(effective.search_quality_settings?.["evidence_weight"] as number) ?? 0.02}
+              onChange={(e) =>
+                setField("search_quality_settings", {
+                  ...(effective.search_quality_settings ?? {}),
+                  evidence_weight: parseFloat(e.target.value) || 0,
+                })
+              }
+            />
+          </label>
+          <label className="flex flex-col gap-1 text-xs">
+            <span className="text-gray-600">负向词惩罚 negative_term_penalty</span>
+            <input
+              type="number"
+              step="0.001"
+              min="0"
+              className="border rounded px-2 py-1 text-xs"
+              value={(effective.search_quality_settings?.["negative_term_penalty"] as number) ?? 0.01}
+              onChange={(e) =>
+                setField("search_quality_settings", {
+                  ...(effective.search_quality_settings ?? {}),
+                  negative_term_penalty: parseFloat(e.target.value) || 0,
+                })
+              }
+            />
+          </label>
+        </div>
+        <div className="mt-3 space-y-2">
+          {(
+            [
+              { key: "enable_evidence_filter", label: "启用证据等级过滤" },
+              { key: "enable_negative_penalty", label: "启用负向词惩罚" },
+              { key: "require_core_facet_match", label: "强制核心意图证据匹配 (夜景/天气等)" },
+              { key: "allow_vector_only_for_facet_query", label: "高置信向量可绕过核心意图证据门槛" },
+            ] as { key: string; label: string }[]
+          ).map(({ key, label }) => (
+            <label key={key} className="flex items-center gap-2 text-xs cursor-pointer">
+              <input
+                type="checkbox"
+                checked={(effective.search_quality_settings?.[key] as boolean | undefined) ?? (key === "allow_vector_only_for_facet_query" ? true : key === "enable_evidence_filter" || key === "enable_negative_penalty")}
+                onChange={(e) =>
+                  setField("search_quality_settings", {
+                    ...(effective.search_quality_settings ?? {}),
+                    [key]: e.target.checked,
+                  })
+                }
+              />
+              <span className="text-gray-700">{label}</span>
+            </label>
+          ))}
+        </div>
+      </section>
     </div>
   );
 }

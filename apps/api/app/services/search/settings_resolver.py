@@ -92,6 +92,8 @@ class SearchSettingsResolver:
                 enable_negative_penalty=bool(_q.get("enable_negative_penalty", True)),
                 evidence_weight=float(_q.get("evidence_weight", 0.02)),
                 negative_term_penalty=float(_q.get("negative_term_penalty", 0.01)),
+                require_core_facet_match=bool(_q.get("require_core_facet_match", False)),
+                allow_vector_only_for_facet_query=bool(_q.get("allow_vector_only_for_facet_query", True)),
             )
 
         # 2. project_embedding_settings (partial fallback — vector weights only)

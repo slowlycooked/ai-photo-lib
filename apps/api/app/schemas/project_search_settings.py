@@ -25,6 +25,7 @@ class ProjectSearchSettingsResponse(BaseModel):
     enable_query_understanding: bool
     enable_structured_filters: bool
     enable_semantic_tag_boost: bool
+    search_quality_settings: Optional[Dict] = None
     created_at: datetime
     updated_at: datetime
 
@@ -33,7 +34,7 @@ class ProjectSearchSettingsResponse(BaseModel):
 
 
 class ProjectSearchSettingsUpdate(BaseModel):
-    default_mode: Optional[str] = Field(None, pattern="^(keyword|vector|hybrid)$")
+    default_mode: Optional[str] = Field(None, pattern="^(auto|keyword|vector|hybrid)$")
     keyword_top_k: Optional[int] = Field(None, ge=1, le=10000)
     vector_top_k: Optional[int] = Field(None, ge=1, le=2000)
     page_size_default: Optional[int] = Field(None, ge=1, le=500)
@@ -48,3 +49,4 @@ class ProjectSearchSettingsUpdate(BaseModel):
     enable_query_understanding: Optional[bool] = None
     enable_structured_filters: Optional[bool] = None
     enable_semantic_tag_boost: Optional[bool] = None
+    search_quality_settings: Optional[Dict] = None

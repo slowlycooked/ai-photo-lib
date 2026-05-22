@@ -87,6 +87,7 @@ def update_project_search_settings(
         "enable_query_understanding",
         "enable_structured_filters",
         "enable_semantic_tag_boost",
+        "search_quality_settings",
     }
     for key, value in updates.items():
         if key not in allowed_fields:

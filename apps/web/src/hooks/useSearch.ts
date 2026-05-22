@@ -19,7 +19,7 @@ export function useSearch(
   options: UseSearchOptions = {},
 ) {
   const {
-    mode = "hybrid",
+    mode = "auto",
     debug = false,
     folderId = null,
     folderScope = "subtree",

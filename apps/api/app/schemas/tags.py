@@ -14,3 +14,4 @@ class TagsResponse(BaseModel):
     activity_tags: list[TagCount]
     quality_tags: list[TagCount]
     search_keywords: list[TagCount]
+    location_clues: list[TagCount] = []

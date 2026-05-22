@@ -23,6 +23,24 @@ class SearchResultItem(BaseModel):
     match_source: Optional[List[str]] = None
     field_scores: Optional[Dict[str, float]] = None
     explain: Optional[Dict[str, Any]] = None  # per-result keyword/vector explain
+    # Evidence / filter debug
+    evidence_level: Optional[str] = None
+    rank_reason: Optional[str] = None
+    filter_reason: Optional[str] = None
+    term_level_hits: Optional[Dict[str, Any]] = None
+    negative_hits: Optional[List[str]] = None
+    core_facet_passed: Optional[bool] = None
+    score_breakdown: Optional[Dict[str, Any]] = None
+    # EXIF / Photo metadata fields
+    camera_make: Optional[str] = None
+    camera_model: Optional[str] = None
+    lens_model: Optional[str] = None
+    focal_length: Optional[str] = None
+    aperture: Optional[str] = None
+    exposure_time: Optional[str] = None
+    iso: Optional[int] = None
+    gps_latitude: Optional[float] = None
+    gps_longitude: Optional[float] = None
 
 
 class SearchResponse(BaseModel):

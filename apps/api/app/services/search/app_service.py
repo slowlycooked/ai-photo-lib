@@ -30,6 +30,7 @@ from ...services.query_understanding_service import SearchQueryPlan, understand_
 from .debug import build_debug_payload
 from .fusion import rrf_merge
 from .keyword_recall import KeywordRecallService
+from .metadata_recall import MetadataRecallService
 from .result_hydrator import build_result_items
 from .settings_resolver import SearchSettingsResolver
 from .types import (
@@ -57,6 +58,96 @@ _EVIDENCE_LEVEL_RANK_REASONS: dict[str, str] = {
 
 # Normal vector threshold for support-assisted C (below vector_strict_score)
 _VECTOR_NORMAL_THRESHOLD = 0.32
+
+# ── Core-facet evidence config ─────────────────────────────────────────────────
+# For queries with time/lighting core facets (e.g. "夜景", "夜晚"),
+# require at least one of these positive evidence terms in AI tags/caption.
+_NIGHT_CORE_POSITIVE: frozenset[str] = frozenset({
+    "夜晚", "夜色", "夜景", "晚上", "夜间", "黑夜",
+    "灯光", "霓虹", "路灯", "暗光", "长曝光",
+    "night", "nighttime", "evening", "dark",
+})
+# Negative evidence terms that indicate daytime/bright conditions
+_NIGHT_CORE_NEGATIVE: frozenset[str] = frozenset({
+    "白天", "日间", "阳光", "晴天", "蓝天", "日照",
+    "sunlight", "daytime", "sunny", "bright",
+})
+
+
+def _core_facet_passes(
+    candidate: SearchCandidate,
+    ai_analysis: Optional["PhotoAIAnalysis"],
+    query_plan: "SearchQueryPlan",
+    settings: EffectiveSearchSettings,
+) -> tuple[bool, str]:
+    """Check if a candidate satisfies core-facet evidence requirements.
+
+    Returns (passes: bool, reason: str).
+
+    For time/lighting facet queries (night scenes etc.):
+    - Requires at least one positive night-evidence term in tags/caption, OR
+      high-confidence vector match (score >= vector_strict_score).
+    - Downgrades candidates that strongly match daytime-negative terms.
+    """
+    # Only apply when the query has time/lighting core facets
+    core_facets = query_plan.core_facets
+    if "time" not in core_facets and "lighting" not in core_facets:
+        return True, ""
+
+    # Check if this is a night query
+    is_night_query = any(
+        k in {"夜景", "夜晚", "晚上", "黑夜", "夜间", "夜色"}
+        for k in query_plan.matched_keys
+    )
+    if not is_night_query:
+        return True, ""
+
+    # Allow if setting disables core facet matching
+    require_core = getattr(settings, "require_core_facet_match", False)
+    allow_vector_only = getattr(settings, "allow_vector_only_for_facet_query", True)
+
+    # Collect all text evidence from the candidate's AI analysis
+    if ai_analysis is None:
+        if allow_vector_only and candidate.vector_score >= settings.vector_strict_score:
+            return True, "vector_only_high_confidence"
+        return False if require_core else True, "no_ai_analysis"
+
+    all_text: list[str] = []
+    for field_name in ("caption", "ocr_text"):
+        v = getattr(ai_analysis, field_name, None) or ""
+        if v:
+            all_text.append(v.lower())
+    for field_name in ("scene_tags", "object_tags", "activity_tags",
+                       "search_keywords", "location_clues"):
+        tags = getattr(ai_analysis, field_name, None) or []
+        all_text.extend(t.lower() for t in tags)
+    combined_text = " ".join(all_text)
+
+    has_positive = any(term in combined_text for term in _NIGHT_CORE_POSITIVE)
+    has_negative = any(term in combined_text for term in _NIGHT_CORE_NEGATIVE)
+
+    # Strong vector alone counts if above strict threshold
+    if allow_vector_only and candidate.vector_score >= settings.vector_strict_score:
+        if has_negative and not has_positive:
+            return False, f"night_negative_evidence={has_negative}"
+        return True, "vector_high_confidence"
+
+    if has_positive and not has_negative:
+        return True, "night_positive_evidence"
+    if has_positive and has_negative:
+        # Conflicting — allow if evidence_level is A/B, otherwise filter
+        if candidate.evidence_level in ("A", "B"):
+            return True, "night_conflicting_but_strong_keyword"
+        return False, "night_conflicting_evidence"
+    if not has_positive:
+        if require_core:
+            return False, "night_no_positive_evidence"
+        # Soft: allow only A/B level candidates through
+        if candidate.evidence_level in ("A", "B"):
+            return True, "night_no_evidence_but_strong_keyword"
+        return False, "night_no_core_facet_evidence"
+
+    return True, ""
 
 
 def _compute_evidence_level(
@@ -261,28 +352,8 @@ def search_photos(
         project_id, query, mode, page, page_size, folder_id, folder_scope,
     )
 
-    # Query understanding
-    query_plan = understand_query(query, project_id=project_id)
-
-    trace.append({
-        "stage": "query_plan",
-        "intent": query_plan.intent,
-        "normalized_query": query_plan.normalized_query,
-        "exact_terms": query_plan.exact_terms,
-        "expanded_terms": query_plan.expanded_terms,
-        "broad_terms": query_plan.broad_terms,
-        "recommended_profile": query_plan.recommended_profile,
-    })
-    logger.debug(
-        "[search] query_plan intent=%s exact=%s expanded=%s broad=%s normalized=%r",
-        query_plan.intent,
-        query_plan.exact_terms,
-        query_plan.expanded_terms,
-        query_plan.broad_terms,
-        query_plan.normalized_query,
-    )
-
-    # Settings resolution
+    # ── Settings resolution (must happen BEFORE query understanding so that
+    #    enable_query_understanding is respected) ───────────────────────────────
     if project_id is not None:
         effective_settings: EffectiveSearchSettings = SearchSettingsResolver.resolve(
             db, project_id
@@ -319,8 +390,50 @@ def search_photos(
         effective_settings.enable_semantic_tag_boost,
     )
 
-    # Respect caller's mode override; skip QU mode suggestion here
-    effective_mode: SearchMode = mode
+    # ── Query understanding (gated by per-project enable_query_understanding) ─
+    if effective_settings.enable_query_understanding:
+        query_plan = understand_query(query, project_id=project_id)
+    else:
+        # Plain query plan: treat the whole query as exact_terms only
+        from ...services.query_understanding_service import SearchQueryPlan as _Plan
+        query_plan = _Plan(
+            original_query=query,
+            normalized_query=query,
+            exact_terms=[w for w in query.split() if w],
+            intent="semantic_photo_search",
+        )
+
+    trace.append({
+        "stage": "query_plan",
+        "intent": query_plan.intent,
+        "normalized_query": query_plan.normalized_query,
+        "exact_terms": query_plan.exact_terms,
+        "expanded_terms": query_plan.expanded_terms,
+        "broad_terms": query_plan.broad_terms,
+        "support_terms": query_plan.support_terms,
+        "negative_terms": query_plan.negative_terms,
+        "matched_keys": query_plan.matched_keys,
+        "core_facets": query_plan.core_facets,
+        "recommended_profile": query_plan.recommended_profile,
+    })
+    logger.debug(
+        "[search] query_plan intent=%s exact=%s expanded=%s broad=%s normalized=%r",
+        query_plan.intent,
+        query_plan.exact_terms,
+        query_plan.expanded_terms,
+        query_plan.broad_terms,
+        query_plan.normalized_query,
+    )
+
+    # ── Resolve effective search mode ─────────────────────────────────────────
+    # mode=auto → defer to project settings (OCR queries always keyword)
+    if mode == "auto":
+        if query_plan.intent == "ocr_text_search":
+            effective_mode: SearchMode = "keyword"
+        else:
+            effective_mode = effective_settings.default_mode
+    else:
+        effective_mode = mode  # type: ignore[assignment]
 
     logger.debug(
         "[search] resolved mode=%s project_id=%s query=%r intent=%s",
@@ -351,7 +464,94 @@ def search_photos(
             folder_id, folder_scope, folder_count,
         )
 
-    # Keyword recall (always run — needed for hybrid fallback)
+    # ── Metadata filter (EXIF / Photo fields) ──────────────────────────────
+    metadata_filters = query_plan.metadata_filters
+    _mf_active = bool(
+        metadata_filters.get("year")
+        or metadata_filters.get("month")
+        or metadata_filters.get("months")
+        or metadata_filters.get("date_from")
+        or (metadata_filters.get("has_gps") is not None)
+        or metadata_filters.get("camera_make")
+        or metadata_filters.get("camera_model")
+        or (metadata_filters.get("iso_min") is not None)
+        or (metadata_filters.get("iso_max") is not None)
+    )
+
+    if _mf_active and project_id is not None:
+        _meta_svc = MetadataRecallService(db, project_id)
+        if metadata_filters.get("metadata_only"):
+            # ── Metadata-only query: bypass keyword/vector recall entirely ────
+            logger.debug("[search] path=metadata-only filters=%s", metadata_filters)
+            meta_results = _meta_svc.search(
+                metadata_filters=metadata_filters,
+                folder_photo_ids=folder_photo_ids,
+            )
+            total, items = build_result_items(
+                db,
+                meta_results,
+                project_id=project_id,
+                mode="hybrid",  # uses final_score
+                page=page,
+                page_size=page_size,
+                debug=debug,
+            )
+            trace.append({
+                "stage": "metadata_filter",
+                "path": "metadata-only",
+                "filters": {k: v for k, v in metadata_filters.items() if v not in (None, [], False, {})},
+                "matched_count": len(meta_results),
+            })
+            trace.append({
+                "stage": "result",
+                "path": "metadata-only",
+                "total": total,
+                "items_in_page": len(items),
+                "page": page,
+            })
+            debug_payload: Optional[dict] = None
+            if debug:
+                debug_payload = build_debug_payload(
+                    query_plan=query_plan,
+                    mode="metadata",
+                    embedding_model="",
+                    embedding_dimension=global_settings.embedding_dimension,
+                    keyword_candidates=0,
+                    vector_candidates=0,
+                    merged_candidates=len(meta_results),
+                    fallback_reason="",
+                    settings=effective_settings,
+                    trace=trace,
+                    metadata_filters=metadata_filters,
+                    metadata_candidates=len(meta_results),
+                    metadata_only=True,
+                )
+            logger.debug(
+                "[search] ── DONE ── path=metadata-only total=%d items=%d page=%d",
+                total, len(items), page,
+            )
+            return total, items, debug_payload
+        else:
+            # ── Mixed: restrict keyword/vector recall to metadata-filtered IDs ──
+            _meta_ids = _meta_svc.resolve_photo_ids(
+                metadata_filters=metadata_filters,
+                folder_photo_ids=folder_photo_ids,
+            )
+            logger.debug(
+                "[search] metadata_filter (mixed) matched=%d", len(_meta_ids)
+            )
+            trace.append({
+                "stage": "metadata_filter",
+                "path": "mixed",
+                "filters": {k: v for k, v in metadata_filters.items() if v not in (None, [], False, {})},
+                "matched_count": len(_meta_ids),
+            })
+            # Intersect with existing folder scope if any
+            if folder_photo_ids is not None:
+                folder_photo_ids = folder_photo_ids & _meta_ids
+            else:
+                folder_photo_ids = _meta_ids
+
     kw_service = KeywordRecallService(db, effective_settings)
     keyword_results = kw_service.search(
         query_plan,
@@ -407,6 +607,7 @@ def search_photos(
     vector_scores: dict[int, VectorMatchScores] = {}
     embedding_model = ""
     fallback_reason = ""
+    stale_embedding_filtered = 0
 
     is_ocr_query = query_plan.intent == "ocr_text_search"
     vec_service = VectorRecallService(db, effective_settings)
@@ -416,7 +617,7 @@ def search_photos(
         is_ocr_query, project_id,
     )
     try:
-        vector_scores, embedding_model, fallback_reason = vec_service.search(
+        vector_scores, embedding_model, fallback_reason, stale_embedding_filtered = vec_service.search(
             query=query,
             normalized_query=query_plan.normalized_query,
             is_ocr_query=is_ocr_query,
@@ -428,10 +629,11 @@ def search_photos(
             "candidates": len(vector_scores),
             "embedding_model": embedding_model,
             "is_ocr": is_ocr_query,
+            "stale_embedding_filtered": stale_embedding_filtered,
         })
         logger.debug(
-            "[search] vector_recall done candidates=%d embedding_model=%s",
-            len(vector_scores), embedding_model,
+            "[search] vector_recall done candidates=%d embedding_model=%s stale_filtered=%d",
+            len(vector_scores), embedding_model, stale_embedding_filtered,
         )
     except (EmbeddingRequestError, SQLAlchemyError, RuntimeError) as exc:
         fallback_reason = str(exc)
@@ -627,6 +829,49 @@ def search_photos(
         },
     })
 
+    # ── Core facet evidence validator ─────────────────────────────────────────
+    # For queries with strong intent facets (time/lighting/weather/animal),
+    # require supporting evidence in AI tags or high-confidence vector score.
+    core_facet_filtered = 0
+    if merged and query_plan.core_facets and project_id is not None:
+        photo_ids_for_facet = [c.photo_id for c in merged]
+        ai_rows_for_facet = (
+            db.query(PhotoAIAnalysis)
+            .filter(
+                PhotoAIAnalysis.photo_id.in_(photo_ids_for_facet),
+                PhotoAIAnalysis.project_id == project_id,
+            )
+            .all()
+        )
+        ai_by_id_facet: dict[int, PhotoAIAnalysis] = {
+            r.photo_id: r for r in ai_rows_for_facet
+        }
+        kept_facet: list[SearchCandidate] = []
+        for c in merged:
+            ai_obj = ai_by_id_facet.get(c.photo_id)
+            passes, reason = _core_facet_passes(c, ai_obj, query_plan, effective_settings)
+            if passes:
+                kept_facet.append(c)
+            else:
+                core_facet_filtered += 1
+                c.filter_reason = f"core_facet_fail:{reason}"
+                filtered_out.append(c)
+        if core_facet_filtered:
+            logger.debug(
+                "[search] core_facet_filter removed %d candidates (%d remaining)",
+                core_facet_filtered, len(kept_facet),
+            )
+            merged = kept_facet
+        trace.append({
+            "stage": "core_facet_filter",
+            "core_facets": query_plan.core_facets,
+            "matched_keys": query_plan.matched_keys,
+            "filtered": core_facet_filtered,
+            "remaining": len(merged),
+        })
+
+    filtered_count += core_facet_filtered
+
     # ── P3: Semantic tag boost (if enabled for project) ───────────────────────
     if effective_settings.enable_semantic_tag_boost and merged and project_id is not None:
         merged = _apply_semantic_tag_boost(db, merged, query_plan, project_id)
@@ -653,6 +898,17 @@ def search_photos(
     trace.append({"stage": "result", "path": "hybrid", "total": total, "items_in_page": len(items), "page": page})
     debug_payload = None
     if debug:
+        # Build a small sample of filtered-out candidates for debug
+        _filtered_samples = [
+            {
+                "photo_id": c.photo_id,
+                "evidence_level": c.evidence_level,
+                "filter_reason": c.filter_reason,
+                "vector_score": round(c.vector_score, 4),
+                "keyword_score": round(c.keyword_score, 4),
+            }
+            for c in filtered_out[:10]
+        ]
         debug_payload = build_debug_payload(
             query_plan=query_plan,
             mode="hybrid",
@@ -666,6 +922,8 @@ def search_photos(
             trace=trace,
             displayed_candidates=total,
             filtered_candidates=filtered_count,
+            filtered_out_samples=_filtered_samples,
+            stale_embedding_filtered=stale_embedding_filtered,
         )
     logger.debug(
         "[search] ── DONE ── path=hybrid total=%d items=%d page=%d",

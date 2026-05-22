@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Loader2, SearchX, ImageIcon, ChevronDown, ChevronRight, Download } from "lucide-react";
+import { Loader2, SearchX, ImageIcon, ChevronDown, ChevronRight, Download, X, ZoomIn } from "lucide-react";
 import { useSearch } from "@/hooks/useSearch";
 import { api } from "@/lib/api";
 import type { SearchDebugPayload, SearchMode, SearchResultItem, SearchTraceStep, TagField } from "@/api/types";
@@ -13,14 +13,125 @@ interface SearchResultGridProps {
   tagValue?: string | null;
 }
 
-function SearchCard({ item, debug }: { item: SearchResultItem; debug?: boolean }) {
+// ── Lightbox ──────────────────────────────────────────────────────────────
+function SearchPhotoLightbox({
+  item,
+  projectId,
+  onClose,
+}: {
+  item: SearchResultItem;
+  projectId: number | null | undefined;
+  onClose: () => void;
+}) {
+  const [imgLoaded, setImgLoaded] = useState(false);
+
+  useEffect(() => {
+    function handleKey(e: KeyboardEvent) {
+      if (e.key === "Escape") onClose();
+    }
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, [onClose]);
+
+  const previewUrl =
+    projectId != null
+      ? api.projects.previewUrl(projectId, item.photo_id)
+      : item.thumbnail_url;
+
+  const downloadUrl =
+    projectId != null
+      ? api.projects.originalUrl(projectId, item.photo_id)
+      : undefined;
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      style={{ backgroundColor: "rgba(0,0,0,0.85)" }}
+      onClick={onClose}
+    >
+      <div
+        className="relative max-w-[90vw] max-h-[90vh] flex flex-col items-center"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Action buttons */}
+        <div className="absolute top-3 right-3 flex gap-2 z-10">
+          {downloadUrl && (
+            <a
+              href={downloadUrl}
+              download={item.file_name}
+              onClick={(e) => e.stopPropagation()}
+              className="w-9 h-9 rounded-full bg-black/60 flex items-center justify-center hover:bg-black/80 transition-colors"
+              aria-label="下载原图"
+              title="下载原图"
+            >
+              <Download className="w-4 h-4 text-white" />
+            </a>
+          )}
+          <button
+            onClick={onClose}
+            className="w-9 h-9 rounded-full bg-black/60 flex items-center justify-center hover:bg-black/80 transition-colors"
+            aria-label="关闭预览"
+          >
+            <X className="w-4 h-4 text-white" />
+          </button>
+        </div>
+
+        {/* Image */}
+        {!imgLoaded && (
+          <div className="flex items-center justify-center" style={{ minWidth: 200, minHeight: 200 }}>
+            <Loader2 className="w-8 h-8 animate-spin text-white/60" />
+          </div>
+        )}
+        <img
+          src={previewUrl}
+          alt={item.file_name}
+          className="rounded-md object-contain shadow-2xl"
+          style={{
+            maxWidth: "90vw",
+            maxHeight: "80vh",
+            opacity: imgLoaded ? 1 : 0,
+            transition: "opacity 0.2s",
+          }}
+          onLoad={() => setImgLoaded(true)}
+        />
+
+        {/* Caption bar */}
+        {(item.caption || item.file_name) && (
+          <div className="mt-3 px-4 py-2 rounded-md bg-black/60 text-white text-sm max-w-lg text-center space-y-1">
+            {item.caption && <p className="line-clamp-2">{item.caption}</p>}
+            <p className="text-white/60 text-xs truncate">{item.file_name}</p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function SearchCard({
+  item,
+  debug,
+  projectId,
+  onPreview,
+}: {
+  item: SearchResultItem;
+  debug?: boolean;
+  projectId?: number | null;
+  onPreview?: (item: SearchResultItem) => void;
+}) {
   const [loaded, setLoaded] = useState(false);
 
   return (
     <div className="break-inside-avoid mb-3">
       <div className="bg-canvas rounded-md overflow-hidden border border-hairline hover:shadow-md transition-shadow">
         {/* Thumbnail */}
-        <div className="relative bg-surface-card">
+        <div
+          className="relative bg-surface-card cursor-zoom-in group"
+          onClick={() => onPreview?.(item)}
+          role="button"
+          aria-label={`预览 ${item.file_name}`}
+          tabIndex={0}
+          onKeyDown={(e) => e.key === "Enter" && onPreview?.(item)}
+        >
           {!loaded && (
             <div className="flex items-center justify-center h-32">
               <ImageIcon className="w-8 h-8 text-stone" />
@@ -33,6 +144,10 @@ function SearchCard({ item, debug }: { item: SearchResultItem; debug?: boolean }
             style={{ opacity: loaded ? 1 : 0, transition: "opacity 0.2s" }}
             onLoad={() => setLoaded(true)}
           />
+          {/* Hover overlay */}
+          <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center">
+            <ZoomIn className="w-6 h-6 text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow" />
+          </div>
         </div>
 
         {/* Info */}
@@ -58,23 +173,41 @@ function SearchCard({ item, debug }: { item: SearchResultItem; debug?: boolean }
           <p className="text-caption-sm text-ash truncate">{item.file_name}</p>
 
           {/* Debug per-card scores */}
-          {debug && (item.rrf_score != null || item.vector_score != null) && (
+          {debug && (
             <div className="text-[10px] font-mono text-muted-foreground space-y-0.5 border-t border-dashed border-border pt-1">
-              {item.rrf_score != null && (
-                <div>rrf: {item.rrf_score.toFixed(5)}</div>
-              )}
-              {item.keyword_score != null && (
-                <div>kw: {item.keyword_score.toFixed(4)}</div>
-              )}
-              {item.vector_score != null && (
-                <div>vec: {item.vector_score.toFixed(4)}</div>
-              )}
-              {item.field_scores && (
-                <div>
-                  {Object.entries(item.field_scores)
-                    .map(([k, v]) => `${k}:${(v as number).toFixed(3)}`)
-                    .join(" ")}
+              {/* EXIF / metadata row */}
+              {(item.taken_at || item.camera_make || item.camera_model || item.iso != null || item.gps_latitude != null) && (
+                <div className="text-[9px] text-teal-700 dark:text-teal-300 space-y-0">
+                  {item.taken_at && <div>📅 {new Date(item.taken_at).toLocaleDateString("zh-CN")}</div>}
+                  {(item.camera_make || item.camera_model) && (
+                    <div>📷 {[item.camera_make, item.camera_model].filter(Boolean).join(" ")}</div>
+                  )}
+                  {item.iso != null && <div>ISO {item.iso}</div>}
+                  {item.gps_latitude != null && <div>📍 GPS</div>}
                 </div>
+              )}
+              {item.match_source?.includes("metadata") && (
+                <div className="text-teal-600 dark:text-teal-400 font-semibold">metadata match</div>
+              )}
+              {(item.rrf_score != null || item.vector_score != null) && (
+                <>
+                  {item.rrf_score != null && (
+                    <div>rrf: {item.rrf_score.toFixed(5)}</div>
+                  )}
+                  {item.keyword_score != null && (
+                    <div>kw: {item.keyword_score.toFixed(4)}</div>
+                  )}
+                  {item.vector_score != null && (
+                    <div>vec: {item.vector_score.toFixed(4)}</div>
+                  )}
+                  {item.field_scores && (
+                    <div>
+                      {Object.entries(item.field_scores)
+                        .map(([k, v]) => `${k}:${(v as number).toFixed(3)}`)
+                        .join(" ")}
+                    </div>
+                  )}
+                </>
               )}
               {item.explain?.keyword && (
                 <div className="text-[9px] text-blue-600 dark:text-blue-400">
@@ -227,6 +360,44 @@ function DebugPanel({ payload }: { payload: SearchDebugPayload }) {
         </div>
       )}
 
+      {/* Metadata filters section */}
+      {payload.metadata_filters && Object.keys(payload.metadata_filters).length > 0 && (
+        <div className="rounded border border-teal-400/50 bg-teal-50 dark:bg-teal-950/30 px-2 py-1 text-[10px] text-teal-800 dark:text-teal-200 space-y-0.5">
+          <div className="font-semibold text-[11px]">
+            🗓 元数据过滤{payload.metadata_only ? " (仅元数据)" : " (混合)"} — 匹配 {payload.metadata_candidates ?? 0} 张
+          </div>
+          {(payload.matched_metadata_terms?.length ?? 0) > 0 && (
+            <div><span className="opacity-60">识别词:</span> {payload.matched_metadata_terms!.join("、")}</div>
+          )}
+          <div className="flex flex-wrap gap-x-3 gap-y-0">
+            {!!payload.metadata_filters.date_from && (
+              <span><span className="opacity-60">日期:</span> {String(payload.metadata_filters.date_from)} ~ {String(payload.metadata_filters.date_to ?? "")}</span>
+            )}
+            {!payload.metadata_filters.date_from && !!payload.metadata_filters.year && (
+              <span><span className="opacity-60">年份:</span> {String(payload.metadata_filters.year)}</span>
+            )}
+            {!payload.metadata_filters.date_from && !!payload.metadata_filters.month && (
+              <span><span className="opacity-60">月份:</span> {String(payload.metadata_filters.month)}月</span>
+            )}
+            {((payload.metadata_filters.months as number[] | undefined)?.length ?? 0) > 0 && (
+              <span><span className="opacity-60">季节月份:</span> {(payload.metadata_filters.months as number[]).join("、")}月</span>
+            )}
+            {payload.metadata_filters.has_gps != null && (
+              <span><span className="opacity-60">GPS:</span> {payload.metadata_filters.has_gps ? "有" : "无"}</span>
+            )}
+            {!!payload.metadata_filters.camera_make && (
+              <span><span className="opacity-60">相机品牌:</span> {String(payload.metadata_filters.camera_make)}</span>
+            )}
+            {!!payload.metadata_filters.camera_model && (
+              <span><span className="opacity-60">相机型号:</span> {String(payload.metadata_filters.camera_model)}</span>
+            )}
+            {payload.metadata_filters.iso_min != null && (
+              <span><span className="opacity-60">ISO:</span> {String(payload.metadata_filters.iso_min)}{payload.metadata_filters.iso_max !== payload.metadata_filters.iso_min ? `~${String(payload.metadata_filters.iso_max)}` : ""}</span>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Pipeline trace */}
       {(payload.trace?.length ?? 0) > 0 && (
         <div className="mt-1.5">
@@ -340,6 +511,7 @@ export function SearchResultGrid({ query, projectId, mode = "hybrid", debug = fa
     error,
   } = useSearch(query, projectId ?? null, { mode, debug, tagField, tagValue });
 
+  const [previewItem, setPreviewItem] = useState<SearchResultItem | null>(null);
   const sentinelRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!sentinelRef.current || !hasNextPage) return;
@@ -423,9 +595,23 @@ export function SearchResultGrid({ query, projectId, mode = "hybrid", debug = fa
 
       <div className="masonry-grid">
         {allItems.map((item) => (
-          <SearchCard key={item.photo_id} item={item} debug={debug} />
+          <SearchCard
+            key={item.photo_id}
+            item={item}
+            debug={debug}
+            projectId={projectId}
+            onPreview={setPreviewItem}
+          />
         ))}
       </div>
+
+      {previewItem && (
+        <SearchPhotoLightbox
+          item={previewItem}
+          projectId={projectId}
+          onClose={() => setPreviewItem(null)}
+        />
+      )}
 
       <div ref={sentinelRef} className="h-4" />
 

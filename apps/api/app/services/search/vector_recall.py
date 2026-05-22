@@ -36,7 +36,16 @@ def _vector_field_search(
     field_name: str,
     folder_photo_ids: Optional[set[int]],
     limit: int,
-) -> dict[int, float]:
+    embedding_model: Optional[str] = None,
+    embedding_dimension: Optional[int] = None,
+    embedding_input_version: Optional[str] = None,
+) -> tuple[dict[int, float], int]:
+    """Return (scores_dict, stale_filtered_count).
+
+    Only rows with embedding_status='ready' are considered.
+    If embedding_model / embedding_dimension / embedding_input_version are
+    provided, rows that don't match are also excluded (stale-filtered).
+    """
     params: dict = {
         "project_id": project_id,
         "query_vector": query_vector_literal,
@@ -45,9 +54,43 @@ def _vector_field_search(
     folder_filter = ""
     if folder_photo_ids is not None:
         if not folder_photo_ids:
-            return {}
+            return {}, 0
         params["photo_ids"] = list(folder_photo_ids)
         folder_filter = " AND pe.photo_id = ANY(:photo_ids)"
+
+    # Build optional stale-model filters
+    stale_filters = " AND pe.embedding_status = 'ready'"
+    if embedding_model:
+        params["embedding_model"] = embedding_model
+        stale_filters += " AND pe.embedding_model = :embedding_model"
+    if embedding_dimension:
+        params["embedding_dimension"] = embedding_dimension
+        stale_filters += " AND pe.embedding_dimension = :embedding_dimension"
+    if embedding_input_version:
+        params["embedding_input_version"] = embedding_input_version
+        stale_filters += " AND pe.embedding_input_version = :embedding_input_version"
+
+    # Count how many rows would be included without stale-model filter
+    # (used for stale_filtered debug stat — approximate: only when all filters provided)
+    stale_count = 0
+    if embedding_model and embedding_dimension:
+        count_sql = text(
+            f"""
+            SELECT COUNT(*) AS cnt
+            FROM photo_embeddings pe
+            WHERE pe.project_id = :project_id
+              AND pe.{field_name} IS NOT NULL
+              {folder_filter}
+              AND pe.embedding_status = 'ready'
+              AND (
+                pe.embedding_model IS DISTINCT FROM :embedding_model
+                OR pe.embedding_dimension IS DISTINCT FROM :embedding_dimension
+              )
+            """
+        )
+        count_params = {k: params[k] for k in params if k != "limit"}
+        result = db.execute(count_sql, count_params).scalar()
+        stale_count = int(result or 0)
 
     sql = text(
         f"""
@@ -57,12 +100,13 @@ def _vector_field_search(
         WHERE pe.project_id = :project_id
           AND pe.{field_name} IS NOT NULL
           {folder_filter}
+          {stale_filters}
         ORDER BY pe.{field_name} <=> CAST(:query_vector AS vector)
         LIMIT :limit
         """
     )
     rows = db.execute(sql, params).fetchall()
-    return {int(row.photo_id): float(row.similarity) for row in rows}
+    return {int(row.photo_id): float(row.similarity) for row in rows}, stale_count
 
 
 class VectorRecallService:
@@ -81,8 +125,8 @@ class VectorRecallService:
         project_id: int,
         folder_photo_ids: Optional[set[int]],
         limit: Optional[int] = None,
-    ) -> tuple[dict[int, VectorMatchScores], str, str]:
-        """Return (scores_by_photo_id, embedding_model, fallback_reason)."""
+    ) -> tuple[dict[int, VectorMatchScores], str, str, int]:
+        """Return (scores_by_photo_id, embedding_model, fallback_reason, stale_filtered_count)."""
         if global_settings.embedding_dimension != _DB_EMBEDDING_DIMENSION:
             raise RuntimeError(
                 f"Config mismatch: embedding_dimension must be {_DB_EMBEDDING_DIMENSION}, "
@@ -132,42 +176,57 @@ class VectorRecallService:
 
         top_k = limit if limit is not None else self._settings.vector_top_k
 
-        content_scores = _vector_field_search(
+        content_scores, stale_content = _vector_field_search(
             self._db,
             project_id=project_id,
             query_vector_literal=vector_literal,
             field_name="content_embedding",
             folder_photo_ids=folder_photo_ids,
             limit=top_k,
+            embedding_model=embedding_model,
+            embedding_dimension=embed_cfg.get("embedding_dimension"),
+            embedding_input_version=embed_cfg.get("embedding_input_version"),
         )
-        caption_scores = _vector_field_search(
+        caption_scores, stale_caption = _vector_field_search(
             self._db,
             project_id=project_id,
             query_vector_literal=vector_literal,
             field_name="caption_embedding",
             folder_photo_ids=folder_photo_ids,
             limit=top_k,
+            embedding_model=embedding_model,
+            embedding_dimension=embed_cfg.get("embedding_dimension"),
+            embedding_input_version=embed_cfg.get("embedding_input_version"),
         )
-        tag_scores = _vector_field_search(
+        tag_scores, stale_tag = _vector_field_search(
             self._db,
             project_id=project_id,
             query_vector_literal=vector_literal,
             field_name="tag_embedding",
             folder_photo_ids=folder_photo_ids,
             limit=top_k,
+            embedding_model=embedding_model,
+            embedding_dimension=embed_cfg.get("embedding_dimension"),
+            embedding_input_version=embed_cfg.get("embedding_input_version"),
         )
-        ocr_scores = _vector_field_search(
+        ocr_scores, stale_ocr = _vector_field_search(
             self._db,
             project_id=project_id,
             query_vector_literal=vector_literal,
             field_name="ocr_embedding",
             folder_photo_ids=folder_photo_ids,
             limit=top_k,
+            embedding_model=embedding_model,
+            embedding_dimension=embed_cfg.get("embedding_dimension"),
+            embedding_input_version=embed_cfg.get("embedding_input_version"),
         )
 
+        stale_filtered_total = stale_content + stale_caption + stale_tag + stale_ocr
+
         logger.debug(
-            "[vector_recall] field_hits content=%d caption=%d tag=%d ocr=%d top_k=%d",
-            len(content_scores), len(caption_scores), len(tag_scores), len(ocr_scores), top_k,
+            "[vector_recall] field_hits content=%d caption=%d tag=%d ocr=%d top_k=%d stale_filtered=%d",
+            len(content_scores), len(caption_scores), len(tag_scores), len(ocr_scores),
+            top_k, stale_filtered_total,
         )
 
         all_photo_ids = (
@@ -209,4 +268,4 @@ class VectorRecallService:
                     scores.caption_score, scores.tag_score, scores.ocr_score,
                 )
 
-        return merged, embedding_model, ""
+        return merged, embedding_model, "", stale_filtered_total

@@ -15,12 +15,15 @@ router = APIRouter(prefix="/projects", tags=["projects-tags"])
 def _count_tags(
     db: Session, field: str, project_id: int, limit: int = 100
 ) -> list[TagCount]:
+    """Count tags for a project, excluding deleted photos."""
     sql = text(
-        f"SELECT tag, COUNT(DISTINCT photo_id) AS cnt "  # noqa: S608
+        f"SELECT tag, COUNT(DISTINCT t.photo_id) AS cnt "  # noqa: S608
         f"FROM ("
         f"  SELECT paa.photo_id, unnest(paa.{field}) AS tag"
         f"  FROM photo_ai_analysis paa"
+        f"  JOIN photos p ON p.id = paa.photo_id AND p.project_id = paa.project_id"
         f"  WHERE paa.project_id = :pid AND paa.{field} IS NOT NULL"
+        f"    AND p.deleted_at IS NULL"
         f") t "
         f"GROUP BY tag ORDER BY cnt DESC LIMIT :limit"
     )
@@ -41,4 +44,5 @@ def project_tags(
         activity_tags=_count_tags(db, "activity_tags", project_id),
         quality_tags=_count_tags(db, "quality_tags", project_id),
         search_keywords=_count_tags(db, "search_keywords", project_id),
+        location_clues=_count_tags(db, "location_clues", project_id),
     )

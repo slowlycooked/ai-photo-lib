@@ -110,6 +110,10 @@ class EffectiveSearchSettings:
     evidence_weight: float = 0.02
     # Additional penalty subtracted from final_score per negative-term hit
     negative_term_penalty: float = 0.01
+    # Require AI-tag evidence for core facet queries (e.g. night queries must have night tags)
+    require_core_facet_match: bool = False
+    # Allow high-confidence vector-only matches to pass core facet gate
+    allow_vector_only_for_facet_query: bool = True
 
 
 # ── Candidate / score dataclasses ─────────────────────────────────────────────
@@ -150,3 +154,7 @@ class SearchCandidate:
     filter_reason: Optional[str] = None
     # Score breakdown for debug explain
     score_breakdown: Dict = field(default_factory=dict)
+    # Negative-term hits (terms from negative tier that matched)
+    negative_hits: List[str] = field(default_factory=list)
+    # Core facet check result (True = passed, False = filtered, None = not checked)
+    core_facet_passed: Optional[bool] = None

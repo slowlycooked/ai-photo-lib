@@ -31,9 +31,220 @@ Backward-compatible aliases:
 
 from __future__ import annotations
 
+import calendar
 import re
 from dataclasses import dataclass, field
+from datetime import date
 from typing import Any, Dict, Literal, Optional, TypedDict
+
+# ── Chinese query noise cleaning ──────────────────────────────────────────────
+#
+# Strip suffixes and prefixes that carry no photo-search semantics.
+# Applied before tokenisation so they don't become spurious exact_terms.
+
+_NOISE_SUFFIXES = re.compile(
+    r"(的照片|的图片|的相片|照片|图片|相片|的图|图)$"
+)
+_NOISE_PREFIXES = re.compile(
+    r"^(搜索|找一下|帮我找|请找|查找|给我看)"
+)
+
+
+def _clean_chinese_query(query: str) -> str:
+    """Strip common Chinese noise words that add no search value."""
+    q = query.strip()
+    # Repeatedly strip suffix noise (e.g. "猫的照片" → "猫", "猫的图片" → "猫")
+    prev = None
+    while prev != q:
+        prev = q
+        q = _NOISE_SUFFIXES.sub("", q).strip()
+    # Strip prefix noise
+    q = _NOISE_PREFIXES.sub("", q).strip()
+    # Fall back to original if cleaning made the query empty
+    return q if q else query.strip()
+
+
+# ── Metadata (EXIF / Photo field) filter parser ───────────────────────────────
+
+_CHINESE_MONTH_TO_NUM: dict[str, int] = {
+    "一": 1, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6,
+    "七": 7, "八": 8, "九": 9, "十": 10, "十一": 11, "十二": 12,
+}
+# Matches: 1-12月 / 1-12月份 / 一月 … 十二月
+_MONTH_RE = re.compile(r"(十[一二]|[一二三四五六七八九十]|1[0-2]|[1-9])月(?:份)?")
+# Matches 2-/4-digit year followed by 年: 2024年 1999年
+_YEAR_RE = re.compile(r"(20\d{2}|19\d{2})年")
+# Noise to strip when detecting metadata-only query
+_META_NOISE_RE = re.compile(
+    r"的照片|的相片|的图片|的图|照片|相片|图片|[的了在里中是]|拍的|拍摄|摄影|帮我找|搜索|找|查"
+)
+
+
+def _parse_metadata_filters(original_query: str) -> dict:
+    """Parse EXIF / Photo table metadata filters from a raw user query.
+
+    Returns a dict with keys:
+        date_from, date_to   — ISO date strings (str | None)
+        year                 — int | None
+        month                — int 1-12 | None
+        months               — list[int] for season ranges
+        season               — str | None ('spring'/'summer'/'autumn'/'winter')
+        has_gps              — bool | None
+        camera_make          — str | None  (used for ILIKE)
+        camera_model         — str | None  (used for ILIKE, combined with camera_make)
+        iso_min              — int | None
+        iso_max              — int | None
+        metadata_only        — bool  (True if no semantic content remains after filters)
+        matched_metadata_terms — list[str]  (human-readable matched terms)
+    """
+    q = original_query
+    today = date.today()
+    current_year = today.year
+
+    result: dict = {
+        "date_from": None,
+        "date_to": None,
+        "year": None,
+        "month": None,
+        "months": [],
+        "season": None,
+        "has_gps": None,
+        "camera_make": None,
+        "camera_model": None,
+        "iso_min": None,
+        "iso_max": None,
+        "metadata_only": False,
+        "matched_metadata_terms": [],
+    }
+    matched: list[str] = []
+    remaining = q  # we strip matched terms from here for metadata_only detection
+
+    def _strip(s: str, pattern: str) -> str:
+        return s.replace(pattern, "")
+
+    # ── Relative year: 今年 / 去年 ──────────────────────────────────────────
+    rel_year_m = re.search(r"今年|去年", q)
+    year: int | None = None
+    if rel_year_m:
+        year = current_year if rel_year_m.group() == "今年" else current_year - 1
+        matched.append(rel_year_m.group())
+        remaining = _strip(remaining, rel_year_m.group())
+
+    # ── Absolute year: 2024年 ──────────────────────────────────────────────
+    abs_year_m = _YEAR_RE.search(q)
+    if abs_year_m:
+        year = int(abs_year_m.group(1))  # absolute overrides relative
+        matched.append(abs_year_m.group())
+        remaining = _strip(remaining, abs_year_m.group())
+
+    # ── Month: 12月 / 十二月 / 12月份 ────────────────────────────────────
+    month_m = _MONTH_RE.search(q)
+    month: int | None = None
+    if month_m:
+        raw = month_m.group(1)
+        month = int(raw) if raw.isdigit() else _CHINESE_MONTH_TO_NUM.get(raw)
+        if month and 1 <= month <= 12:
+            matched.append(month_m.group())
+            remaining = _strip(remaining, month_m.group())
+        else:
+            month = None
+
+    # ── Build date_from / date_to ─────────────────────────────────────────
+    if year is not None and month is not None:
+        result["year"] = year
+        result["month"] = month
+        next_m_year = year + 1 if month == 12 else year
+        next_m = 1 if month == 12 else month + 1
+        result["date_from"] = f"{year}-{month:02d}-01"
+        result["date_to"] = f"{next_m_year}-{next_m:02d}-01"
+    elif year is not None:
+        result["year"] = year
+        result["date_from"] = f"{year}-01-01"
+        result["date_to"] = f"{year + 1}-01-01"
+    elif month is not None:
+        result["month"] = month
+
+    # ── Season ────────────────────────────────────────────────────────────
+    _SEASON_PATTERNS = [
+        (r"春天|春季|春分", "spring", [3, 4, 5]),
+        (r"夏天|夏季|夏日", "summer", [6, 7, 8]),
+        (r"秋天|秋季|秋分", "autumn", [9, 10, 11]),
+        (r"冬天|冬季|冬日", "winter", [12, 1, 2]),
+    ]
+    for sp, en_name, months_list in _SEASON_PATTERNS:
+        sm = re.search(sp, q)
+        if sm:
+            result["season"] = en_name
+            result["months"] = months_list
+            matched.append(sm.group())
+            remaining = _strip(remaining, sm.group())
+            break
+
+    # ── GPS ───────────────────────────────────────────────────────────────
+    if re.search(r"没有GPS|无GPS|无定位|无位置", q):
+        result["has_gps"] = False
+        matched.append("无GPS")
+        remaining = re.sub(r"没有GPS|无GPS|无定位|无位置", "", remaining)
+    elif re.search(r"有GPS|有定位|有位置", q):
+        result["has_gps"] = True
+        matched.append("有GPS")
+        remaining = re.sub(r"有GPS|有定位|有位置", "", remaining)
+
+    # ── Camera make / model ───────────────────────────────────────────────
+    _CAMERA_PATTERNS = [
+        (r"\biphone\b", "Apple", "iPhone"),
+        (r"\bapple\b|苹果手机", "Apple", None),
+        (r"\bsony\b|索尼", "Sony", None),
+        (r"\bcanon\b|佳能", "Canon", None),
+        (r"\bnikon\b|尼康", "Nikon", None),
+        (r"\bdji\b|大疆", "DJI", None),
+        (r"\bhuawei\b|华为", "Huawei", None),
+        (r"\bsamsung\b|三星", "Samsung", None),
+        (r"\bfuji(?:film)?\b|富士", "FUJIFILM", None),
+        (r"\bpanasonic\b|松下", "Panasonic", None),
+        (r"\bolympus\b|奥林巴斯", "Olympus", None),
+        (r"\bleica\b|徕卡", "Leica", None),
+    ]
+    for cp, make, model_hint in _CAMERA_PATTERNS:
+        cm = re.search(cp, q, re.IGNORECASE)
+        if cm:
+            result["camera_make"] = make
+            if model_hint:
+                result["camera_model"] = model_hint
+            matched.append(cm.group())
+            remaining = re.sub(cp, "", remaining, flags=re.IGNORECASE)
+            break
+
+    # ── ISO ───────────────────────────────────────────────────────────────
+    iso_exact_m = re.search(r"\biso\s*(\d+)\b", q, re.IGNORECASE)
+    if iso_exact_m:
+        iso_val = int(iso_exact_m.group(1))
+        result["iso_min"] = iso_val
+        result["iso_max"] = iso_val
+        matched.append(f"ISO {iso_val}")
+        remaining = re.sub(r"\biso\s*\d+\b", "", remaining, flags=re.IGNORECASE)
+    elif re.search(r"高iso|高感光|高感", q, re.IGNORECASE):
+        result["iso_min"] = 800
+        matched.append("高ISO")
+        remaining = re.sub(r"高iso|高感光|高感", "", remaining, flags=re.IGNORECASE)
+
+    result["matched_metadata_terms"] = matched
+
+    # ── metadata_only detection ────────────────────────────────────────────
+    # If any filter was matched, check whether anything meaningful remains
+    has_any = bool(
+        result["year"] or result["month"] or result["months"]
+        or result["date_from"]
+        or (result["has_gps"] is not None)
+        or result["camera_make"] or result["camera_model"]
+        or (result["iso_min"] is not None) or (result["iso_max"] is not None)
+    )
+    if has_any:
+        cleaned = _META_NOISE_RE.sub("", remaining).strip()
+        cleaned = re.sub(r"\s+", "", cleaned)
+        result["metadata_only"] = len(cleaned) == 0
+
+    return result
 
 
 # ── Tiered expansion dictionaries ─────────────────────────────────────────────
@@ -451,9 +662,37 @@ _TRAVEL_TERMS_TIERED: Dict[str, Any] = {
         "facets": ["time", "lighting"],
     },
     "夜景": {
-        "expanded": ["夜晚", "夜色"],
+        "expanded": ["夜晚", "夜色", "晚上", "夜间"],
         "support": ["灯光", "霓虹", "路灯", "暗光", "长曝光"],
         "broad": ["城市", "建筑", "街道", "地标"],
+        "negative": ["白天", "日间", "阳光", "晴天"],
+        "facets": ["time", "lighting"],
+    },
+    "夜晚": {
+        "expanded": ["夜景", "夜色", "晚上", "夜间", "黑夜"],
+        "support": ["灯光", "霓虹", "路灯", "暗光", "长曝光"],
+        "broad": ["城市", "建筑", "街道"],
+        "negative": ["白天", "日间", "阳光", "晴天"],
+        "facets": ["time", "lighting"],
+    },
+    "晚上": {
+        "expanded": ["夜晚", "夜景", "夜色", "夜间"],
+        "support": ["灯光", "霓虹", "路灯", "暗光"],
+        "broad": ["城市", "街道"],
+        "negative": ["白天", "日间", "阳光", "晴天"],
+        "facets": ["time", "lighting"],
+    },
+    "黑夜": {
+        "expanded": ["夜晚", "夜景", "夜色"],
+        "support": ["灯光", "暗光", "路灯"],
+        "broad": ["城市"],
+        "negative": ["白天", "阳光", "晴天"],
+        "facets": ["time", "lighting"],
+    },
+    "夜间": {
+        "expanded": ["夜晚", "夜景", "夜色", "晚上"],
+        "support": ["灯光", "霓虹", "路灯", "暗光"],
+        "broad": ["城市", "建筑"],
         "negative": ["白天", "日间", "阳光", "晴天"],
         "facets": ["time", "lighting"],
     },
@@ -695,6 +934,13 @@ class SearchQueryPlan:
     filters: dict = field(default_factory=dict)
     recommended_profile: str = "default_semantic"
     penalize_tags: list[str] = field(default_factory=list)
+    # ── debug / explain ───────────────────────────────────────────────────────
+    # which tiered dict keys were found in the (cleaned) query
+    matched_keys: list[str] = field(default_factory=list)
+    # facets that are "core" (derived from exact/strong match to a tiered key)
+    core_facets: list[str] = field(default_factory=list)
+    # ── EXIF / Photo metadata filters (parsed from query) ─────────────────────
+    metadata_filters: dict = field(default_factory=dict)
 
     # ── convenience aliases ───────────────────────────────────────────────────
 
@@ -755,9 +1001,13 @@ def understand_query(
     project_id: Optional[int] = None,
 ) -> SearchQueryPlan:
     """Analyse a user search query and return a structured plan (rule engine)."""
-    query = query.strip()
-    if not query:
-        return SearchQueryPlan(original_query=query, normalized_query=query)
+    original_query = query.strip()
+    if not original_query:
+        return SearchQueryPlan(original_query=original_query, normalized_query=original_query)
+
+    # Clean Chinese noise words BEFORE tokenisation so they don't become
+    # spurious exact_terms (e.g. "的照片" should not end up in exact_terms).
+    query = _clean_chinese_query(original_query)
 
     search_mode: Literal["keyword", "vector", "hybrid"] = (
         "keyword" if _is_ocr_intent(query) else "hybrid"
@@ -766,7 +1016,7 @@ def understand_query(
     profile = _recommended_profile(intent)
     q_lower = query.lower()
 
-    # Exact terms: words from the original query
+    # Exact terms: words from the *cleaned* query
     exact_terms: list[str] = [w for w in query.split() if w]
     exact_lower: set[str] = {t.lower() for t in exact_terms}
 
@@ -778,11 +1028,14 @@ def understand_query(
 
     # intent_facets: facet → list of associated terms from the query
     facet_terms: dict[str, list[str]] = {}  # facet → terms
+    matched_keys_set: list[str] = []  # tiered dict keys found in cleaned query
 
     for primary_facet, tiered_dict in _ALL_TIERED_DICTS_WITH_FACETS:
         for key, tiers in tiered_dict.items():
             if key not in q_lower:
                 continue
+            if key not in matched_keys_set:
+                matched_keys_set.append(key)
 
             # The entry's explicit facets override the dict-level primary_facet
             entry_facets: list[str] = tiers.get("facets", [primary_facet])
@@ -869,8 +1122,10 @@ def understand_query(
         "query_core_facets": core_facets,
     }
 
+    metadata_filters = _parse_metadata_filters(original_query)
+
     return SearchQueryPlan(
-        original_query=query,
+        original_query=original_query,
         normalized_query=normalized_query,
         exact_terms=exact_terms,
         expanded_terms=expanded_terms,
@@ -885,6 +1140,9 @@ def understand_query(
         filters=filters,
         recommended_profile=profile,
         penalize_tags=penalize_tags,
+        matched_keys=matched_keys_set,
+        core_facets=core_facets,
+        metadata_filters=metadata_filters,
     )
 
 

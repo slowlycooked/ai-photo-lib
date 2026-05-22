@@ -6,17 +6,19 @@ import { useProjectContext } from "@/contexts/ProjectContext";
 import type { SearchMode, TagField } from "@/api/types";
 
 const MODES: { value: SearchMode; label: string }[] = [
-  { value: "hybrid", label: "自动 Hybrid" },
+  { value: "auto", label: "自动 / 按项目设置" },
+  { value: "hybrid", label: "Hybrid" },
   { value: "keyword", label: "关键词" },
   { value: "vector", label: "语义 Vector" },
 ];
 
-const TAG_FIELD_LABELS: Record<TagField, string> = {
+const TAG_FIELD_LABELS: Record<string, string> = {
   scene_tags: "场景标签",
   object_tags: "物体标签",
   activity_tags: "活动标签",
   quality_tags: "质量标签",
   search_keywords: "搜索关键词",
+  location_clues: "位置线索",
 };
 
 export function SearchPage() {
@@ -26,7 +28,7 @@ export function SearchPage() {
   const tagField = params.get("tag_field") as TagField | null;
   const tagValue = params.get("tag_value");
   const { currentProjectId } = useProjectContext();
-  const [mode, setMode] = useState<SearchMode>("hybrid");
+  const [mode, setMode] = useState<SearchMode>("auto");
   const [debug, setDebug] = useState(false);
 
   const isTagFilter = filter === "tag" && tagField != null && tagValue != null;

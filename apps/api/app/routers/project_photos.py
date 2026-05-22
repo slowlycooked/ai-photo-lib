@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import io
 import os
 from datetime import date, datetime, time as time_
+from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from sqlalchemy import extract, func
 from sqlalchemy.orm import Session
 
@@ -155,6 +157,63 @@ def get_project_photo_original(
         headers={
             "Cache-Control": "private, max-age=0",
             "Content-Disposition": f'attachment; filename="{photo.file_name}"',
+        },
+    )
+
+
+# Browser-renderable MIME types — served inline for preview
+_INLINE_MIME = {"image/jpeg", "image/png", "image/webp", "image/gif", "image/avif"}
+# Non-browser-renderable suffixes that need JPEG conversion before preview
+_CONVERT_SUFFIXES = {".heic", ".heif"}
+
+
+@router.get("/{project_id}/photos/{photo_id}/preview")
+def get_project_photo_preview(
+    photo: Photo = Depends(require_project_photo),
+):
+    """Serve a browser-displayable version of the photo inline (no attachment).
+
+    * JPEG/PNG/WebP/GIF/AVIF: returned as-is with inline Content-Disposition.
+    * HEIC/HEIF and other non-web formats: converted to JPEG on the fly.
+    """
+    if not os.path.exists(photo.file_path):
+        raise HTTPException(status_code=404, detail="Original file not found on disk")
+
+    suffix = Path(photo.file_path).suffix.lower()
+    mime = photo.mime_type or ""
+
+    if mime in _INLINE_MIME and suffix not in _CONVERT_SUFFIXES:
+        # Serve directly — browser can render this natively
+        return FileResponse(
+            photo.file_path,
+            media_type=mime,
+            headers={
+                "Cache-Control": "private, max-age=3600",
+                "Content-Disposition": "inline",
+            },
+        )
+
+    # Convert to JPEG in memory (covers HEIC, HEIF, and unknown formats)
+    try:
+        from PIL import Image  # pillow-heif is already registered at startup
+
+        with Image.open(photo.file_path) as img:
+            img = img.convert("RGB")
+            buf = io.BytesIO()
+            img.save(buf, "JPEG", quality=90, optimize=True)
+            jpeg_bytes = buf.getvalue()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Preview conversion failed: {exc}",
+        ) from exc
+
+    return Response(
+        content=jpeg_bytes,
+        media_type="image/jpeg",
+        headers={
+            "Cache-Control": "private, max-age=3600",
+            "Content-Disposition": "inline",
         },
     )
 

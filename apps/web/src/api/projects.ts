@@ -277,6 +277,9 @@ export const projectsApi = {
   originalUrl: (id: number, photoId: number) =>
     `${BASE}/projects/${id}/photos/${photoId}/original`,
 
+  previewUrl: (id: number, photoId: number) =>
+    `${BASE}/projects/${id}/photos/${photoId}/preview`,
+
   // ── Search Settings ───────────────────────────────────────────────────────
 
   getSearchSettings: (id: number) =>

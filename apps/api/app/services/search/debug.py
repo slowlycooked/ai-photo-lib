@@ -22,6 +22,11 @@ def build_debug_payload(
     trace: Optional[list] = None,
     displayed_candidates: int = 0,
     filtered_candidates: int = 0,
+    filtered_out_samples: Optional[list] = None,
+    stale_embedding_filtered: int = 0,
+    metadata_filters: Optional[dict] = None,
+    metadata_candidates: int = 0,
+    metadata_only: bool = False,
 ) -> dict:
     """Build the debug payload that accompanies a search response."""
     payload: dict = {
@@ -42,7 +47,9 @@ def build_debug_payload(
         "broad_terms": query_plan.broad_terms,
         # Facet metadata
         "intent_facets": query_plan.intent_facets,
+        "matched_keys": query_plan.matched_keys,
         "query_constraints": query_plan.query_constraints,
+        "core_facets": query_plan.core_facets,
         # Penalise tags snapshot
         "penalize_tags": query_plan.penalize_tags,
         "intent": query_plan.intent,
@@ -57,11 +64,19 @@ def build_debug_payload(
             "merged_candidates": merged_candidates,
             "displayed_candidates": displayed_candidates,
             "filtered_candidates": filtered_candidates,
+            "stale_embedding_filtered": stale_embedding_filtered,
         },
         # Legacy flat counts kept for backward compat
         "keyword_candidates": keyword_candidates,
         "vector_candidates": vector_candidates,
         "merged_candidates": merged_candidates,
+        # Evidence / filter stats
+        "filter_stats": {
+            "filtered_count": filtered_candidates,
+            "stale_embedding_filtered": stale_embedding_filtered,
+        },
+        # Sample of filtered-out candidates for debugging
+        "filtered_out_samples": filtered_out_samples or [],
         # Effective settings snapshot
         "settings_snapshot": {
             "default_mode": settings.default_mode,
@@ -88,4 +103,12 @@ def build_debug_payload(
     }
     if fallback_reason:
         payload["fallback_reason"] = fallback_reason
+    if metadata_filters:
+        payload["metadata_filters"] = {
+            k: v for k, v in metadata_filters.items()
+            if v not in (None, [], False, {})
+        }
+        payload["metadata_candidates"] = metadata_candidates
+        payload["metadata_only"] = metadata_only
+        payload["matched_metadata_terms"] = metadata_filters.get("matched_metadata_terms", [])
     return payload

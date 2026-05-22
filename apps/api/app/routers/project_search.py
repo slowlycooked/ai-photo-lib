@@ -24,7 +24,7 @@ def project_search(
     q: str = "",
     page: int = 1,
     page_size: int = 50,
-    mode: str = Query("hybrid", pattern="^(keyword|vector|hybrid)$"),
+    mode: str = Query("auto", pattern="^(auto|keyword|vector|hybrid)$"),
     debug: bool = False,
     folder_id: Optional[int] = None,
     folder_scope: str = "subtree",

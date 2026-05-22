@@ -198,6 +198,13 @@ export interface SearchResultItem {
   vector_score?: number;
   rrf_score?: number;
   match_source?: string[];
+  evidence_level?: string;
+  rank_reason?: string;
+  filter_reason?: string | null;
+  term_level_hits?: Record<string, string[]>;
+  negative_hits?: string[];
+  core_facet_passed?: boolean;
+  score_breakdown?: Record<string, number>;
   field_scores?: {
     content?: number;
     caption?: number;
@@ -214,6 +221,16 @@ export interface SearchResultItem {
       rank: number | null;
     };
   };
+  // EXIF / Photo metadata fields
+  camera_make?: string | null;
+  camera_model?: string | null;
+  lens_model?: string | null;
+  focal_length?: string | null;
+  aperture?: string | null;
+  exposure_time?: string | null;
+  iso?: number | null;
+  gps_latitude?: number | null;
+  gps_longitude?: number | null;
 }
 
 export interface SearchTraceStep {
@@ -227,6 +244,12 @@ export interface SearchDebugPayload {
   exact_terms: string[];
   expanded_terms: string[];
   broad_terms: string[];
+  support_terms?: string[];
+  negative_terms?: string[];
+  intent_facets?: Record<string, string[]>;
+  matched_keys?: string[];
+  core_facets?: string[];
+  query_constraints?: Record<string, unknown>;
   intent: string;
   recommended_profile?: string;
   mode: string;
@@ -236,6 +259,20 @@ export interface SearchDebugPayload {
   vector_candidates: number;
   merged_candidates: number;
   fallback_reason?: string;
+  filtered_candidates?: number;
+  stale_embedding_filtered?: number;
+  filtered_out_samples?: Array<{
+    photo_id: number;
+    evidence_level: string;
+    filter_reason: string;
+    vector_score: number;
+    keyword_score: number;
+  }>;
+  // Metadata filter debug
+  metadata_filters?: Record<string, unknown>;
+  metadata_candidates?: number;
+  metadata_only?: boolean;
+  matched_metadata_terms?: string[];
   trace?: SearchTraceStep[];
   settings_snapshot?: {
     default_mode: string;
@@ -245,6 +282,12 @@ export interface SearchDebugPayload {
     keyword_weight: number;
     vector_weight: number;
     vector_min_score: number;
+    vector_strict_score: number;
+    min_display_evidence_level: string;
+    enable_evidence_filter: boolean;
+    enable_negative_penalty: boolean;
+    evidence_weight: number;
+    negative_term_penalty: number;
     keyword_field_weights: Record<string, number>;
     vector_field_weights: Record<string, number>;
     ocr_vector_field_weights: Record<string, number>;
@@ -276,6 +319,7 @@ export interface TagsResponse {
   activity_tags: TagCount[];
   quality_tags: TagCount[];
   search_keywords: TagCount[];
+  location_clues?: TagCount[];
 }
 
 // ─── Settings ─────────────────────────────────────────────────────────────────
@@ -400,14 +444,15 @@ export interface PromptTemplateTestResponse {
 
 // ─── Embedding Settings ───────────────────────────────────────────────────────
 
-export type SearchMode = "keyword" | "vector" | "hybrid";
+export type SearchMode = "keyword" | "vector" | "hybrid" | "auto";
 
 export type TagField =
   | "scene_tags"
   | "object_tags"
   | "activity_tags"
   | "quality_tags"
-  | "search_keywords";
+  | "search_keywords"
+  | "location_clues";
 
 export interface ProjectEmbeddingSettings {
   id: number;
@@ -509,6 +554,7 @@ export interface ProjectSearchSettings {
   enable_query_understanding: boolean;
   enable_structured_filters: boolean;
   enable_semantic_tag_boost: boolean;
+  search_quality_settings?: Record<string, unknown> | null;
   created_at: string;
   updated_at: string;
 }
