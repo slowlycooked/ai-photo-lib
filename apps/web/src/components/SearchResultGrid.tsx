@@ -74,6 +74,20 @@ function SearchCard({ item, debug }: { item: SearchResultItem; debug?: boolean }
                     .join(" ")}
                 </div>
               )}
+              {item.explain?.keyword && (
+                <div className="text-[9px] text-blue-600 dark:text-blue-400">
+                  kw_rank:{item.explain.keyword.rank ?? "?"}{" "}
+                  fields:{Object.keys(item.explain.keyword.matched_fields ?? {}).join(",")}
+                </div>
+              )}
+              {item.explain?.vector && (
+                <div className="text-[9px] text-purple-600 dark:text-purple-400">
+                  vec_rank:{item.explain.vector.rank ?? "?"}{" "}
+                  {Object.entries(item.explain.vector.field_scores ?? {})
+                    .map(([k, v]) => `${k}:${(v as number).toFixed(3)}`)
+                    .join(" ")}
+                </div>
+              )}
               {item.match_source && (
                 <div className="text-[9px] text-stone">{item.match_source.join(" ")}</div>
               )}
@@ -91,15 +105,37 @@ function DebugPanel({ payload }: { payload: SearchDebugPayload }) {
       <div className="font-semibold text-xs mb-1.5">🔍 Search Debug</div>
       <div><span className="opacity-60">原始:</span> {payload.original_query}</div>
       <div><span className="opacity-60">规范化:</span> {payload.normalized_query}</div>
-      {payload.expanded_terms.length > 0 && (
-        <div><span className="opacity-60">扩展词:</span> {payload.expanded_terms.join(", ")}</div>
+      {(payload.exact_terms?.length ?? 0) > 0 && (
+        <div><span className="opacity-60">精确词:</span> {payload.exact_terms!.join(", ")}</div>
       )}
-      <div><span className="opacity-60">意图:</span> {payload.intent} &nbsp; <span className="opacity-60">模式:</span> {payload.mode}</div>
+      {(payload.expanded_terms?.length ?? 0) > 0 && (
+        <div><span className="opacity-60">近义词:</span> {payload.expanded_terms.join(", ")}</div>
+      )}
+      {(payload.broad_terms?.length ?? 0) > 0 && (
+        <div><span className="opacity-60">宽泛词:</span> {payload.broad_terms!.join(", ")}</div>
+      )}
+      <div>
+        <span className="opacity-60">意图:</span> {payload.intent}
+        {payload.recommended_profile && (
+          <> &nbsp; <span className="opacity-60">权重方案:</span> {payload.recommended_profile}</>
+        )}
+        &nbsp; <span className="opacity-60">模式:</span> {payload.mode}
+      </div>
       <div><span className="opacity-60">模型:</span> {payload.embedding_model} ({payload.embedding_dimension}d)</div>
       <div>
         <span className="opacity-60">候选:</span>{" "}
         关键词 {payload.keyword_candidates} / 向量 {payload.vector_candidates} / 合并 {payload.merged_candidates}
       </div>
+      {payload.settings_snapshot && (
+        <details className="mt-1">
+          <summary className="cursor-pointer opacity-70 text-[10px]">设置快照 (点击展开)</summary>
+          <div className="mt-1 space-y-0.5 text-[10px] pl-2 border-l border-amber-400/30">
+            <div>mode:{payload.settings_snapshot.default_mode} kw_k:{payload.settings_snapshot.keyword_top_k} vec_k:{payload.settings_snapshot.vector_top_k} rrf_k:{payload.settings_snapshot.rrf_k}</div>
+            <div>kw_w:{payload.settings_snapshot.keyword_weight} vec_w:{payload.settings_snapshot.vector_weight} min_score:{payload.settings_snapshot.vector_min_score}</div>
+            <div>vec_fields: {Object.entries(payload.settings_snapshot.vector_field_weights ?? {}).map(([k,v]) => `${k.replace('_embedding','')}:${(v as number).toFixed(2)}`).join(" ")}</div>
+          </div>
+        </details>
+      )}
       {payload.fallback_reason && (
         <div className="text-red-600 dark:text-red-400">
           ⚠ Fallback: {payload.fallback_reason}

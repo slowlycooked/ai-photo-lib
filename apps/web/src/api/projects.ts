@@ -15,6 +15,8 @@ import type {
   ProjectEmbeddingSettings,
   ProjectEmbeddingSettingsUpdate,
   ProjectListResponse,
+  ProjectSearchSettings,
+  ProjectSearchSettingsUpdate,
   ProjectUpdate,
   Project,
   PromptTemplate,
@@ -268,4 +270,21 @@ export const projectsApi = {
 
   originalUrl: (id: number, photoId: number) =>
     `${BASE}/projects/${id}/photos/${photoId}/original`,
+
+  // ── Search Settings ───────────────────────────────────────────────────────
+
+  getSearchSettings: (id: number) =>
+    request<ProjectSearchSettings>(`/projects/${id}/search-settings`),
+
+  updateSearchSettings: (id: number, body: ProjectSearchSettingsUpdate) =>
+    request<ProjectSearchSettings>(`/projects/${id}/search-settings`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+
+  resetSearchSettings: (id: number) =>
+    request<ProjectSearchSettings>(`/projects/${id}/search-settings/reset`, {
+      method: "POST",
+    }),
 };

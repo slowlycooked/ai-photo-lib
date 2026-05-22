@@ -29,6 +29,7 @@ from .routers import (
     project_prompt_templates,
     project_embeddings,
     project_search,
+    project_search_settings,
     project_tags,
     project_photos,
 )
@@ -129,4 +130,5 @@ app.include_router(project_embedding_settings.router)
 app.include_router(project_prompt_templates.router)
 app.include_router(project_embeddings.router)
 app.include_router(project_search.router)
+app.include_router(project_search_settings.router)
 app.include_router(project_tags.router)

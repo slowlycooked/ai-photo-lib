@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertCircle, Bot, Check, Clipboard, FlaskConical, Loader2, RefreshCw, RotateCcw, Save, Sparkles, Trash2 } from "lucide-react";
+import { AlertCircle, Bot, Check, Clipboard, FlaskConical, Loader2, RefreshCw, RotateCcw, Save, Settings, Sparkles, Trash2 } from "lucide-react";
 import {
   api,
   type Photo,
@@ -9,6 +9,7 @@ import {
   type PromptTemplate,
   type PromptTemplateTestResponse,
 } from "@/lib/api";
+import ProjectSearchSettingsPanel from "./ProjectSearchSettingsPanel";
 
 interface ModelForm {
   provider: string;
@@ -1103,6 +1104,11 @@ export function ProjectAISettingsPanel({ projectId }: { projectId: number }) {
 
       {/* Embedding Settings Section */}
       <EmbeddingSettingsSection projectId={projectId} />
+
+      {/* Search Settings Section */}
+      <SettingsCard title="搜索参数设置">
+        <ProjectSearchSettingsPanel projectId={projectId} />
+      </SettingsCard>
     </div>
   );
 }

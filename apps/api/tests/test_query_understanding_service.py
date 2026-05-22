@@ -17,8 +17,13 @@ class TestUnderstandQuery:
 
     def test_animal_query_expands_terms(self):
         plan = understand_query("dog")
-        assert len(plan.expanded_terms) > 1
-        assert any("狗" in t or "宠物" in t or "动物" in t for t in plan.expanded_terms)
+        # expanded_terms = close synonyms (狗/小狗)
+        assert len(plan.expanded_terms) >= 1
+        # broad_terms = category terms (宠物, 动物)
+        assert any("宠物" in t or "动物" in t for t in plan.broad_terms)
+        # all_terms combines all three tiers
+        all_t = plan.all_terms
+        assert any("狗" in t or "宠物" in t or "动物" in t for t in all_t)
 
     def test_animal_intent_detected(self):
         plan = understand_query("cat playing")
@@ -26,7 +31,8 @@ class TestUnderstandQuery:
 
     def test_weather_query_expands(self):
         plan = understand_query("rainy day")
-        assert any("雨" in t for t in plan.expanded_terms)
+        # rain / 雨 terms appear in expanded or broad
+        assert any("雨" in t for t in plan.all_terms)
 
     def test_weather_intent_detected(self):
         plan = understand_query("雪天照片")
@@ -66,7 +72,7 @@ class TestUnderstandQuery:
 
     def test_food_query_expands(self):
         plan = understand_query("美食拍摄")
-        assert any("食物" in t or "料理" in t or "美食" in t for t in plan.expanded_terms)
+        assert any("食物" in t or "料理" in t or "美食" in t for t in plan.all_terms)
 
     def test_expanded_terms_are_list_of_strings(self):
         plan = understand_query("travel adventure")

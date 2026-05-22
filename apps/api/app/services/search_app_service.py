@@ -1,24 +1,17 @@
-from __future__ import annotations
+"""SearchAppService — project-scoped search application service.
 
-"""Search Application Service (Phase 3 / P0).
-
-Wraps the existing ``search_service.py`` as a proper Application Service:
-* Validates project context
-* Resolves effective settings via ``ProjectSettingsResolver``
-* Delegates to the existing search implementation
-
-Future iterations will inline the search logic here and remove the
-``search_service`` module dependency.
+Wraps the new ``app.services.search.app_service.search_photos`` function
+behind an object-oriented interface that was previously used by routers.
 """
+from __future__ import annotations
 
 import logging
 from typing import Optional
 
 from sqlalchemy.orm import Session
 
-from ..services.project_settings import ProjectSettingsResolver
-from ..services.search_service import SearchMode, search_photos
-from ..schemas.search import SearchResponse
+from .search.app_service import search_photos
+from .search.types import SearchMode
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +22,7 @@ class SearchAppService:
     Usage::
 
         service = SearchAppService(db, project_id)
-        total, items = service.search(
+        total, items, debug_payload = service.search(
             query="夜晚古建筑",
             mode="hybrid",
             page=1,
@@ -40,7 +33,6 @@ class SearchAppService:
     def __init__(self, db: Session, project_id: int) -> None:
         self._db = db
         self._project_id = project_id
-        self._effective = ProjectSettingsResolver.resolve(db, project_id)
 
     def search(
         self,
@@ -52,14 +44,8 @@ class SearchAppService:
         folder_id: Optional[int] = None,
         folder_scope: str = "subtree",
         debug: bool = False,
-    ) -> tuple[int, list]:
-        """Execute a project-scoped search and return (total, items)."""
-        logger.debug(
-            "SearchAppService.search project_id=%s mode=%s query=%s",
-            self._project_id,
-            mode,
-            query,
-        )
+    ) -> tuple[int, list, Optional[dict]]:
+        """Search photos. Returns (total, items, debug_payload)."""
         return search_photos(
             self._db,
             query,

@@ -41,6 +41,8 @@ export type {
   ProjectEmbeddingSettings,
   ProjectEmbeddingSettingsUpdate,
   ProjectListResponse,
+  ProjectSearchSettings,
+  ProjectSearchSettingsUpdate,
   ProjectUpdate,
   PromptTemplate,
   PromptTemplateCreate,

@@ -22,6 +22,7 @@ class SearchResultItem(BaseModel):
     rrf_score: Optional[float] = None
     match_source: Optional[List[str]] = None
     field_scores: Optional[Dict[str, float]] = None
+    explain: Optional[Dict[str, Any]] = None  # per-result keyword/vector explain
 
 
 class SearchResponse(BaseModel):

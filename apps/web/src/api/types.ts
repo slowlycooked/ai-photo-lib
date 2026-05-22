@@ -204,13 +204,26 @@ export interface SearchResultItem {
     tag?: number;
     ocr?: number;
   };
+  explain?: {
+    keyword?: {
+      matched_fields: Record<string, string[]>;
+      rank: number | null;
+    };
+    vector?: {
+      field_scores: Record<string, number>;
+      rank: number | null;
+    };
+  };
 }
 
 export interface SearchDebugPayload {
   original_query: string;
   normalized_query: string;
+  exact_terms: string[];
   expanded_terms: string[];
+  broad_terms: string[];
   intent: string;
+  recommended_profile?: string;
   mode: string;
   embedding_model: string;
   embedding_dimension: number;
@@ -218,6 +231,21 @@ export interface SearchDebugPayload {
   vector_candidates: number;
   merged_candidates: number;
   fallback_reason?: string;
+  settings_snapshot?: {
+    default_mode: string;
+    keyword_top_k: number;
+    vector_top_k: number;
+    rrf_k: number;
+    keyword_weight: number;
+    vector_weight: number;
+    vector_min_score: number;
+    keyword_field_weights: Record<string, number>;
+    vector_field_weights: Record<string, number>;
+    ocr_vector_field_weights: Record<string, number>;
+    enable_query_understanding: boolean;
+    enable_structured_filters: boolean;
+    enable_semantic_tag_boost: boolean;
+  };
 }
 
 export interface SearchResponse {
@@ -447,3 +475,31 @@ export interface RebuildResponse {
   total_checked: number;
   message: string;
 }
+
+// ─── Project Search Settings ──────────────────────────────────────────────────
+
+export interface ProjectSearchSettings {
+  id: number;
+  project_id: number;
+  default_mode: string;
+  keyword_top_k: number;
+  vector_top_k: number;
+  page_size_default: number;
+  page_size_max: number;
+  rrf_k: number;
+  keyword_weight: number;
+  vector_weight: number;
+  vector_min_score: number;
+  keyword_field_weights: Record<string, number> | null;
+  vector_field_weights: Record<string, number> | null;
+  ocr_query_vector_field_weights: Record<string, number> | null;
+  enable_query_understanding: boolean;
+  enable_structured_filters: boolean;
+  enable_semantic_tag_boost: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export type ProjectSearchSettingsUpdate = Partial<
+  Omit<ProjectSearchSettings, 'id' | 'project_id' | 'created_at' | 'updated_at'>
+>;
