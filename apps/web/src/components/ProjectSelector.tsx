@@ -16,11 +16,10 @@ export function ProjectSelector() {
     setOpen(false);
 
     const isProjectAISettings =
-      /^\/projects?\/\d+\/settings\/ai$/.test(location.pathname) ||
-      location.pathname === "/project/settings/ai";
+      /^\/projects\/\d+\/settings\/ai$/.test(location.pathname);
 
     if (isProjectAISettings) {
-      navigate(`/project/${projectId}/settings/ai`, { replace: true });
+      navigate(`/projects/${projectId}/settings/ai`, { replace: true });
     }
   };
 
@@ -104,7 +103,7 @@ export function ProjectSelector() {
             ))}
             <div className="border-t border-hairline mt-1 pt-1 px-1 pb-1">
               <Link
-                to={`/project/${currentProject.id}/settings/ai`}
+                to={`/projects/${currentProject.id}/settings/ai`}
                 onClick={() => setOpen(false)}
                 className="w-full flex items-center gap-2 px-2 py-2 rounded-md text-body-sm text-primary hover:bg-secondary-bg"
               >

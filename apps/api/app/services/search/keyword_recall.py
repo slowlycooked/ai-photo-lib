@@ -14,6 +14,7 @@ import logging
 from typing import Optional
 
 from sqlalchemy import func, or_
+from sqlalchemy.sql import Select
 from sqlalchemy.orm import Session
 
 from ...models.ai import PhotoAIAnalysis
@@ -196,7 +197,8 @@ class KeywordRecallService:
         query_plan: SearchQueryPlan,
         *,
         project_id: int,
-        folder_photo_ids: Optional[set[int]],
+        folder_photo_subquery: Optional[Select],
+        constrained_photo_ids: Optional[set[int]] = None,
         limit: Optional[int] = None,
     ) -> list[SearchCandidate]:
         """Run keyword search and return scored candidates.
@@ -234,11 +236,14 @@ class KeywordRecallService:
             )
         )
 
-        if folder_photo_ids is not None:
-            if not folder_photo_ids:
-                logger.debug("[keyword_recall] folder_photo_ids is empty set, returning empty")
+        if folder_photo_subquery is not None:
+            base_query = base_query.filter(Photo.id.in_(folder_photo_subquery))
+
+        if constrained_photo_ids is not None:
+            if not constrained_photo_ids:
+                logger.debug("[keyword_recall] constrained_photo_ids is empty set, returning empty")
                 return []
-            base_query = base_query.filter(Photo.id.in_(folder_photo_ids))
+            base_query = base_query.filter(Photo.id.in_(constrained_photo_ids))
 
         rows: list[tuple[Photo, PhotoAIAnalysis]] = (
             base_query

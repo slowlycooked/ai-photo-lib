@@ -98,15 +98,18 @@ class TestUnderstandQuery:
         for t in plan.expanded_terms:
             assert t in recall
 
-    def test_weather_rain_strong_terms(self):
-        """积水/湿地面/雨衣 should be strong (expanded), not broad."""
+    def test_weather_rain_support_terms(self):
+        """积水/湿地面/雨衣 should be support terms, not broad terms."""
         plan = understand_query("下雨天")
-        expanded_lower = {t.lower() for t in plan.expanded_terms}
+        support_lower = {t.lower() for t in plan.support_terms}
         broad_lower = {t.lower() for t in plan.broad_terms}
-        # These were previously in broad — now must be in expanded
-        for strong in ("积水", "湿地面", "雨衣", "淋湿", "雨中"):
-            assert strong in expanded_lower, f"{strong!r} should be in expanded_terms"
-            assert strong not in broad_lower, f"{strong!r} should not be in broad_terms"
+        # Support terms should provide context but not be weak broad terms.
+        for support in ("积水", "湿地面", "雨衣", "淋湿"):
+            assert support in support_lower, f"{support!r} should be in support_terms"
+            assert support not in broad_lower, f"{support!r} should not be in broad_terms"
+
+        # Keep rain-core evidence term in expanded tier.
+        assert "雨中" in {t.lower() for t in plan.expanded_terms}
 
     def test_weather_rain_weak_terms(self):
         """阴天/多云/灰蒙蒙/潮湿 should be weak (broad), not strong."""
@@ -116,6 +119,19 @@ class TestUnderstandQuery:
         for weak in ("阴天", "多云", "灰蒙蒙", "潮湿"):
             assert weak in broad_lower, f"{weak!r} should be in broad_terms"
             assert weak not in expanded_lower, f"{weak!r} should not be in expanded_terms"
+
+    def test_indoor_query_demotes_home_terms_to_support(self):
+        """纯“室内”查询不应把 家/家庭 当作强召回词。"""
+        plan = understand_query("室内")
+        expanded_lower = {t.lower() for t in plan.expanded_terms}
+        support_lower = {t.lower() for t in plan.support_terms}
+
+        assert "家庭" not in expanded_lower
+        assert "家" not in expanded_lower
+        assert "家庭" in support_lower
+        assert "家" in support_lower
+        assert "家具" in expanded_lower
+        assert "房间" in expanded_lower
 
     def test_rain_penalize_tags_populated(self):
         """下雨天 should produce non-empty penalize_tags."""
@@ -136,3 +152,38 @@ class TestUnderstandQuery:
             all_set = set(plan.all_terms)
             for t in plan.recall_terms:
                 assert t in all_set, f"{t!r} in recall_terms but not in all_terms for query {query!r}"
+
+
+@pytest.mark.parametrize(
+    "query,expected_intent,expected_mode",
+    [
+        ("下雨天", "weather_search", "hybrid"),
+        ("夜景", "location_search", "hybrid"),
+        ("invoice 20240101", "ocr_text_search", "keyword"),
+    ],
+)
+def test_query_understanding_behavior_contract_intent_and_mode(
+    query: str,
+    expected_intent: str,
+    expected_mode: str,
+):
+    plan = understand_query(query)
+    assert plan.intent == expected_intent
+    assert plan.search_mode == expected_mode
+
+
+def test_query_understanding_behavior_contract_metadata_only_query():
+    plan = understand_query("2024年12月 iPhone 有GPS 的照片")
+    metadata = plan.metadata_filters
+    assert metadata["metadata_only"] is True
+    assert metadata["year"] == 2024
+    assert metadata["month"] == 12
+    assert metadata["camera_make"] == "Apple"
+    assert metadata["has_gps"] is True
+
+
+def test_query_understanding_behavior_contract_folder_filter_agnostic():
+    """Folder filtering is handled in search SQL layer, not query understanding."""
+    plan = understand_query("夜景")
+    assert plan.filters.get("location") is None
+    assert plan.search_mode == "hybrid"

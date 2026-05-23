@@ -5,11 +5,13 @@ import logging
 from typing import Optional
 
 from sqlalchemy import text
+from sqlalchemy.sql import Select
 from sqlalchemy.orm import Session
 
 from ...constants.embedding import DB_EMBEDDING_DIMENSION
 from ...config import settings as global_settings
 from ...services.embedding_client import EmbeddingRequestError, embed_text
+from ...models.ai import PhotoEmbedding
 from ...services.project_embedding_settings_service import resolve_embedding_settings
 from .types import (
     DEFAULT_OCR_VECTOR_FIELD_WEIGHTS,
@@ -34,7 +36,8 @@ def _vector_field_search(
     project_id: int,
     query_vector_literal: str,
     field_name: str,
-    folder_photo_ids: Optional[set[int]],
+    folder_photo_subquery: Optional[Select],
+    constrained_photo_ids: Optional[set[int]],
     limit: int,
     embedding_model: Optional[str] = None,
     embedding_dimension: Optional[int] = None,
@@ -46,67 +49,57 @@ def _vector_field_search(
     If embedding_model / embedding_dimension / embedding_input_version are
     provided, rows that don't match are also excluded (stale-filtered).
     """
-    params: dict = {
-        "project_id": project_id,
-        "query_vector": query_vector_literal,
-        "limit": limit,
-    }
-    folder_filter = ""
-    if folder_photo_ids is not None:
-        if not folder_photo_ids:
-            return {}, 0
-        params["photo_ids"] = list(folder_photo_ids)
-        folder_filter = " AND pe.photo_id = ANY(:photo_ids)"
+    if constrained_photo_ids is not None and not constrained_photo_ids:
+        return {}, 0
 
-    # Build optional stale-model filters
-    stale_filters = " AND pe.embedding_status = 'ready'"
-    if embedding_model:
-        params["embedding_model"] = embedding_model
-        stale_filters += " AND pe.embedding_model = :embedding_model"
-    if embedding_dimension:
-        params["embedding_dimension"] = embedding_dimension
-        stale_filters += " AND pe.embedding_dimension = :embedding_dimension"
-    if embedding_input_version:
-        params["embedding_input_version"] = embedding_input_version
-        stale_filters += " AND pe.embedding_input_version = :embedding_input_version"
+    base_query = db.query(PhotoEmbedding).filter(
+        PhotoEmbedding.project_id == project_id,
+        getattr(PhotoEmbedding, field_name).is_not(None),
+        PhotoEmbedding.embedding_status == "ready",
+    )
 
-    # Count how many rows would be included without stale-model filter
-    # (used for stale_filtered debug stat — approximate: only when all filters provided)
+    if folder_photo_subquery is not None:
+        base_query = base_query.filter(PhotoEmbedding.photo_id.in_(folder_photo_subquery))
+
+    if constrained_photo_ids is not None:
+        base_query = base_query.filter(PhotoEmbedding.photo_id.in_(constrained_photo_ids))
+
     stale_count = 0
     if embedding_model and embedding_dimension:
-        count_sql = text(
-            f"""
-            SELECT COUNT(*) AS cnt
-            FROM photo_embeddings pe
-            WHERE pe.project_id = :project_id
-              AND pe.{field_name} IS NOT NULL
-              {folder_filter}
-              AND pe.embedding_status = 'ready'
-              AND (
-                pe.embedding_model IS DISTINCT FROM :embedding_model
-                OR pe.embedding_dimension IS DISTINCT FROM :embedding_dimension
-              )
-            """
+        stale_query = db.query(PhotoEmbedding).filter(
+            PhotoEmbedding.project_id == project_id,
+            getattr(PhotoEmbedding, field_name).is_not(None),
+            PhotoEmbedding.embedding_status == "ready",
+            (PhotoEmbedding.embedding_model.is_distinct_from(embedding_model))
+            | (PhotoEmbedding.embedding_dimension.is_distinct_from(embedding_dimension)),
         )
-        count_params = {k: params[k] for k in params if k != "limit"}
-        result = db.execute(count_sql, count_params).scalar()
-        stale_count = int(result or 0)
 
-    sql = text(
-        f"""
-        SELECT pe.photo_id,
-               (1 - (pe.{field_name} <=> CAST(:query_vector AS vector))) AS similarity
-        FROM photo_embeddings pe
-        WHERE pe.project_id = :project_id
-          AND pe.{field_name} IS NOT NULL
-          {folder_filter}
-          {stale_filters}
-        ORDER BY pe.{field_name} <=> CAST(:query_vector AS vector)
-        LIMIT :limit
-        """
+        if folder_photo_subquery is not None:
+            stale_query = stale_query.filter(PhotoEmbedding.photo_id.in_(folder_photo_subquery))
+        if constrained_photo_ids is not None:
+            stale_query = stale_query.filter(PhotoEmbedding.photo_id.in_(constrained_photo_ids))
+        stale_count = int(stale_query.count() or 0)
+
+    if embedding_model:
+        base_query = base_query.filter(PhotoEmbedding.embedding_model == embedding_model)
+    if embedding_dimension:
+        base_query = base_query.filter(PhotoEmbedding.embedding_dimension == embedding_dimension)
+    if embedding_input_version:
+        base_query = base_query.filter(PhotoEmbedding.embedding_input_version == embedding_input_version)
+
+    similarity_expr = text(
+        f"(1 - (photo_embeddings.{field_name} <=> CAST(:query_vector AS vector)))"
+    ).label("similarity")
+    order_expr = text(f"photo_embeddings.{field_name} <=> CAST(:query_vector AS vector)")
+
+    rows = (
+        base_query.with_entities(PhotoEmbedding.photo_id, similarity_expr)
+        .params(query_vector=query_vector_literal)
+        .order_by(order_expr)
+        .limit(limit)
+        .all()
     )
-    rows = db.execute(sql, params).fetchall()
-    return {int(row.photo_id): float(row.similarity) for row in rows}, stale_count
+    return {int(photo_id): float(similarity) for photo_id, similarity in rows}, stale_count
 
 
 class VectorRecallService:
@@ -123,7 +116,8 @@ class VectorRecallService:
         normalized_query: str,
         is_ocr_query: bool,
         project_id: int,
-        folder_photo_ids: Optional[set[int]],
+        folder_photo_subquery: Optional[Select],
+        constrained_photo_ids: Optional[set[int]] = None,
         limit: Optional[int] = None,
     ) -> tuple[dict[int, VectorMatchScores], str, str, int]:
         """Return (scores_by_photo_id, embedding_model, fallback_reason, stale_filtered_count)."""
@@ -181,7 +175,8 @@ class VectorRecallService:
             project_id=project_id,
             query_vector_literal=vector_literal,
             field_name="content_embedding",
-            folder_photo_ids=folder_photo_ids,
+            folder_photo_subquery=folder_photo_subquery,
+            constrained_photo_ids=constrained_photo_ids,
             limit=top_k,
             embedding_model=embedding_model,
             embedding_dimension=embed_cfg.get("embedding_dimension"),
@@ -192,7 +187,8 @@ class VectorRecallService:
             project_id=project_id,
             query_vector_literal=vector_literal,
             field_name="caption_embedding",
-            folder_photo_ids=folder_photo_ids,
+            folder_photo_subquery=folder_photo_subquery,
+            constrained_photo_ids=constrained_photo_ids,
             limit=top_k,
             embedding_model=embedding_model,
             embedding_dimension=embed_cfg.get("embedding_dimension"),
@@ -203,7 +199,8 @@ class VectorRecallService:
             project_id=project_id,
             query_vector_literal=vector_literal,
             field_name="tag_embedding",
-            folder_photo_ids=folder_photo_ids,
+            folder_photo_subquery=folder_photo_subquery,
+            constrained_photo_ids=constrained_photo_ids,
             limit=top_k,
             embedding_model=embedding_model,
             embedding_dimension=embed_cfg.get("embedding_dimension"),
@@ -214,7 +211,8 @@ class VectorRecallService:
             project_id=project_id,
             query_vector_literal=vector_literal,
             field_name="ocr_embedding",
-            folder_photo_ids=folder_photo_ids,
+            folder_photo_subquery=folder_photo_subquery,
+            constrained_photo_ids=constrained_photo_ids,
             limit=top_k,
             embedding_model=embedding_model,
             embedding_dimension=embed_cfg.get("embedding_dimension"),

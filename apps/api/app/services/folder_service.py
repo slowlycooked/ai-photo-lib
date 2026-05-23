@@ -3,7 +3,8 @@ from __future__ import annotations
 from typing import Dict, Optional
 
 from fastapi import HTTPException
-from sqlalchemy import func, or_
+from sqlalchemy import func, or_, select
+from sqlalchemy.sql import Select
 from sqlalchemy.orm import Session
 
 from ..models.folder import ProjectFolder
@@ -93,3 +94,43 @@ def apply_folder_filter(query, db: Session, project_id: int, folder_id: Optional
         ),
     )
     return query.filter(Photo.folder_id.in_(descendants))
+
+
+def build_folder_photo_ids_subquery(
+    db: Session,
+    project_id: int,
+    folder_id: Optional[int],
+    folder_scope: str,
+) -> Select | None:
+    """Build a SQL subquery selecting photo IDs within a folder scope."""
+    if not folder_id:
+        return None
+
+    folder = db.query(ProjectFolder).filter(
+        ProjectFolder.id == folder_id,
+        ProjectFolder.project_id == project_id,
+        ProjectFolder.deleted_at.is_(None),
+    ).first()
+    if not folder:
+        raise HTTPException(status_code=404, detail="Folder not found")
+
+    photo_id_subquery = select(Photo.id).where(
+        Photo.project_id == project_id,
+        Photo.deleted_at.is_(None),
+    )
+
+    if folder_scope == "direct":
+        return photo_id_subquery.where(Photo.folder_id == folder.id)
+
+    if folder.relative_path == "":
+        return photo_id_subquery
+
+    descendant_folder_ids = select(ProjectFolder.id).where(
+        ProjectFolder.project_id == project_id,
+        ProjectFolder.deleted_at.is_(None),
+        or_(
+            ProjectFolder.relative_path == folder.relative_path,
+            ProjectFolder.relative_path.like(folder.relative_path + "/%"),
+        ),
+    )
+    return photo_id_subquery.where(Photo.folder_id.in_(descendant_folder_ids))

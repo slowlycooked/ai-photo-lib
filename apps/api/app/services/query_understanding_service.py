@@ -37,6 +37,11 @@ from dataclasses import dataclass, field
 from datetime import date
 from typing import Any, Dict, Literal, Optional, TypedDict
 
+from .query_understanding_dictionaries import ANIMAL_TERMS_TIERED, WEATHER_TERMS_TIERED
+
+_WEATHER_TERMS_TIERED = WEATHER_TERMS_TIERED
+_ANIMAL_TERMS_TIERED = ANIMAL_TERMS_TIERED
+
 # ── Chinese query noise cleaning ──────────────────────────────────────────────
 #
 # Strip suffixes and prefixes that carry no photo-search semantics.
@@ -323,210 +328,6 @@ _OUTDOOR_TERMS_TIERED: Dict[str, Any] = {
     },
 }
 
-_WEATHER_TERMS_TIERED: Dict[str, Any] = {
-    # Rain group — core evidence: 下雨/雨天/雨滴/雨中
-    #              context clues: 雨伞/雨衣/积水/湿地面/淋湿 (support)
-    #              weak context:  阴天/多云/潮湿 (broad)
-    #              negative:      晴天/阳光/干燥/沙地
-    "下雨": {
-        "expanded": ["雨天", "雨滴", "雨中"],
-        "support": ["雨伞", "雨衣", "积水", "湿地面", "淋湿"],
-        "broad": ["阴天", "多云", "潮湿"],
-        "negative": ["晴天", "阳光", "干燥", "沙地"],
-        "facets": ["weather"],
-    },
-    "下雨天": {
-        "expanded": ["下雨", "雨天", "雨滴", "雨中"],
-        "support": ["雨伞", "雨衣", "积水", "湿地面", "淋湿"],
-        "broad": ["阴天", "多云", "灰蒙蒙", "潮湿"],
-        "negative": ["晴天", "阳光", "沙地", "干燥"],
-        "facets": ["weather"],
-    },
-    "雨天": {
-        "expanded": ["下雨", "雨滴", "雨中"],
-        "support": ["雨伞", "雨衣", "积水", "湿地面", "淋湿"],
-        "broad": ["阴天", "多云", "潮湿"],
-        "negative": ["晴天", "阳光"],
-        "facets": ["weather"],
-    },
-    "下雪": {
-        "expanded": ["雪天", "雪地", "雪花", "积雪"],
-        "broad": ["寒冷", "冬天"],
-        "negative": ["晴天", "阳光", "海边", "夏天"],
-        "facets": ["weather"],
-    },
-    "雪天": {
-        "expanded": ["下雪", "雪地", "积雪", "雪花"],
-        "broad": ["寒冷", "冬天"],
-        "negative": ["晴天", "阳光", "海边", "夏天"],
-        "facets": ["weather"],
-    },
-    "晴天": {
-        "expanded": ["阳光", "蓝天", "白云"],
-        "broad": ["户外"],
-        "negative": ["阴天", "多云", "雨天", "雨伞", "积水"],
-        "facets": ["weather", "lighting"],
-    },
-    "出太阳": {
-        "expanded": ["晴天", "阳光", "蓝天"],
-        "broad": ["白云", "户外", "日照"],
-        "negative": ["阴天", "多云", "雨天"],
-        "facets": ["weather", "lighting"],
-    },
-    "太阳": {
-        "expanded": ["晴天", "阳光", "蓝天"],
-        "broad": ["白云", "户外", "日照"],
-        "negative": ["阴天", "多云"],
-        "facets": ["lighting"],
-    },
-    "阳光": {
-        "expanded": ["晴天", "蓝天", "白云"],
-        "broad": ["户外", "日照"],
-        "negative": ["阴天", "多云", "夜晚", "夜色"],
-        "facets": ["lighting", "weather"],
-    },
-    "晴朗": {
-        "expanded": ["晴天", "阳光", "蓝天"],
-        "broad": ["白云", "户外"],
-        "negative": ["阴天", "多云"],
-        "facets": ["weather"],
-    },
-    "阴天": {
-        "expanded": ["多云", "乌云"],
-        "broad": ["灰色天空", "灰蒙蒙"],
-        "negative": ["晴天", "阳光", "蓝天"],
-        "facets": ["weather"],
-    },
-    "大风": {
-        "expanded": ["风大", "风吹"],
-        "broad": ["户外", "飞扬"],
-        "facets": ["weather"],
-    },
-    "雨伞": {
-        "expanded": ["下雨", "雨天"],
-        "broad": ["防雨"],
-        "facets": ["weather", "object"],
-    },
-    "rain": {
-        "expanded": ["下雨", "雨天", "雨滴", "雨中"],
-        "support": ["雨伞", "雨衣", "积水", "湿地面", "淋湿"],
-        "broad": ["阴天", "多云", "潮湿", "灰蒙蒙"],
-        "negative": ["晴天", "阳光", "沙地"],
-        "facets": ["weather"],
-    },
-    "snow": {
-        "expanded": ["下雪", "雪天", "雪地", "积雪", "雪花"],
-        "broad": ["寒冷", "冬天"],
-        "negative": ["晴天", "阳光", "海边", "夏天"],
-        "facets": ["weather"],
-    },
-    "sunny": {
-        "expanded": ["晴天", "阳光", "蓝天", "白云"],
-        "broad": ["户外"],
-        "negative": ["阴天", "多云", "雨天"],
-        "facets": ["weather", "lighting"],
-    },
-    "sunshine": {
-        "expanded": ["阳光", "晴天", "蓝天", "白云"],
-        "broad": ["户外"],
-        "negative": ["阴天", "多云"],
-        "facets": ["lighting", "weather"],
-    },
-}
-
-_ANIMAL_TERMS_TIERED: Dict[str, Any] = {
-    "猫": {
-        "expanded": ["小猫", "猫咪"],
-        "broad": ["宠物", "动物"],
-        "negative": ["狗", "小狗", "狗狗", "兔子"],
-        "facets": ["object"],
-    },
-    "狗": {
-        "expanded": ["小狗", "狗狗"],
-        "broad": ["宠物", "动物"],
-        "negative": ["猫", "小猫", "猫咪"],
-        "facets": ["object"],
-    },
-    "鸟": {
-        "expanded": ["小鸟", "飞鸟", "禽鸟"],
-        "broad": ["动物"],
-        "facets": ["object"],
-    },
-    "动物": {
-        "expanded": ["猫", "狗", "鸟", "马", "鹿"],
-        "broad": ["宠物", "野生动物", "动物园"],
-        "facets": ["object"],
-    },
-    "猫狗": {
-        "expanded": ["猫", "狗"],
-        "broad": ["宠物", "动物"],
-        "facets": ["object"],
-    },
-    "宠物": {
-        "expanded": ["猫", "狗"],
-        "broad": ["动物"],
-        "facets": ["object"],
-    },
-    "野生动物": {
-        "expanded": ["动物", "野外"],
-        "broad": ["自然", "户外"],
-        "facets": ["object", "scene"],
-    },
-    "动物园": {
-        "expanded": ["动物", "野生动物"],
-        "broad": [],
-        "facets": ["scene", "object"],
-    },
-    "马": {
-        "expanded": ["骏马", "骑马"],
-        "broad": ["动物"],
-        "facets": ["object"],
-    },
-    "鹿": {
-        "expanded": ["梅花鹿", "野鹿"],
-        "broad": ["动物"],
-        "facets": ["object"],
-    },
-    "兔子": {
-        "expanded": ["小兔"],
-        "broad": ["宠物", "动物"],
-        "negative": ["猫", "狗"],
-        "facets": ["object"],
-    },
-    "鱼": {
-        "expanded": ["水族"],
-        "broad": ["海洋", "动物"],
-        "facets": ["object"],
-    },
-    "蝴蝶": {
-        "expanded": ["昆虫"],
-        "broad": ["花园", "动物"],
-        "facets": ["object"],
-    },
-    "animal": {
-        "expanded": ["动物", "猫", "狗", "鸟"],
-        "broad": ["宠物", "野生动物"],
-        "facets": ["object"],
-    },
-    "cat": {
-        "expanded": ["猫", "小猫"],
-        "broad": ["宠物", "动物"],
-        "negative": ["狗", "dog"],
-        "facets": ["object"],
-    },
-    "dog": {
-        "expanded": ["狗", "小狗"],
-        "broad": ["宠物", "动物"],
-        "negative": ["猫", "cat"],
-        "facets": ["object"],
-    },
-    "bird": {
-        "expanded": ["鸟", "小鸟", "飞鸟"],
-        "broad": ["动物"],
-        "facets": ["object"],
-    },
-}
-
 _PEOPLE_TERMS_TIERED: Dict[str, Any] = {
     "孩子": {
         "expanded": ["小孩", "儿童", "玩耍"],
@@ -712,14 +513,16 @@ _TRAVEL_TERMS_TIERED: Dict[str, Any] = {
 
 _INDOOR_TERMS_TIERED: Dict[str, Any] = {
     "室内": {
-        "expanded": ["家", "家庭", "客厅", "卧室"],
+        "expanded": ["客厅", "卧室", "厨房", "房间", "家具"],
+        "support": ["家", "家庭", "屋内"],
         "broad": [],
         "negative": ["户外", "自然", "海边"],
         "facets": ["scene"],
     },
     "家": {
-        "expanded": ["室内", "家庭", "生活"],
-        "broad": [],
+        "expanded": ["室内", "客厅", "卧室"],
+        "support": ["家庭", "生活"],
+        "broad": ["家具"],
         "facets": ["scene"],
     },
     "客厅": {

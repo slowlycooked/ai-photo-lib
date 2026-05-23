@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Loader2, SearchX, ImageIcon, ChevronDown, ChevronRight, Download, X, ZoomIn } from "lucide-react";
 import { useSearch } from "@/hooks/useSearch";
-import { api } from "@/lib/api";
+import { api } from "@/api";
 import type { SearchDebugPayload, SearchMode, SearchResultItem, SearchTraceStep, TagField } from "@/api/types";
 
 interface SearchResultGridProps {

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { ChevronDownIcon, ChevronRightIcon, XIcon } from "lucide-react";
 import { useFolderTree } from "@/hooks/useFolders";
-import { FolderNode, FolderScope } from "@/lib/api";
+import { FolderNode, FolderScope } from "@/api";
 import { cn } from "@/lib/utils";
 
 interface FolderTreeSidebarProps {

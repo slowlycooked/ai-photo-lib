@@ -22,6 +22,9 @@ from .folder_service import ensure_folder_path
 
 logger = logging.getLogger(__name__)
 
+# Commit scan writes in batches to reduce transaction overhead on large libraries.
+_SCAN_COMMIT_BATCH_SIZE = 100
+
 # ---------------------------------------------------------------------------
 # Scan state management
 # ---------------------------------------------------------------------------
@@ -37,9 +40,6 @@ def _empty_state() -> dict[str, Any]:
         "message": "idle",
     }
 
-
-# Global state for the legacy /scan/* endpoints (default project)
-scan_state: dict[str, Any] = _empty_state()
 
 # Per-project state keyed by project_id
 _project_scan_states: dict[int, dict[str, Any]] = {}
@@ -238,7 +238,7 @@ def _process_file(
     state: dict[str, Any],
     project_id: int,
     thumbnail_root: Optional[str] = None,
-    library_root: Optional[Path] = None,
+    relative_base_path: Optional[str] = None,
 ) -> None:
     """Process one image file within the scope of a specific project.
 
@@ -253,11 +253,8 @@ def _process_file(
     relative_path = None
     folder_path = None
     folder_id = None
-    from ..models.project import Project
-    project = db.query(Project).filter(Project.id == project_id).first()
-    if project:
-        relative_base = str(library_root) if library_root else project.photo_library_path
-        relative_path, folder_path = build_relative_paths(relative_base, file_path)
+    if relative_base_path:
+        relative_path, folder_path = build_relative_paths(relative_base_path, file_path)
         folder_cache = state.setdefault("_folder_cache", {})
         folder = ensure_folder_path(db, project_id, folder_path, folder_cache)
         folder_id = folder.id
@@ -289,7 +286,6 @@ def _process_file(
             dirty = True
         if dirty:
             existing.updated_at = datetime.now()
-            db.commit()
         return
 
     mime_type, _ = mimetypes.guess_type(path_str)
@@ -334,7 +330,6 @@ def _process_file(
             existing.relative_path = relative_path
             existing.folder_path = folder_path
         existing.updated_at = datetime.now()
-        db.commit()
         state["updated"] += 1
     else:
         db.add(
@@ -349,111 +344,12 @@ def _process_file(
                 **common_fields,
             )
         )
-        db.commit()
         state["inserted"] += 1
 
 
 # ---------------------------------------------------------------------------
-# Public entry point
+# Public entry points
 # ---------------------------------------------------------------------------
-
-def scan_directory(db: Session) -> None:
-    """
-    Legacy scan using settings.photo_library_path.
-    Resolves the default project if available and tags new photos with it.
-    Designed to be run in a background thread; updates scan_state in place.
-    """
-    from ..models.project import Project
-
-    scan_state.update(
-        running=True,
-        scanned=0,
-        inserted=0,
-        updated=0,
-        errors=0,
-        current_path=None,
-        message="scanning",
-    )
-
-    default_project = (
-        db.query(Project)
-        .filter(Project.is_default.is_(True), Project.deleted_at.is_(None))
-        .first()
-    )
-    if default_project is None:
-        scan_state.update(
-            running=False,
-            message="Default project not found; use /projects/{project_id}/scan/start",
-        )
-        logger.error(
-            "Legacy scan aborted: no default project found. "
-            "Use POST /projects/{project_id}/scan/start instead."
-        )
-        return
-    project_id = default_project.id
-
-    library = Path(settings.photo_library_path)
-    if not library.exists():
-        scan_state.update(running=False, message=f"Directory not found: {library}")
-        logger.error("Photo library path does not exist: %s", library)
-        return
-
-    # Resolve thumbnail root once so we can skip it during rglob
-    thumb_root = Path(settings.thumbnail_path).resolve()
-
-    try:
-        for entry in library.rglob("*"):
-            if not entry.is_file():
-                continue
-            if entry.suffix.lower() not in SUPPORTED_SUFFIXES:
-                continue
-            # Skip generated thumbnails (they live inside PHOTO_LIBRARY_PATH)
-            try:
-                entry.resolve().relative_to(thumb_root)
-                continue  # inside thumbnail directory — not an original photo
-            except ValueError:
-                pass  # outside thumbnail directory — proceed
-
-            scan_state["current_path"] = str(entry)
-            scan_state["scanned"] += 1
-
-            try:
-                _process_file(db, entry, scan_state, project_id)
-            except Exception as exc:
-                logger.error("Failed to process %s: %s", entry, exc)
-                scan_state["errors"] += 1
-    finally:
-        final_message = "done"
-        try:
-            # 扫描结束后重算文件夹计数（若失败也不能阻塞状态收尾）
-            from .folder_service import recompute_project_folder_counts
-            from ..models.project import Project
-
-            # Legacy scan touches all projects — recompute all.
-            all_projects = db.query(Project).filter(Project.deleted_at.is_(None)).all()
-            for proj in all_projects:
-                try:
-                    recompute_project_folder_counts(db, proj.id)
-                except Exception as e:
-                    logger.warning("Failed to recompute folder counts for project %d: %s", proj.id, e)
-            
-            db.commit()
-        except Exception as exc:
-            logger.exception("Failed to recompute folder counts after scan: %s", exc)
-            scan_state["errors"] += 1
-            final_message = "done_with_errors"
-        finally:
-            scan_state.pop("_folder_cache", None)
-            scan_state.update(running=False, current_path=None, message=final_message)
-
-        logger.info(
-            "Scan complete — scanned=%d inserted=%d updated=%d errors=%d",
-            scan_state["scanned"],
-            scan_state["inserted"],
-            scan_state["updated"],
-            scan_state["errors"],
-        )
-
 
 def scan_project(db: Session, project_id: int) -> None:
     """
@@ -540,6 +436,8 @@ def scan_project(db: Session, project_id: int) -> None:
                 project.updated_at = datetime.now()
                 db.commit()
 
+    pending_writes = 0
+    commit_count = 0
     try:
         for entry in library.rglob("*"):
             if not entry.is_file():
@@ -562,14 +460,24 @@ def scan_project(db: Session, project_id: int) -> None:
                     state,
                     project_id,
                     thumbnail_root=str(thumb_root),
-                    library_root=library,
+                    relative_base_path=str(library),
                 )
+                pending_writes += 1
+                if pending_writes >= _SCAN_COMMIT_BATCH_SIZE:
+                    db.commit()
+                    commit_count += 1
+                    pending_writes = 0
             except Exception as exc:
                 logger.error("Failed to process %s: %s", entry, exc)
+                db.rollback()
                 state["errors"] += 1
     finally:
         final_message = "done"
         try:
+            if pending_writes > 0:
+                db.commit()
+                commit_count += 1
+
             # 扫描结束后重算文件夹计数（若失败也不能阻塞状态收尾）
             from .folder_service import recompute_project_folder_counts
 
@@ -588,12 +496,13 @@ def scan_project(db: Session, project_id: int) -> None:
             state.update(running=False, current_path=None, message=final_message)
 
         logger.info(
-            "Project %d scan complete — scanned=%d inserted=%d updated=%d errors=%d",
+            "Project %d scan complete — scanned=%d inserted=%d updated=%d errors=%d commits=%d",
             project_id,
             state["scanned"],
             state["inserted"],
             state["updated"],
             state["errors"],
+            commit_count,
         )
 
 

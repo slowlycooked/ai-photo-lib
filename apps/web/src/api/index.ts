@@ -4,7 +4,7 @@
  * Assembles the `api` object from all domain modules and re-exports all
  * types so existing imports of the form:
  *
- *   import { api, Photo, Project, ... } from "@/lib/api"
+ *   import { api, Photo, Project, ... } from "@/api"
  *
  * continue to work unchanged (backward-compatible via the re-export in
  * src/lib/api.ts).

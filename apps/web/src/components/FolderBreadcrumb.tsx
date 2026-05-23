@@ -1,4 +1,4 @@
-import { FolderBreadcrumbItem } from "@/lib/api";
+import { FolderBreadcrumbItem } from "@/api";
 import { ChevronRightIcon } from "lucide-react";
 
 interface FolderBreadcrumbProps {

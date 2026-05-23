@@ -18,7 +18,7 @@ export function ProjectAISettingsPage() {
       ? currentProjectId
       : null;
 
-  // When entering from a route like /project/:projectId/settings/ai and no
+  // When entering from /projects/:projectId/settings/ai and no
   // project is selected yet, hydrate the project context once from route id.
   useEffect(() => {
     if (normalizedCurrentProjectId !== null) return;

@@ -22,11 +22,6 @@ from .logging_config import (
 )
 from .routers import (
     health,
-    photos,
-    scan,
-    ai,
-    search,
-    tags,
     settings as settings_router,
     projects,
     folders,
@@ -163,13 +158,8 @@ async def db_unavailable_handler(request: Request, exc: OperationalError) -> JSO
 app.include_router(health.router)
 app.include_router(projects.router)
 app.include_router(folders.router)
-app.include_router(photos.router)
-app.include_router(scan.router)
-app.include_router(ai.router)
-app.include_router(search.router)
-app.include_router(tags.router)
 app.include_router(settings_router.router)
-# ── project-scoped routers (Phase 1 split) ───────────────────────────────────
+# ── project-scoped routers ────────────────────────────────────────────────────
 app.include_router(project_photos.router)
 app.include_router(project_scan.router)
 app.include_router(project_ai_jobs.router)

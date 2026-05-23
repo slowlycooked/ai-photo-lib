@@ -1,5 +1,5 @@
 import { useInfiniteQuery } from "@tanstack/react-query";
-import { api } from "@/lib/api";
+import { api } from "@/api";
 import type { SearchMode, TagField } from "@/api/types";
 
 const PAGE_SIZE = 50;

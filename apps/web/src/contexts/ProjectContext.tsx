@@ -7,7 +7,8 @@ import {
   type ReactNode,
 } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { api, type Project } from "@/lib/api";
+import { api, type Project } from "@/api";
+import { queryKeys } from "@/api/queryKeys";
 
 const STORAGE_KEY = "ai-photo-lib:current-project-id";
 
@@ -29,7 +30,7 @@ const ProjectContext = createContext<ProjectContextValue>({
 
 export function ProjectProvider({ children }: { children: ReactNode }) {
   const { data, isLoading } = useQuery({
-    queryKey: ["projects"],
+    queryKey: queryKeys.projects(),
     queryFn: api.projects.list,
     staleTime: 60_000,
   });

@@ -1,9 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, type ProjectCreate, type ProjectUpdate } from "@/lib/api";
+import { api, type ProjectCreate, type ProjectUpdate } from "@/api";
+import { queryKeys } from "@/api/queryKeys";
 
 export function useProjects() {
   return useQuery({
-    queryKey: ["projects"],
+    queryKey: queryKeys.projects(),
     queryFn: api.projects.list,
     staleTime: 60_000,
   });
@@ -11,7 +12,7 @@ export function useProjects() {
 
 export function useProjectScanStatus(projectId: number | null) {
   return useQuery({
-    queryKey: ["project-scan-status", projectId],
+    queryKey: queryKeys.projectScanStatus(projectId),
     queryFn: () => api.projects.scanStatus(projectId!),
     enabled: projectId !== null,
     refetchInterval: (query) => (query.state.data?.running ? 1500 : false),
@@ -24,11 +25,11 @@ export function useStartProjectScan(projectId: number | null) {
   return useMutation({
     mutationFn: () => api.projects.startScan(projectId!),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["project-scan-status", projectId] });
+      qc.invalidateQueries({ queryKey: queryKeys.projectScanStatus(projectId) });
     },
     onSettled: () => {
       setTimeout(
-        () => qc.invalidateQueries({ queryKey: ["photos", projectId] }),
+        () => qc.invalidateQueries({ queryKey: queryKeys.photosBase(projectId) }),
         2000
       );
     },
@@ -37,7 +38,7 @@ export function useStartProjectScan(projectId: number | null) {
 
 export function useProjectAIStatus(projectId: number | null) {
   return useQuery({
-    queryKey: ["project-ai-status", projectId],
+    queryKey: queryKeys.aiStatus(projectId),
     queryFn: () => api.projects.aiStatus(projectId!),
     enabled: projectId !== null,
     refetchInterval: (query) => {
@@ -51,7 +52,7 @@ export function useCreateProject() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: ProjectCreate) => api.projects.create(body),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["projects"] }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.projects() }),
   });
 }
 
@@ -60,7 +61,7 @@ export function useUpdateProject() {
   return useMutation({
     mutationFn: ({ id, body }: { id: number; body: ProjectUpdate }) =>
       api.projects.update(id, body),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["projects"] }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.projects() }),
   });
 }
 
@@ -68,6 +69,6 @@ export function useDeleteProject() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: number) => api.projects.delete(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["projects"] }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.projects() }),
   });
 }

@@ -1,5 +1,5 @@
 import { useTimeline } from "@/hooks/usePhotos";
-import type { FolderScope } from "@/lib/api";
+import type { FolderScope } from "@/api";
 
 interface TimelineRailProps {
   projectId?: number | null;

@@ -11,7 +11,7 @@ from ..database import get_db
 from ..models.project import Project
 from ..schemas.search import SearchResponse
 from ..services.search.tag_filter import ALLOWED_TAG_FIELDS, tag_filter_photos
-from ..services.search_service import search_photos
+from ..services.search.app_service import search_photos
 
 logger = logging.getLogger(__name__)
 

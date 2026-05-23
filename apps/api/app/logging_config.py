@@ -55,7 +55,6 @@ _LOGGER_GROUPS: dict[str, tuple[str, ...]] = {
     ),
     "search_log_level": (
         "ai_photo_lib.search",
-        "app.services.search_service",
         "app.services.search.app_service",
         "app.services.search.keyword_recall",
         "app.services.search.vector_recall",

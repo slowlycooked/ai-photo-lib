@@ -130,16 +130,40 @@ CREATE TABLE photo_embeddings (
     caption_embedding TEXT,
     tag_embedding TEXT,
     ocr_embedding TEXT,
+    content_embedding TEXT,
     caption_text_hash TEXT,
     tag_text_hash TEXT,
     ocr_text_hash TEXT,
+    content_text_hash TEXT,
     embedding_model TEXT,
     embedding_dimension INTEGER,
+    embedding_input_version TEXT,
     embedding_status TEXT NOT NULL DEFAULT 'ready',
     embedding_error TEXT,
     embedded_at TEXT,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(project_id, photo_id)
+);
+
+CREATE TABLE project_embedding_settings (
+    id INTEGER PRIMARY KEY,
+    project_id INTEGER NOT NULL UNIQUE,
+    provider TEXT NOT NULL DEFAULT 'openai-compatible',
+    endpoint_url TEXT NOT NULL,
+    api_key TEXT,
+    model_name TEXT NOT NULL,
+    embedding_dimension INTEGER NOT NULL DEFAULT 1024,
+    batch_size INTEGER NOT NULL DEFAULT 16,
+    timeout_seconds INTEGER NOT NULL DEFAULT 60,
+    input_prefix_query TEXT,
+    input_prefix_document TEXT,
+    enabled BOOLEAN NOT NULL DEFAULT 1,
+    search_content_vector_weight REAL NOT NULL DEFAULT 0.5,
+    search_tag_vector_weight REAL NOT NULL DEFAULT 0.25,
+    search_caption_vector_weight REAL NOT NULL DEFAULT 0.2,
+    search_ocr_vector_weight REAL NOT NULL DEFAULT 0.05,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE project_prompt_templates (

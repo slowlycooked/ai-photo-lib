@@ -3,15 +3,15 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { ApiError, type DebugSettingsResponse } from "@/lib/api";
+import { ApiError, type DebugSettingsResponse } from "@/api";
 import { DebugLogSettingsCard } from "@/pages/SettingsPage";
 
 const getDebugMock = vi.fn();
 const updateDebugMock = vi.fn();
 const configureFrontendLoggerMock = vi.fn();
 
-vi.mock("@/lib/api", async () => {
-  const actual = await vi.importActual<typeof import("@/lib/api")>("@/lib/api");
+vi.mock("@/api", async () => {
+  const actual = await vi.importActual<typeof import("@/api")>("@/api");
   return {
     ...actual,
     api: {

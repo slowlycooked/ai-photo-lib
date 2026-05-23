@@ -18,14 +18,15 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
+from sqlalchemy import func
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
+from sqlalchemy.sql import Select
 
 from ...config import settings as global_settings
 from ...models.ai import PhotoAIAnalysis
-from ...models.photo import Photo
 from ...services.embedding_client import EmbeddingRequestError
-from ...services.folder_service import apply_folder_filter
+from ...services.folder_service import build_folder_photo_ids_subquery
 from ...services.query_understanding_service import SearchQueryPlan, understand_query
 from .debug import build_debug_payload
 from .fusion import rrf_merge
@@ -73,6 +74,98 @@ _NIGHT_CORE_NEGATIVE: frozenset[str] = frozenset({
     "sunlight", "daytime", "sunny", "bright",
 })
 
+_INDOOR_CORE_POSITIVE: frozenset[str] = frozenset({
+    "室内", "屋内", "室内场景", "房间", "客厅", "卧室", "厨房", "餐厅",
+    "家具", "沙发", "床", "椅子", "桌子", "书架", "柜子", "台灯",
+    "indoor", "indoors", "interior", "living room", "bedroom", "kitchen",
+})
+
+_INDOOR_CORE_NEGATIVE: frozenset[str] = frozenset({
+    "户外", "室外", "自然", "风景", "海边", "山地", "街道", "建筑外观",
+    "outdoor", "outside", "landscape", "street", "exterior",
+})
+
+_INDOOR_RICH_FIELDS: tuple[str, ...] = (
+    "caption",
+    "scene_tags",
+    "object_tags",
+    "activity_tags",
+)
+_INDOOR_WEAK_ONLY_FIELDS: tuple[str, ...] = (
+    "search_keywords",
+    "location_clues",
+)
+
+
+def _is_explicit_indoor_query(query_plan: "SearchQueryPlan") -> bool:
+    exact_lower = {t.lower() for t in query_plan.exact_terms}
+    matched_lower = {t.lower() for t in query_plan.matched_keys}
+    return (
+        query_plan.filters.get("indoor_outdoor") == "indoor"
+        and "scene" in query_plan.core_facets
+        and bool({"室内", "indoor", "indoors"} & (exact_lower | matched_lower))
+    )
+
+
+def _indoor_core_facet_passes(
+    candidate: SearchCandidate,
+    ai_analysis: Optional["PhotoAIAnalysis"],
+    query_plan: "SearchQueryPlan",
+    settings: EffectiveSearchSettings,
+) -> tuple[bool, str]:
+    if ai_analysis is None:
+        if (
+            settings.allow_vector_only_for_facet_query
+            and candidate.vector_score >= settings.vector_strict_score
+        ):
+            return True, "indoor_vector_only_high_confidence"
+        return False, "indoor_no_ai_analysis"
+
+    rich_parts: list[str] = []
+    weak_parts: list[str] = []
+    for field_name in _INDOOR_RICH_FIELDS:
+        value = getattr(ai_analysis, field_name, None)
+        if isinstance(value, str) and value:
+            rich_parts.append(value.lower())
+        elif value:
+            rich_parts.extend(str(item).lower() for item in value)
+    for field_name in _INDOOR_WEAK_ONLY_FIELDS:
+        value = getattr(ai_analysis, field_name, None)
+        if value:
+            weak_parts.extend(str(item).lower() for item in value)
+
+    file_name_hits = " ".join(
+        str(hit).lower() for hit in (candidate.keyword_explain or {}).get("file_name", [])
+    )
+    rich_text = " ".join(rich_parts + ([file_name_hits] if file_name_hits else []))
+    weak_text = " ".join(weak_parts)
+    combined_text = f"{rich_text} {weak_text}".strip()
+
+    has_positive = any(term in rich_text for term in _INDOOR_CORE_POSITIVE)
+    has_negative = any(term in combined_text for term in _INDOOR_CORE_NEGATIVE)
+    weak_only_match = (
+        not has_positive
+        and any(field in (candidate.keyword_explain or {}) for field in _INDOOR_WEAK_ONLY_FIELDS)
+    )
+
+    if (
+        settings.allow_vector_only_for_facet_query
+        and candidate.vector_score >= settings.vector_strict_score
+    ):
+        if has_negative and not has_positive:
+            return False, "indoor_negative_evidence"
+        return True, "indoor_vector_high_confidence"
+
+    if has_positive and not has_negative:
+        return True, "indoor_positive_visual_evidence"
+    if has_positive and has_negative:
+        if candidate.evidence_level in ("A", "B"):
+            return True, "indoor_conflicting_but_strong_keyword"
+        return False, "indoor_conflicting_evidence"
+    if weak_only_match:
+        return False, "indoor_weak_tag_only"
+    return False, "indoor_no_positive_visual_evidence"
+
 
 def _core_facet_passes(
     candidate: SearchCandidate,
@@ -89,6 +182,9 @@ def _core_facet_passes(
       high-confidence vector match (score >= vector_strict_score).
     - Downgrades candidates that strongly match daytime-negative terms.
     """
+    if _is_explicit_indoor_query(query_plan):
+        return _indoor_core_facet_passes(candidate, ai_analysis, query_plan, settings)
+
     # Only apply when the query has time/lighting core facets
     core_facets = query_plan.core_facets
     if "time" not in core_facets and "lighting" not in core_facets:
@@ -300,20 +396,14 @@ def _apply_semantic_tag_boost(
     return candidates
 
 
-def _resolve_folder_photo_ids(
+def _resolve_folder_photo_subquery(
     db: Session,
     *,
     project_id: int,
     folder_id: Optional[int],
     folder_scope: str,
-) -> Optional[set[int]]:
-    if folder_id is None:
-        return None
-    photo_query = db.query(Photo).filter(
-        Photo.deleted_at.is_(None), Photo.project_id == project_id
-    )
-    photo_query = apply_folder_filter(photo_query, db, project_id, folder_id, folder_scope)
-    return {p.id for p in photo_query.all()}
+) -> Optional[Select]:
+    return build_folder_photo_ids_subquery(db, project_id, folder_id, folder_scope)
 
 
 def search_photos(
@@ -440,8 +530,8 @@ def search_photos(
         effective_mode, project_id, query, query_plan.intent,
     )
 
-    folder_photo_ids = (
-        _resolve_folder_photo_ids(
+    folder_photo_subquery = (
+        _resolve_folder_photo_subquery(
             db,
             project_id=project_id,
             folder_id=folder_id,
@@ -451,8 +541,19 @@ def search_photos(
         else None
     )
 
+    constrained_photo_ids: Optional[set[int]] = None
+
     if folder_id is not None:
-        folder_count = len(folder_photo_ids) if folder_photo_ids is not None else None
+        folder_count = (
+            int(
+                db.query(func.count())
+                .select_from(folder_photo_subquery.subquery())
+                .scalar()
+                or 0
+            )
+            if folder_photo_subquery is not None
+            else None
+        )
         trace.append({
             "stage": "folder_filter",
             "folder_id": folder_id,
@@ -485,7 +586,7 @@ def search_photos(
             logger.debug("[search] path=metadata-only filters=%s", metadata_filters)
             meta_results = _meta_svc.search(
                 metadata_filters=metadata_filters,
-                folder_photo_ids=folder_photo_ids,
+                folder_photo_subquery=folder_photo_subquery,
             )
             total, items = build_result_items(
                 db,
@@ -535,7 +636,7 @@ def search_photos(
             # ── Mixed: restrict keyword/vector recall to metadata-filtered IDs ──
             _meta_ids = _meta_svc.resolve_photo_ids(
                 metadata_filters=metadata_filters,
-                folder_photo_ids=folder_photo_ids,
+                folder_photo_subquery=folder_photo_subquery,
             )
             logger.debug(
                 "[search] metadata_filter (mixed) matched=%d", len(_meta_ids)
@@ -546,17 +647,14 @@ def search_photos(
                 "filters": {k: v for k, v in metadata_filters.items() if v not in (None, [], False, {})},
                 "matched_count": len(_meta_ids),
             })
-            # Intersect with existing folder scope if any
-            if folder_photo_ids is not None:
-                folder_photo_ids = folder_photo_ids & _meta_ids
-            else:
-                folder_photo_ids = _meta_ids
+            constrained_photo_ids = _meta_ids
 
     kw_service = KeywordRecallService(db, effective_settings)
     keyword_results = kw_service.search(
         query_plan,
         project_id=project_id or 0,
-        folder_photo_ids=folder_photo_ids,
+        folder_photo_subquery=folder_photo_subquery,
+        constrained_photo_ids=constrained_photo_ids,
     )
 
     trace.append({
@@ -622,7 +720,8 @@ def search_photos(
             normalized_query=query_plan.normalized_query,
             is_ocr_query=is_ocr_query,
             project_id=project_id,  # type: ignore[arg-type]
-            folder_photo_ids=folder_photo_ids,
+            folder_photo_subquery=folder_photo_subquery,
+            constrained_photo_ids=constrained_photo_ids,
         )
         trace.append({
             "stage": "vector_recall",

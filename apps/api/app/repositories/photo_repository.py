@@ -3,8 +3,10 @@ from __future__ import annotations
 from datetime import date, datetime, time as time_
 from typing import Optional
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from ..models.ai import PhotoAIAnalysis
 from ..models.photo import Photo
 
 
@@ -66,6 +68,75 @@ class PhotoRepository:
             .all()
         )
         return total, items
+
+    def list_analysis_candidates(
+        self,
+        project_id: int,
+        *,
+        active_photo_ids_subquery,
+        analyzed_photo_ids_subquery,
+    ) -> list[Photo]:
+        return (
+            self._db.query(Photo)
+            .filter(
+                Photo.project_id == project_id,
+                Photo.deleted_at.is_(None),
+                Photo.id.not_in(active_photo_ids_subquery),
+                Photo.id.not_in(analyzed_photo_ids_subquery),
+            )
+            .all()
+        )
+
+    def list_reanalysis_candidates(
+        self,
+        project_id: int,
+        *,
+        scope: str,
+        selected_photo_ids: list[int],
+        active_photo_ids_subquery,
+        failed_photo_ids_subquery,
+    ) -> list[Photo]:
+        query = self._db.query(Photo).filter(
+            Photo.project_id == project_id,
+            Photo.deleted_at.is_(None),
+            Photo.id.not_in(active_photo_ids_subquery),
+        )
+
+        if scope == "completed":
+            query = query.join(
+                PhotoAIAnalysis,
+                (PhotoAIAnalysis.photo_id == Photo.id)
+                & (PhotoAIAnalysis.project_id == project_id),
+            )
+        elif scope == "selected":
+            query = query.filter(Photo.id.in_(selected_photo_ids))
+        elif scope == "failed":
+            query = query.filter(Photo.id.in_(failed_photo_ids_subquery))
+
+        return query.all()
+
+    def list_file_names_by_ids(self, project_id: int, photo_ids: list[int]) -> dict[int, str]:
+        if not photo_ids:
+            return {}
+        rows = (
+            self._db.query(Photo.id, Photo.file_name)
+            .filter(Photo.project_id == project_id, Photo.id.in_(photo_ids))
+            .all()
+        )
+        return {photo_id: file_name for photo_id, file_name in rows}
+
+    def analyzed_photo_ids_subquery(self):
+        return select(PhotoAIAnalysis.photo_id)
+
+    def count_analyzed(self, project_id: int) -> int:
+        from sqlalchemy import func
+
+        return (
+            self._db.query(func.count(PhotoAIAnalysis.id))
+            .filter(PhotoAIAnalysis.project_id == project_id)
+            .scalar()
+            or 0
+        )
 
     # ── writes ────────────────────────────────────────────────────────────────
 

@@ -8,7 +8,7 @@ import {
   type ProjectEmbeddingSettingsUpdate,
   type PromptTemplate,
   type PromptTemplateTestResponse,
-} from "@/lib/api";
+} from "@/api";
 import ProjectSearchSettingsPanel from "./ProjectSearchSettingsPanel";
 
 interface ModelForm {

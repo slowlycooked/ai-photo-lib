@@ -1,7 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { Loader2, Tag, AlertCircle } from "lucide-react";
-import { api, type TagCount } from "@/lib/api";
+import { api, type TagCount } from "@/api";
+import { queryKeys } from "@/api/queryKeys";
 import { useProjectContext } from "@/contexts/ProjectContext";
 
 const SECTIONS = [
@@ -79,7 +80,7 @@ export function TagsPage() {
   const navigate = useNavigate();
   const { currentProjectId } = useProjectContext();
   const { data, isLoading, isError } = useQuery({
-    queryKey: ["tags", currentProjectId],
+    queryKey: queryKeys.tags(currentProjectId),
     queryFn: () => currentProjectId !== null ? api.projects.tags(currentProjectId) : Promise.resolve(null),
     enabled: currentProjectId !== null,
     staleTime: 60_000,

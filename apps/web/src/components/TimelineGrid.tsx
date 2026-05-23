@@ -3,7 +3,7 @@ import { Loader2, ImageOff } from "lucide-react";
 import { usePhotos } from "@/hooks/usePhotos";
 import { PhotoCard } from "./PhotoCard";
 import { TimelineRail } from "./TimelineRail";
-import type { Photo, FolderScope } from "@/lib/api";
+import type { Photo, FolderScope } from "@/api";
 
 interface TimelineGridProps {
   projectId?: number | null;

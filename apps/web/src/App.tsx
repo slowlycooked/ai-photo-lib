@@ -8,7 +8,7 @@ import { TasksPage } from "@/pages/TasksPage";
 import { SettingsPage } from "@/pages/SettingsPage";
 import { ProjectAISettingsPage } from "@/pages/ProjectAISettingsPage";
 import { ProjectProvider } from "@/contexts/ProjectContext";
-import { api } from "@/lib/api";
+import { api } from "@/api";
 import { configureFrontendLogger, logger } from "@/lib/logger";
 
 export default function App() {
@@ -48,9 +48,7 @@ export default function App() {
             <Route path="/tags" element={<TagsPage />} />
             <Route path="/tasks" element={<TasksPage />} />
             <Route path="/settings" element={<SettingsPage />} />
-            {/* Legacy AI settings routes — redirect to tasks tab */}
-            <Route path="/project/settings/ai" element={<Navigate to="/tasks?tab=ai-settings" replace />} />
-            <Route path="/project/:projectId/settings/ai" element={<ProjectAISettingsPage />} />
+            {/* Canonical project AI settings route */}
             <Route path="/projects/:projectId/settings/ai" element={<ProjectAISettingsPage />} />
           </Routes>
         </div>

@@ -25,7 +25,8 @@ import {
   type DebugSettingsUpdate,
   type LogLevel,
   type Project,
-} from "@/lib/api";
+} from "@/api";
+import { queryKeys } from "@/api/queryKeys";
 import {
   useProjects,
   useCreateProject,
@@ -265,7 +266,7 @@ function LibraryRow({
 function LibraryManagementCard() {
   const { data: projectsData, isLoading, isError } = useProjects();
   const { data: settingsData } = useQuery({
-    queryKey: ["settings"],
+    queryKey: queryKeys.settings(),
     queryFn: api.settings.get,
     staleTime: 60_000,
   });
@@ -480,7 +481,7 @@ export function DebugLogSettingsCard() {
     isLoading,
     error,
   } = useQuery({
-    queryKey: ["settings", "debug"],
+    queryKey: queryKeys.settingsDebug(),
     queryFn: api.settings.getDebug,
     staleTime: 15_000,
     retry: 0,
@@ -506,7 +507,7 @@ export function DebugLogSettingsCard() {
   const saveMutation = useMutation({
     mutationFn: (payload: DebugSettingsUpdate) => api.settings.updateDebug(payload),
     onSuccess: (saved) => {
-      queryClient.setQueryData(["settings", "debug"], saved);
+      queryClient.setQueryData(queryKeys.settingsDebug(), saved);
       configureFrontendLogger(saved.debugMatrix);
       setForm({
         debugMode: saved.debugMode,
@@ -657,7 +658,7 @@ export function SettingsPage() {
   const [activeTab, setActiveTab] = useState<"general" | "debug">("general");
   const { currentProjectId } = useProjectContext();
   const { data, isLoading, isError } = useQuery({
-    queryKey: ["settings"],
+    queryKey: queryKeys.settings(),
     queryFn: api.settings.get,
     staleTime: 60_000,
   });
@@ -711,7 +712,7 @@ export function SettingsPage() {
               <div className="py-3 flex items-center justify-between gap-3">
                 <p className="text-body-sm text-mute">进入当前项目的模型配置、Prompt 版本与测试区。</p>
                 <Link
-                  to={`/project/${currentProjectId}/settings/ai`}
+                  to={`/projects/${currentProjectId}/settings/ai`}
                   className="px-3 py-1.5 text-body-sm rounded-md border border-hairline text-ink hover:bg-secondary-bg transition-colors"
                 >
                   打开项目 AI 配置

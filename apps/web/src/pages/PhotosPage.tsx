@@ -6,7 +6,7 @@ import { TimelineGrid } from "@/components/TimelineGrid";
 import { PhotoBrowseLayout } from "@/components/PhotoBrowseLayout";
 import { useScanStatus, useStartScan } from "@/hooks/useScan";
 import { useProjectContext } from "@/contexts/ProjectContext";
-import type { FolderScope } from "@/lib/api";
+import type { FolderScope } from "@/api";
 
 export function PhotosPage() {
   const { currentProjectId } = useProjectContext();

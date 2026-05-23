@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Optional
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..models.ai import AIJob, PhotoAIAnalysis
@@ -125,6 +126,54 @@ class AIJobRepository:
             .filter(AIJob.project_id == project_id, AIJob.status == "failed")
             .delete()
         )
+        self._db.flush()
+        return deleted
+
+    def retry_failed_for_project_with_limit(self, project_id: int, max_retries: int) -> int:
+        """Re-queue failed jobs under max_retries and keep retry_count history."""
+        now = datetime.now(timezone.utc)
+        rows = (
+            self._db.query(AIJob)
+            .filter(
+                AIJob.project_id == project_id,
+                AIJob.status == "failed",
+                AIJob.retry_count < max_retries,
+            )
+            .all()
+        )
+        for job in rows:
+            job.status = "queued"
+            job.error_message = None
+            job.updated_at = now
+        self._db.flush()
+        return len(rows)
+
+    def active_photo_ids_subquery(self, project_id: Optional[int] = None):
+        q = select(AIJob.photo_id).where(AIJob.status.in_(["queued", "running"]))
+        if project_id is not None:
+            q = q.where(AIJob.project_id == project_id)
+        return q
+
+    def failed_photo_ids_subquery(self, project_id: int):
+        return select(AIJob.photo_id).where(
+            AIJob.project_id == project_id,
+            AIJob.status == "failed",
+        )
+
+    def delete_by_project_photo_ids(
+        self,
+        project_id: int,
+        photo_ids: list[int],
+        *,
+        statuses: Optional[list[str]] = None,
+    ) -> int:
+        q = self._db.query(AIJob).filter(
+            AIJob.project_id == project_id,
+            AIJob.photo_id.in_(photo_ids),
+        )
+        if statuses:
+            q = q.filter(AIJob.status.in_(statuses))
+        deleted = q.delete(synchronize_session=False)
         self._db.flush()
         return deleted
 

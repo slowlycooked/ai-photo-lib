@@ -1,4 +1,4 @@
-import type { DebugMatrix, LogLevel } from "@/lib/api";
+import type { DebugMatrix, LogLevel } from "@/api";
 
 type LoggerPayload = Record<string, unknown> | undefined;
 

@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Brain, Loader2, RefreshCw, Play } from "lucide-react";
-import { api } from "@/lib/api";
+import { api } from "@/api";
+import { queryKeys } from "@/api/queryKeys";
 
 export function AIPanel({ projectId }: { projectId: number }) {
   const queryClient = useQueryClient();
@@ -10,7 +11,7 @@ export function AIPanel({ projectId }: { projectId: number }) {
   const wasActiveRef = useRef(false);
 
   const { data: status, isLoading } = useQuery({
-    queryKey: ["ai-status", projectId],
+    queryKey: queryKeys.aiStatus(projectId),
     queryFn: () => api.projects.aiStatus(projectId),
     refetchInterval: (query) => {
       const d = query.state.data;
@@ -23,8 +24,8 @@ export function AIPanel({ projectId }: { projectId: number }) {
   useEffect(() => {
     const isActive = !!status && (status.queued > 0 || status.running > 0);
     if (wasActiveRef.current && !isActive && status) {
-      queryClient.invalidateQueries({ queryKey: ["photos", projectId] });
-      queryClient.invalidateQueries({ queryKey: ["photo-ai"] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.photosBase(projectId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.projectPhotoAiBase(projectId) });
     }
     wasActiveRef.current = isActive;
   }, [status, queryClient, projectId]);
@@ -37,7 +38,7 @@ export function AIPanel({ projectId }: { projectId: number }) {
       } else {
         setMessage("所有照片已在分析队列中，无需重复创建");
       }
-      queryClient.invalidateQueries({ queryKey: ["ai-status", projectId] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.aiStatus(projectId) });
       setTimeout(() => setMessage(null), 5000);
     },
     onError: (err: Error) => setMessage(`启动失败：${err.message}`),
@@ -47,7 +48,7 @@ export function AIPanel({ projectId }: { projectId: number }) {
     mutationFn: () => api.projects.retryFailedAiJobs(projectId),
     onSuccess: (data) => {
       setMessage(`已重新排队 ${data.retried_jobs} 个失败任务`);
-      queryClient.invalidateQueries({ queryKey: ["ai-status", projectId] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.aiStatus(projectId) });
       setTimeout(() => setMessage(null), 4000);
     },
     onError: (err: Error) => setMessage(`重试失败：${err.message}`),

@@ -1,8 +1,9 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { X, Calendar, Ruler, Tag, ImageIcon, Brain, Loader2, Download, MapPin, Camera, Aperture } from "lucide-react";
-import type { Photo } from "@/lib/api";
-import { api } from "@/lib/api";
+import type { Photo } from "@/api";
+import { api } from "@/api";
+import { queryKeys } from "@/api/queryKeys";
 
 interface PhotoCardProps {
   photo: Photo;
@@ -39,7 +40,7 @@ function DetailModal({ photo, onClose }: DetailModalProps) {
   });
 
   const { data: aiData, isLoading: aiLoading } = useQuery({
-    queryKey: ["project-photo-ai", projectId, photo.id],
+    queryKey: queryKeys.projectPhotoAi(projectId, photo.id),
     queryFn: () => api.projects.photoAI(projectId, photo.id),
     enabled: projectId != null,
     retry: false,

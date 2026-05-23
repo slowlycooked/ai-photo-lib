@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, Check, Loader2, RotateCcw, Save, Settings } from "lucide-react";
-import { api, type ProjectSearchSettings, type ProjectSearchSettingsUpdate } from "@/lib/api";
+import { api, type ProjectSearchSettings, type ProjectSearchSettingsUpdate } from "@/api";
 
 interface Props {
   projectId: number;
@@ -247,7 +247,7 @@ export default function ProjectSearchSettingsPanel({ projectId }: Props) {
                 step={step}
                 min={min}
                 className="border rounded px-2 py-1 text-xs"
-                value={(effective as Record<string, number | undefined>)[key] ?? 0}
+                value={(effective as unknown as Record<string, number | undefined>)[key] ?? 0}
                 onChange={(e) =>
                   setField(
                     key,
@@ -324,7 +324,7 @@ export default function ProjectSearchSettingsPanel({ projectId }: Props) {
             <label key={key} className="flex items-center gap-2 text-xs cursor-pointer">
               <input
                 type="checkbox"
-                checked={(effective as Record<string, boolean | undefined>)[key] ?? false}
+                checked={(effective as unknown as Record<string, boolean | undefined>)[key] ?? false}
                 onChange={(e) => setField(key, e.target.checked)}
               />
               <span className="text-gray-700">{label}</span>

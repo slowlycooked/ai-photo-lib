@@ -14,7 +14,8 @@ import {
   RotateCcw,
 } from "lucide-react";
 import { ScanPanel } from "@/components/ScanPanel";
-import { api, type AIJob } from "@/lib/api";
+import { api, type AIJob } from "@/api";
+import { queryKeys } from "@/api/queryKeys";
 import { useScanStatus, useStartScan, useStartReindex } from "@/hooks/useScan";
 import { useProjectContext } from "@/contexts/ProjectContext";
 import { ProjectAISettingsPanel } from "./ProjectAISettingsPanel";
@@ -55,7 +56,7 @@ function FailedJobsSection({ projectId }: { projectId: number | null }) {
   const retryMutation = useMutation({
     mutationFn: () => api.projects.retryFailedAiJobs(projectId!),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["ai-status", projectId] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.aiStatus(projectId) });
       queryClient.invalidateQueries({ queryKey: ["ai-jobs-failed", projectId] });
     },
   });
@@ -64,7 +65,7 @@ function FailedJobsSection({ projectId }: { projectId: number | null }) {
     mutationFn: () => api.projects.clearFailedAiJobs(projectId!),
     onSuccess: () => {
       setError(null);
-      queryClient.invalidateQueries({ queryKey: ["ai-status", projectId] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.aiStatus(projectId) });
       queryClient.invalidateQueries({ queryKey: ["ai-jobs-failed", projectId] });
     },
     onError: (err: Error) => {
@@ -239,7 +240,7 @@ function AISection({ projectId }: { projectId: number | null }) {
   const wasActiveRef = useRef(false);
 
   const { data: status, isLoading } = useQuery({
-    queryKey: ["ai-status", projectId],
+    queryKey: queryKeys.aiStatus(projectId),
     queryFn: () => api.projects.aiStatus(projectId!),
     enabled: projectId != null,
     refetchInterval: (query) => {
@@ -251,9 +252,9 @@ function AISection({ projectId }: { projectId: number | null }) {
   useEffect(() => {
     const isActive = !!status && (status.queued > 0 || status.running > 0);
     if (wasActiveRef.current && !isActive && status) {
-      queryClient.invalidateQueries({ queryKey: ["photos"] });
-      queryClient.invalidateQueries({ queryKey: ["photo-ai"] });
-      queryClient.invalidateQueries({ queryKey: ["tags"] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.photosBase(projectId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.projectPhotoAiBase(projectId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.tags(projectId) });
     }
     wasActiveRef.current = isActive;
   }, [status, queryClient]);
@@ -266,7 +267,7 @@ function AISection({ projectId }: { projectId: number | null }) {
           ? `已创建 ${data.created_jobs} 个分析任务`
           : "所有照片已在分析队列中"
       );
-      queryClient.invalidateQueries({ queryKey: ["ai-status"] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.aiStatus(projectId) });
       setTimeout(() => setMessage(null), 5000);
     },
     onError: (err: Error) => setMessage(`启动失败：${err.message}`),
@@ -284,7 +285,7 @@ function AISection({ projectId }: { projectId: number | null }) {
           ? `已创建 ${data.created_jobs} 个重新分析任务`
           : "没有已完成的照片需要重新分析"
       );
-      queryClient.invalidateQueries({ queryKey: ["ai-status", projectId] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.aiStatus(projectId) });
       setTimeout(() => setMessage(null), 5000);
     },
     onError: (err: Error) => setMessage(`重新分析失败：${err.message}`),
@@ -302,7 +303,7 @@ function AISection({ projectId }: { projectId: number | null }) {
           ? `已创建 ${data.created_jobs} 个重新分析任务`
           : "没有照片需要重新分析"
       );
-      queryClient.invalidateQueries({ queryKey: ["ai-status", projectId] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.aiStatus(projectId) });
       setTimeout(() => setMessage(null), 5000);
     },
     onError: (err: Error) => setMessage(`重新分析失败：${err.message}`),

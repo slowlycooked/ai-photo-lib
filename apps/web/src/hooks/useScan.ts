@@ -1,9 +1,10 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { api } from "@/lib/api";
+import { api } from "@/api";
+import { queryKeys } from "@/api/queryKeys";
 
 export function useScanStatus(projectId: number | null) {
   return useQuery({
-    queryKey: ["project-scan-status", projectId],
+    queryKey: queryKeys.projectScanStatus(projectId),
     queryFn: () => api.projects.scanStatus(projectId!),
     enabled: projectId !== null,
     refetchInterval: (query) => (query.state.data?.running ? 1500 : false),
@@ -19,11 +20,11 @@ export function useStartReindex(projectId: number | null) {
       return api.projects.startReindex(projectId, scope);
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["project-scan-status", projectId] });
+      qc.invalidateQueries({ queryKey: queryKeys.projectScanStatus(projectId) });
     },
     onSettled: () => {
       setTimeout(
-        () => qc.invalidateQueries({ queryKey: ["photos", projectId] }),
+        () => qc.invalidateQueries({ queryKey: queryKeys.photosBase(projectId) }),
         3000
       );
     },
@@ -38,11 +39,11 @@ export function useStartScan(projectId: number | null) {
       return api.projects.startScan(projectId);
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["project-scan-status", projectId] });
+      qc.invalidateQueries({ queryKey: queryKeys.projectScanStatus(projectId) });
     },
     onSettled: () => {
       setTimeout(
-        () => qc.invalidateQueries({ queryKey: ["photos", projectId] }),
+        () => qc.invalidateQueries({ queryKey: queryKeys.photosBase(projectId) }),
         2000
       );
     },

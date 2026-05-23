@@ -1,6 +1,6 @@
 import { ReactNode, useState } from "react";
 import { FolderTreeSidebar } from "./FolderTreeSidebar";
-import { FolderScope } from "@/lib/api";
+import { FolderScope } from "@/api";
 
 interface PhotoBrowseLayoutProps {
   projectId?: number | null;

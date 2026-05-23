@@ -14,6 +14,7 @@ import logging
 from typing import Optional
 
 from sqlalchemy import extract
+from sqlalchemy.sql import Select
 from sqlalchemy.orm import Session
 
 from ...models.photo import Photo
@@ -35,7 +36,7 @@ class MetadataRecallService:
         self,
         *,
         metadata_filters: dict,
-        folder_photo_ids: Optional[set[int]] = None,
+        folder_photo_subquery: Optional[Select] = None,
         limit: int = 5000,
     ) -> list[SearchCandidate]:
         """Return SearchCandidates for photos matching *metadata_filters*.
@@ -47,7 +48,7 @@ class MetadataRecallService:
         """
         photo_ids = self._resolve_photo_ids(
             metadata_filters=metadata_filters,
-            folder_photo_ids=folder_photo_ids,
+            folder_photo_subquery=folder_photo_subquery,
             limit=limit,
         )
         meta_terms: list[str] = metadata_filters.get("matched_metadata_terms", [])
@@ -66,14 +67,14 @@ class MetadataRecallService:
     def resolve_photo_ids(
         self,
         metadata_filters: dict,
-        folder_photo_ids: Optional[set[int]] = None,
+        folder_photo_subquery: Optional[Select] = None,
         limit: int = 50_000,
     ) -> set[int]:
         """Return set of photo IDs matching *metadata_filters* (no ordering)."""
         return set(
             self._resolve_photo_ids(
                 metadata_filters=metadata_filters,
-                folder_photo_ids=folder_photo_ids,
+                folder_photo_subquery=folder_photo_subquery,
                 limit=limit,
             )
         )
@@ -83,7 +84,7 @@ class MetadataRecallService:
     def _resolve_photo_ids(
         self,
         metadata_filters: dict,
-        folder_photo_ids: Optional[set[int]] = None,
+        folder_photo_subquery: Optional[Select] = None,
         limit: int = 50_000,
     ) -> list[int]:
         """Build and execute the metadata filter query; return ordered ID list."""
@@ -151,10 +152,8 @@ class MetadataRecallService:
             q = q.filter(Photo.iso <= iso_max)
 
         # ── Folder scope ───────────────────────────────────────────────────────
-        if folder_photo_ids is not None:
-            if not folder_photo_ids:
-                return []
-            q = q.filter(Photo.id.in_(folder_photo_ids))
+        if folder_photo_subquery is not None:
+            q = q.filter(Photo.id.in_(folder_photo_subquery))
 
         # Order by newest first for natural chronological browsing
         q = q.order_by(

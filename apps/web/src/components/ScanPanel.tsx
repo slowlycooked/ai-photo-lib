@@ -1,5 +1,5 @@
 import { CheckCircle2, Loader2, AlertCircle, FolderSearch } from "lucide-react";
-import type { ScanStatus } from "@/lib/api";
+import type { ScanStatus } from "@/api";
 
 // Messages that are normal lifecycle states, not errors.
 const LABEL: Record<string, string> = {
