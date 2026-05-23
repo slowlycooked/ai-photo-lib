@@ -250,7 +250,7 @@ function EmbeddingSettingsSection({ projectId }: { projectId: number }) {
             className="input-base w-full"
             value={form.input_prefix_query ?? ""}
             onChange={(e) => setForm((f) => ({ ...f, input_prefix_query: e.target.value }))}
-            placeholder="Instruct: ..."
+            placeholder="Represent this search query for retrieving relevant photo descriptions"
           />
         </div>
         <div>
@@ -259,6 +259,7 @@ function EmbeddingSettingsSection({ projectId }: { projectId: number }) {
             className="input-base w-full"
             value={form.input_prefix_document ?? ""}
             onChange={(e) => setForm((f) => ({ ...f, input_prefix_document: e.target.value }))}
+            placeholder="Represent this photo description for retrieval"
           />
         </div>
       </div>

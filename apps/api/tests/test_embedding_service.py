@@ -18,6 +18,7 @@ from app.models.ai import PhotoEmbedding  # noqa: E402
 from app.services.embedding_service import (  # noqa: E402
     EMBEDDING_INPUT_VERSION,
     _REQUIRED_PHOTO_EMBEDDING_COLUMNS,
+    _hash_text,
     build_embedding_inputs,
     build_photo_embedding_document,
     is_embedding_stale,
@@ -119,6 +120,29 @@ class EmbeddingServiceTest(unittest.TestCase):
             inputs["tags"],
             "mountain;sunrise;backpack;hiking;sharp;cloud sea;hike",
         )
+
+    def test_build_embedding_inputs_applies_document_prefix(self) -> None:
+        ai = SimpleNamespace(
+            caption="indoor room",
+            ocr_text="invoice 2024",
+            scene_tags=["indoor"],
+            object_tags=["sofa"],
+            activity_tags=[],
+            quality_tags=[],
+            location_clues=[],
+            search_keywords=["home"],
+            people_count=0,
+            confidence=1.0,
+        )
+
+        inputs = build_embedding_inputs(
+            ai,
+            input_prefix_document="Represent this photo description for retrieval",
+        )
+
+        for key in ("caption", "tags", "ocr", "content"):
+            assert inputs[key] is not None
+            assert inputs[key].startswith("Represent this photo description for retrieval\n")
 
     def test_upsert_photo_embeddings_insert_then_update(self) -> None:
         ai = SimpleNamespace(
@@ -315,6 +339,42 @@ class EmbeddingServiceTest(unittest.TestCase):
         )
         self.assertTrue(
             is_embedding_stale(ai, embedding, model_name="embed-model", dimension=1024),
+        )
+
+    def test_is_embedding_stale_true_when_document_prefix_changes(self) -> None:
+        ai = SimpleNamespace(
+            caption="beach sunset",
+            ocr_text="",
+            scene_tags=["sea"],
+            object_tags=[],
+            activity_tags=[],
+            quality_tags=[],
+            location_clues=[],
+            search_keywords=[],
+            people_count=0,
+            confidence=1.0,
+        )
+
+        no_prefix_inputs = build_embedding_inputs(ai)
+        embedding = SimpleNamespace(
+            embedding_status="ready",
+            embedding_model="embed-model",
+            embedding_dimension=1024,
+            caption_text_hash=_hash_text(no_prefix_inputs["caption"]),
+            tag_text_hash=_hash_text(no_prefix_inputs["tags"]),
+            ocr_text_hash=_hash_text(no_prefix_inputs["ocr"]),
+            content_text_hash=_hash_text(no_prefix_inputs["content"]),
+            embedding_input_version=EMBEDDING_INPUT_VERSION,
+        )
+
+        self.assertTrue(
+            is_embedding_stale(
+                ai,
+                embedding,
+                model_name="embed-model",
+                dimension=1024,
+                input_prefix_document="Represent this photo description for retrieval",
+            )
         )
 
     def test_embedding_input_version_constant_not_empty(self) -> None:

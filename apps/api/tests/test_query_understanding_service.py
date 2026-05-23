@@ -120,18 +120,19 @@ class TestUnderstandQuery:
             assert weak in broad_lower, f"{weak!r} should be in broad_terms"
             assert weak not in expanded_lower, f"{weak!r} should not be in expanded_terms"
 
-    def test_indoor_query_demotes_home_terms_to_support(self):
-        """纯“室内”查询不应把 家/家庭 当作强召回词。"""
+    def test_indoor_query_uses_lightweight_semantic_expansion(self):
+        """纯“室内”查询在 semantic 模式下仅保留少量 expanded，不再扩 support/broad。"""
         plan = understand_query("室内")
         expanded_lower = {t.lower() for t in plan.expanded_terms}
         support_lower = {t.lower() for t in plan.support_terms}
+        broad_lower = {t.lower() for t in plan.broad_terms}
 
         assert "家庭" not in expanded_lower
         assert "家" not in expanded_lower
-        assert "家庭" in support_lower
-        assert "家" in support_lower
-        assert "家具" in expanded_lower
-        assert "房间" in expanded_lower
+        assert support_lower == set()
+        assert broad_lower == set()
+        assert 1 <= len(plan.expanded_terms) <= 3
+        assert any(t in expanded_lower for t in ("客厅", "卧室", "厨房", "家具", "房间"))
 
     def test_rain_penalize_tags_populated(self):
         """下雨天 should produce non-empty penalize_tags."""

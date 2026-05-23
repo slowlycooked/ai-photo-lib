@@ -244,11 +244,13 @@ class AIJobAppService:
                     embed_api_key = embed_cfg.get("api_key")
                     embed_model = embed_cfg["model_name"]
                     embed_timeout = embed_cfg.get("timeout_seconds")
+                    embed_document_prefix = embed_cfg.get("input_prefix_document")
                 except RuntimeError:
                     embed_endpoint = ai_settings.endpoint_url
                     embed_api_key = None
                     embed_model = None
                     embed_timeout = None
+                    embed_document_prefix = None
                 upsert_photo_embeddings(
                     self._db,
                     project_id=project_id,
@@ -259,6 +261,7 @@ class AIJobAppService:
                     model_name=embed_model,
                     timeout_seconds=embed_timeout,
                     photo=photo,
+                    input_prefix_document=embed_document_prefix,
                 )
             except EmbeddingRequestError as exc:
                 logger.warning(
@@ -316,12 +319,14 @@ class AIJobAppService:
                 embed_api_key = embed_cfg.get("api_key")
                 embed_model = embed_cfg["model_name"]
                 embed_timeout = embed_cfg.get("timeout_seconds")
+                embed_document_prefix = embed_cfg.get("input_prefix_document")
             except RuntimeError:
                 ai_settings_for_embed = get_or_create_project_ai_settings(self._db, project_id)
                 embed_endpoint = ai_settings_for_embed.endpoint_url
                 embed_api_key = None
                 embed_model = None
                 embed_timeout = None
+                embed_document_prefix = None
             upsert_photo_embeddings(
                 self._db,
                 project_id=project_id,
@@ -332,6 +337,7 @@ class AIJobAppService:
                 model_name=embed_model,
                 timeout_seconds=embed_timeout,
                 photo=photo,
+                input_prefix_document=embed_document_prefix,
             )
             now = datetime.now(timezone.utc)
             job.status = "success"

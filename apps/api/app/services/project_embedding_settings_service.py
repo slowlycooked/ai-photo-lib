@@ -22,6 +22,18 @@ from ..models.ai import ProjectEmbeddingSettings
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_INPUT_PREFIX_QUERY = (
+    "Represent this search query for retrieving relevant photo descriptions"
+)
+DEFAULT_INPUT_PREFIX_DOCUMENT = "Represent this photo description for retrieval"
+
+
+def _resolved_prefix(value: str | None, default_value: str) -> str:
+    if value is None:
+        return default_value
+    text = value.strip()
+    return text if text else default_value
+
 
 def get_project_embedding_settings(
     db: Session,
@@ -73,8 +85,8 @@ def get_or_create_project_embedding_settings(
         embedding_dimension=settings.embedding_dimension,
         batch_size=16,
         timeout_seconds=settings.embedding_timeout_seconds,
-        input_prefix_query=None,
-        input_prefix_document=None,
+        input_prefix_query=DEFAULT_INPUT_PREFIX_QUERY,
+        input_prefix_document=DEFAULT_INPUT_PREFIX_DOCUMENT,
         enabled=True,
         search_content_vector_weight=settings.search_content_vector_weight,
         search_tag_vector_weight=settings.search_tag_vector_weight,
@@ -149,8 +161,14 @@ def resolve_embedding_settings(
             "model_name": row.model_name,
             "embedding_dimension": row.embedding_dimension,
             "timeout_seconds": row.timeout_seconds,
-            "input_prefix_query": row.input_prefix_query,
-            "input_prefix_document": row.input_prefix_document,
+            "input_prefix_query": _resolved_prefix(
+                row.input_prefix_query,
+                DEFAULT_INPUT_PREFIX_QUERY,
+            ),
+            "input_prefix_document": _resolved_prefix(
+                row.input_prefix_document,
+                DEFAULT_INPUT_PREFIX_DOCUMENT,
+            ),
             "search_field_weights": {
                 "content_embedding": row.search_content_vector_weight,
                 "tag_embedding": row.search_tag_vector_weight,
@@ -175,8 +193,8 @@ def resolve_embedding_settings(
         "model_name": model_name,
         "embedding_dimension": settings.embedding_dimension,
         "timeout_seconds": settings.embedding_timeout_seconds,
-        "input_prefix_query": None,
-        "input_prefix_document": None,
+        "input_prefix_query": DEFAULT_INPUT_PREFIX_QUERY,
+        "input_prefix_document": DEFAULT_INPUT_PREFIX_DOCUMENT,
         "search_field_weights": {
             "content_embedding": settings.search_content_vector_weight,
             "tag_embedding": settings.search_tag_vector_weight,

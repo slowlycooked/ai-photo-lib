@@ -5,11 +5,13 @@ import logging
 from typing import Optional
 
 from sqlalchemy import text
+from sqlalchemy import or_
 from sqlalchemy.sql import Select
 from sqlalchemy.orm import Session
 
 from ...constants.embedding import DB_EMBEDDING_DIMENSION
 from ...config import settings as global_settings
+from ...services.embedding_service import EMBEDDING_INPUT_VERSION
 from ...services.embedding_client import EmbeddingRequestError, embed_text
 from ...models.ai import PhotoEmbedding
 from ...services.project_embedding_settings_service import resolve_embedding_settings
@@ -66,12 +68,20 @@ def _vector_field_search(
 
     stale_count = 0
     if embedding_model and embedding_dimension:
+        stale_conditions = [
+            PhotoEmbedding.embedding_model.is_distinct_from(embedding_model),
+            PhotoEmbedding.embedding_dimension.is_distinct_from(embedding_dimension),
+        ]
+        if embedding_input_version:
+            stale_conditions.append(
+                PhotoEmbedding.embedding_input_version.is_distinct_from(embedding_input_version)
+            )
+
         stale_query = db.query(PhotoEmbedding).filter(
             PhotoEmbedding.project_id == project_id,
             getattr(PhotoEmbedding, field_name).is_not(None),
             PhotoEmbedding.embedding_status == "ready",
-            (PhotoEmbedding.embedding_model.is_distinct_from(embedding_model))
-            | (PhotoEmbedding.embedding_dimension.is_distinct_from(embedding_dimension)),
+            or_(*stale_conditions),
         )
 
         if folder_photo_subquery is not None:
@@ -133,6 +143,7 @@ class VectorRecallService:
             api_key = embed_cfg["api_key"]
             embedding_model = embed_cfg["model_name"]
             timeout_seconds = embed_cfg["timeout_seconds"]
+            input_prefix_query = embed_cfg.get("input_prefix_query")
         except RuntimeError:
             endpoint_url = (
                 global_settings.embedding_base_url or global_settings.openai_base_url or ""
@@ -141,8 +152,11 @@ class VectorRecallService:
             embedding_model = global_settings.embedding_model or global_settings.openai_model
             timeout_seconds = global_settings.embedding_timeout_seconds
             embed_cfg = {}
+            input_prefix_query = None
 
         embed_input = normalized_query if normalized_query.strip() else query
+        if isinstance(input_prefix_query, str) and input_prefix_query.strip():
+            embed_input = f"{input_prefix_query.strip()}\n{embed_input}"
 
         logger.debug(
             "[vector_recall] embed_text model=%s input=%r endpoint=%s",
@@ -180,7 +194,7 @@ class VectorRecallService:
             limit=top_k,
             embedding_model=embedding_model,
             embedding_dimension=embed_cfg.get("embedding_dimension"),
-            embedding_input_version=embed_cfg.get("embedding_input_version"),
+            embedding_input_version=EMBEDDING_INPUT_VERSION,
         )
         caption_scores, stale_caption = _vector_field_search(
             self._db,
@@ -192,7 +206,7 @@ class VectorRecallService:
             limit=top_k,
             embedding_model=embedding_model,
             embedding_dimension=embed_cfg.get("embedding_dimension"),
-            embedding_input_version=embed_cfg.get("embedding_input_version"),
+            embedding_input_version=EMBEDDING_INPUT_VERSION,
         )
         tag_scores, stale_tag = _vector_field_search(
             self._db,
@@ -204,7 +218,7 @@ class VectorRecallService:
             limit=top_k,
             embedding_model=embedding_model,
             embedding_dimension=embed_cfg.get("embedding_dimension"),
-            embedding_input_version=embed_cfg.get("embedding_input_version"),
+            embedding_input_version=EMBEDDING_INPUT_VERSION,
         )
         ocr_scores, stale_ocr = _vector_field_search(
             self._db,
@@ -216,7 +230,7 @@ class VectorRecallService:
             limit=top_k,
             embedding_model=embedding_model,
             embedding_dimension=embed_cfg.get("embedding_dimension"),
-            embedding_input_version=embed_cfg.get("embedding_input_version"),
+            embedding_input_version=EMBEDDING_INPUT_VERSION,
         )
 
         stale_filtered_total = stale_content + stale_caption + stale_tag + stale_ocr

@@ -23,7 +23,7 @@ _DB_EMBEDDING_DIMENSION = DB_EMBEDDING_DIMENSION
 # Version tag written into embedding_input_version.
 # Bump this when the document-building logic changes to mark existing
 # embeddings as stale so they get rebuilt.
-EMBEDDING_INPUT_VERSION = "photo_semantic_v1"
+EMBEDDING_INPUT_VERSION = "photo_semantic_qwen3_v2"
 
 _REQUIRED_PHOTO_EMBEDDING_COLUMNS = {
     "id",
@@ -58,6 +58,16 @@ def _hash_text(value: str | None) -> str | None:
     if not value:
         return None
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _apply_input_prefix(value: str | None, prefix: str | None) -> str | None:
+    text = _empty_to_none(value)
+    if not text:
+        return None
+    prefix_text = _empty_to_none(prefix)
+    if not prefix_text:
+        return text
+    return f"{prefix_text}\n{text}"
 
 
 def _resolved_embedding_model(model_name: str | None = None) -> str:
@@ -163,6 +173,8 @@ def build_photo_embedding_document(
 def build_embedding_inputs(
     ai: PhotoAIAnalysis,
     photo: "Photo | None" = None,
+    *,
+    input_prefix_document: str | None = None,
 ) -> dict[str, str | None]:
     """Return a dict of embedding inputs keyed by field name.
 
@@ -185,10 +197,10 @@ def build_embedding_inputs(
     content_doc = build_photo_embedding_document(ai, photo)
 
     return {
-        "caption": _empty_to_none(ai.caption),
-        "tags": _empty_to_none(";".join(unique_tags)),
-        "ocr": _empty_to_none(ai.ocr_text),
-        "content": _empty_to_none(content_doc),
+        "caption": _apply_input_prefix(ai.caption, input_prefix_document),
+        "tags": _apply_input_prefix(";".join(unique_tags), input_prefix_document),
+        "ocr": _apply_input_prefix(ai.ocr_text, input_prefix_document),
+        "content": _apply_input_prefix(content_doc, input_prefix_document),
     }
 
 
@@ -199,6 +211,7 @@ def is_embedding_stale(
     model_name: str | None = None,
     dimension: int | None = None,
     photo: "Photo | None" = None,
+    input_prefix_document: str | None = None,
 ) -> bool:
     if embedding is None:
         return True
@@ -218,7 +231,11 @@ def is_embedding_stale(
     if current_version != EMBEDDING_INPUT_VERSION:
         return True
 
-    inputs = build_embedding_inputs(ai, photo)
+    inputs = build_embedding_inputs(
+        ai,
+        photo,
+        input_prefix_document=input_prefix_document,
+    )
     if (embedding.caption_text_hash or None) != _hash_text(inputs["caption"]):
         return True
     if (embedding.tag_text_hash or None) != _hash_text(inputs["tags"]):
@@ -245,6 +262,7 @@ def upsert_photo_embeddings(
     model_name: str | None = None,
     timeout_seconds: int | None = None,
     photo: "Photo | None" = None,
+    input_prefix_document: str | None = None,
 ) -> PhotoEmbedding:
     _validate_photo_embeddings_schema(db)
 
@@ -254,7 +272,11 @@ def upsert_photo_embeddings(
             f"{_DB_EMBEDDING_DIMENSION} for current photo_embeddings schema"
         )
 
-    inputs = build_embedding_inputs(ai, photo)
+    inputs = build_embedding_inputs(
+        ai,
+        photo,
+        input_prefix_document=input_prefix_document,
+    )
     resolved_model = _resolved_embedding_model(model_name)
 
     caption_hash = _hash_text(inputs["caption"])

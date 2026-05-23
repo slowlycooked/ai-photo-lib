@@ -309,7 +309,7 @@ export default function ProjectSearchSettingsPanel({ projectId }: Props) {
             [
               {
                 key: "enable_query_understanding" as const,
-                label: "启用查询理解 (三层词扩展)",
+                label: "启用轻量查询理解",
               },
               {
                 key: "enable_structured_filters" as const,

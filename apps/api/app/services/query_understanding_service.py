@@ -587,6 +587,21 @@ _PENALIZE_TAGS_SUNNY: list[str] = [
     "室内", "阴天", "多云", "雨天", "雨伞", "积水",
 ]
 
+_LIGHT_QUERY_MAX_EXPANDED_TERMS = 3
+_LIGHT_NEGATIVE_ALLOWLIST = {
+    "室内",
+    "户外",
+    "夜晚",
+    "白天",
+    "晴天",
+    "雨天",
+    "下雨",
+    "下雪",
+    "雪天",
+    "海边",
+    "山地",
+}
+
 # ── Intent classification ─────────────────────────────────────────────────────
 
 _OCR_PATTERNS = re.compile(
@@ -871,6 +886,16 @@ def understand_query(
     support_terms = sorted(t for t in support_set if t not in expanded_set)
     broad_terms = sorted(t for t in broad_set if t not in expanded_set and t not in support_set)
     negative_terms = sorted(t for t in negative_set)
+
+    # Light mode for generic semantic queries: keep exact terms as anchor,
+    # preserve only a few high-value expansions, and avoid broad/support over-expansion.
+    if intent == "semantic_photo_search":
+        expanded_terms = expanded_terms[:_LIGHT_QUERY_MAX_EXPANDED_TERMS]
+        support_terms = []
+        broad_terms = []
+        negative_terms = [
+            t for t in negative_terms if t in _LIGHT_NEGATIVE_ALLOWLIST
+        ]
 
     # intent_facets: deduplicate term lists per facet
     intent_facets: dict[str, list[str]] = {}

@@ -84,6 +84,7 @@ def get_embedding_status(
         embed_cfg = resolve_embedding_settings(db, project_id)
         resolved_model = embed_cfg["model_name"]
         resolved_dim = embed_cfg["embedding_dimension"]
+        resolved_document_prefix = embed_cfg.get("input_prefix_document")
     except RuntimeError as exc:
         raise HTTPException(
             status_code=422,
@@ -127,6 +128,7 @@ def get_embedding_status(
             model_name=resolved_model,
             dimension=resolved_dim,
             photo=photo,
+            input_prefix_document=resolved_document_prefix,
         ):
             stale += 1
         else:
@@ -199,6 +201,7 @@ def rebuild_project_embeddings(
         embed_cfg = resolve_embedding_settings(db, project_id)
         resolved_model = embed_cfg["model_name"]
         resolved_dim = embed_cfg["embedding_dimension"]
+        resolved_document_prefix = embed_cfg.get("input_prefix_document")
     except RuntimeError as exc:
         raise HTTPException(
             status_code=422,
@@ -257,6 +260,7 @@ def rebuild_project_embeddings(
                 model_name=resolved_model,
                 dimension=resolved_dim,
                 photo=photo,
+                input_prefix_document=resolved_document_prefix,
             )
         elif scope == "failed":
             should_enqueue = (

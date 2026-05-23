@@ -103,6 +103,45 @@ class VectorRecallServiceTest(unittest.TestCase):
 
         self.assertIsInstance(scores.get(11), VectorMatchScores)
 
+    def test_query_prefix_is_applied_before_embedding(self) -> None:
+        from app.services.search.vector_recall import VectorRecallService
+
+        db = self._make_db_stub()
+        settings = _default_settings()
+        svc = VectorRecallService(db, settings)
+
+        with patch(
+            "app.services.search.vector_recall.resolve_embedding_settings",
+            return_value={
+                "endpoint_url": "http://127.0.0.1:18083/v1",
+                "api_key": "sk-local",
+                "model_name": "Qwen3-Embedding-0.6B",
+                "embedding_dimension": 1024,
+                "timeout_seconds": 30,
+                "input_prefix_query": "Represent this search query for retrieving relevant photo descriptions",
+            },
+        ), patch(
+            "app.services.search.vector_recall.embed_text",
+            return_value=[0.1] * 1024,
+        ) as embed_text_mock, patch(
+            "app.services.search.vector_recall._vector_field_search",
+            return_value=({}, 0),
+        ):
+            svc.search(
+                query="室内",
+                normalized_query="室内 家具",
+                is_ocr_query=False,
+                project_id=7,
+                folder_photo_subquery=None,
+                limit=5,
+            )
+
+        embed_input = embed_text_mock.call_args.args[0]
+        assert embed_input.startswith(
+            "Represent this search query for retrieving relevant photo descriptions\n"
+        )
+        assert embed_input.endswith("室内 家具")
+
     def test_filters_low_similarity_results(self) -> None:
         from app.services.search.vector_recall import VectorRecallService
 
