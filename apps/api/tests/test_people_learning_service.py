@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import tempfile
 
@@ -186,15 +187,30 @@ def _make_session() -> Session:
               (203, 1, 13, 3, 3, 10, 10, 0.90, 'embedded')
             """
         )
-        conn.exec_driver_sql(
-            """
-            INSERT INTO face_embeddings (
-              id, project_id, face_detection_id, model_name, model_version, embedding_dim, embedding_vector
-            ) VALUES
-              (301, 1, 201, 'sface', '', 3, '[1.0, 0.0, 0.0]'),
-              (302, 1, 202, 'sface', '', 3, '[0.95, 0.05, 0.0]'),
-              (303, 1, 203, 'sface', '', 3, '[0.2, 0.2, 0.0]')
-            """
+        # Keep the same relative similarities as the previous 3-d fixtures,
+        # but in 128 dimensions to match the pgvector schema.
+        def _v(first: float, second: float) -> str:
+            return json.dumps([first, second] + ([0.0] * 126))
+
+        conn.execute(
+            sa.text(
+                """
+                INSERT INTO face_embeddings (
+                  id, project_id, face_detection_id, model_name, model_version, embedding_dim, embedding_vector
+                ) VALUES
+                  (:id1, 1, 201, 'sface', '', 128, :vec1),
+                  (:id2, 1, 202, 'sface', '', 128, :vec2),
+                  (:id3, 1, 203, 'sface', '', 128, :vec3)
+                """
+            ),
+            {
+                "id1": 301,
+                "id2": 302,
+                "id3": 303,
+                "vec1": _v(1.0, 0.0),
+                "vec2": _v(0.95, 0.05),
+                "vec3": _v(0.2, 0.2),
+            },
         )
         conn.exec_driver_sql(
             """
@@ -217,8 +233,8 @@ def test_rebuild_person_centroid_prototype() -> None:
         assert row is not None
         assert row.prototype_type == "centroid"
         assert row.sample_count == 1
-        assert row.embedding_dim == 3
-        assert row.embedding_vector == [1.0, 0.0, 0.0]
+        assert row.embedding_dim == 128
+        assert row.embedding_vector == [1.0, 0.0] + ([0.0] * 126)
     finally:
         db.close()
 

@@ -15,8 +15,7 @@ Three derivative kinds are managed here:
 ``face_crop``
     Tightly cropped, aligned face region for embedding generation and
     human-confirmation UI.  Created from the face_work_image (or the original
-    photo as fallback) using bounding-box + landmark coordinates supplied by
-    the caller.
+    photo as fallback) using bounding-box coordinates supplied by the caller.
 
 Cache invalidation:
     A derivative is considered stale when the source file mtime or content hash

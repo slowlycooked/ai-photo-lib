@@ -485,10 +485,17 @@ export interface FaceScanResponse {
   scan_quality_degraded: boolean;
 }
 
+export interface FaceScanProjectStartRequest {
+  scope?: "missing" | "failed" | "stale" | "all" | "selected";
+  photo_ids?: number[];
+  force?: boolean;
+}
+
 export interface FaceScanProjectStartResponse {
   project_id: number;
   created_jobs: number;
   skipped_active_jobs: number;
+  scope: "missing" | "failed" | "stale" | "all" | "selected";
   message: string;
 }
 

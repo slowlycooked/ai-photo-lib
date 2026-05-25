@@ -83,11 +83,6 @@ class Settings(BaseSettings):
     face_crop_size: int = 112
     # Minimum face detection size (pixels on the shorter axis)
     face_min_detect_size: int = 40
-    # Minimum face size to attempt recognition embedding.
-    # Set to 0 (default) to disable the filter and attempt embedding for all
-    # detected faces, preserving backward-compatible behavior.
-    # Set to e.g. 80 to skip very small faces that yield unreliable vectors.
-    face_min_recognition_size: int = 0
 
     # ── Face / people recognition defaults ──────────────────────────────────
     face_recognition_enabled: bool = False

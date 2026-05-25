@@ -1,6 +1,6 @@
 """add people recognition foundation tables
 
-Revision ID: 020_add_people_recognition_foundation
+Revision ID: 020_people_recognition_base
 Revises: 019
 Create Date: 2026-05-25
 """
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 from alembic import op
 from pgvector.sqlalchemy import Vector
 
-revision: str = "020_add_people_recognition_foundation"
+revision: str = "020_people_recognition_base"
 down_revision: Union[str, None] = "019"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
@@ -141,7 +141,7 @@ def upgrade() -> None:
         sa.Column("model_name", sa.Text(), nullable=False),
         sa.Column("model_version", sa.Text(), server_default="", nullable=False),
         sa.Column("embedding_dim", sa.Integer(), nullable=False),
-        sa.Column("embedding_vector", Vector(1024), nullable=True),
+        sa.Column("embedding_vector", Vector(128), nullable=True),
         sa.Column("embedding_hash", sa.Text(), nullable=True),
         sa.Column("embedded_at", sa.TIMESTAMP(), nullable=True),
         sa.Column("created_at", sa.TIMESTAMP(), server_default=sa.text("now()"), nullable=False),
@@ -213,7 +213,7 @@ def upgrade() -> None:
         sa.Column("project_id", sa.BigInteger(), nullable=False),
         sa.Column("person_id", sa.BigInteger(), nullable=False),
         sa.Column("prototype_type", sa.Text(), nullable=False),
-        sa.Column("embedding_vector", Vector(1024), nullable=True),
+        sa.Column("embedding_vector", Vector(128), nullable=True),
         sa.Column("sample_count", sa.Integer(), server_default="0", nullable=False),
         sa.Column("source_assignment_ids", sa.JSON(), nullable=True),
         sa.Column("model_name", sa.Text(), nullable=False),

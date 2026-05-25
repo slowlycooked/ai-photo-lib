@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -127,10 +127,17 @@ class FaceScanResponse(BaseModel):
         from_attributes = True
 
 
+class FaceScanProjectStartRequest(BaseModel):
+    scope: Literal["missing", "failed", "stale", "all", "selected"] = "missing"
+    photo_ids: list[int] = Field(default_factory=list)
+    force: bool = False
+
+
 class FaceScanProjectStartResponse(BaseModel):
     project_id: int
     created_jobs: int
     skipped_active_jobs: int
+    scope: Literal["missing", "failed", "stale", "all", "selected"] = "missing"
     message: str
 
 

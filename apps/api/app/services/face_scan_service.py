@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, Tuple
@@ -17,7 +17,12 @@ from ..face.providers import (
     OpenCVFaceRecognitionService,
 )
 from ..face.service import DetectedFace, FaceRecognitionService
-from ..models.face import FaceDetection, FaceEmbedding, ProjectFaceSettings
+from ..models.face import (
+    FACE_EMBEDDING_DIMENSION,
+    FaceDetection,
+    FaceEmbedding,
+    ProjectFaceSettings,
+)
 from ..models.photo import Photo
 from ..models.project import Project
 from .derivative_service import DerivativeService
@@ -128,29 +133,48 @@ class FaceScanService:
             try:
                 face_size = min(detected_face.bbox.width, detected_face.bbox.height)
 
-                # Don't attempt embedding for faces too small to yield reliable vectors.
-                # Only apply the filter when face_min_recognition_size is explicitly > 0
-                # and the scan is not degraded (thumbnail fallback).
-                min_recog = global_settings.face_min_recognition_size
-                if (
-                    not scan_quality_degraded
-                    and min_recog > 0
-                    and face_size < min_recog
-                ):
-                    detection.face_quality_score = self._estimate_face_quality(
-                        work_w, work_h, detected_face
-                    )
+                detection.face_quality_score = self._estimate_face_quality(
+                    work_w, work_h, detected_face
+                )
+
+                if settings.store_face_crops and not scan_quality_degraded:
+                    try:
+                        crop_result = derivative_svc.create_face_crop(
+                            project_id=project_id,
+                            photo_id=photo_id,
+                            face_detection=detection,
+                            source_bgr=image_bgr,
+                            source_width=work_w,
+                            source_height=work_h,
+                        )
+                        detection.face_crop_path = crop_result.path
+                        detection.face_crop_hash = hashlib.sha256(
+                            Path(crop_result.path).read_bytes()
+                        ).hexdigest()
+                    except Exception as crop_exc:  # noqa: BLE001
+                        detection.face_crop_path = None
+                        detection.face_crop_hash = None
+                        import logging
+
+                        logging.getLogger(__name__).warning(
+                            "face_crop save failed for detection %s: %s", detection.id, crop_exc
+                        )
+                else:
+                    detection.face_crop_path = None
+                    detection.face_crop_hash = None
+
+                # Project settings own the recognition threshold. The global config
+                # only seeds the project default when settings are created.
+                min_face_size = settings.min_face_size
+                if face_size < min_face_size:
                     detection.status = "too_small_for_recognition"
                     detection.error_message = (
-                        f"face_size={face_size} < min_recognition_size={min_recog}"
+                        f"face_size={face_size} < min_face_size={min_face_size}"
                     )
                     detection.updated_at = datetime.now(timezone.utc)
                     continue
 
                 if scan_quality_degraded:
-                    detection.face_quality_score = self._estimate_face_quality(
-                        work_w, work_h, detected_face
-                    )
                     detection.status = "thumbnail_fallback"
                     detection.error_message = "scan from thumbnail fallback — embedding skipped"
                     detection.updated_at = datetime.now(timezone.utc)
@@ -158,33 +182,6 @@ class FaceScanService:
 
                 embedding_result = resolved_provider.embed_face_from_bgr(
                     image_bgr, detected_face
-                )
-
-                # Save face_crop via derivative service
-                try:
-                    crop_result = derivative_svc.create_face_crop(
-                        project_id=project_id,
-                        photo_id=photo_id,
-                        face_detection=detection,
-                        source_bgr=image_bgr,
-                        source_width=work_w,
-                        source_height=work_h,
-                    )
-                    detection.face_crop_path = crop_result.path
-                    detection.face_crop_hash = hashlib.sha256(
-                        Path(crop_result.path).read_bytes()
-                    ).hexdigest()
-                except Exception as crop_exc:  # noqa: BLE001
-                    # Non-fatal: missing crop doesn't invalidate the embedding
-                    detection.face_crop_path = None
-                    detection.face_crop_hash = None
-                    import logging
-                    logging.getLogger(__name__).warning(
-                        "face_crop save failed for detection %s: %s", detection.id, crop_exc
-                    )
-
-                detection.face_quality_score = self._estimate_face_quality(
-                    work_w, work_h, detected_face
                 )
                 detection.status = "embedded"
                 detection.error_message = None
@@ -353,6 +350,19 @@ class FaceScanService:
         detection: FaceDetection,
         embedding_result,
     ) -> Tuple[FaceEmbedding, bool]:
+        actual_dim = len(embedding_result.vector or [])
+        if embedding_result.embedding_dim != actual_dim:
+            raise ValueError(
+                "Face embedding_dim does not match vector length "
+                f"(embedding_dim={embedding_result.embedding_dim}, len(vector)={actual_dim})"
+            )
+        if actual_dim != FACE_EMBEDDING_DIMENSION:
+            raise ValueError(
+                "Face embedding dimension mismatch for current schema: "
+                f"expected {FACE_EMBEDDING_DIMENSION}, got {actual_dim}. "
+                "Check provider model and database migrations."
+            )
+
         row = (
             self._db.query(FaceEmbedding)
             .filter(
@@ -374,7 +384,7 @@ class FaceScanService:
             self._db.add(row)
 
         row.model_provider = embedding_result.model_provider
-        row.embedding_dim = embedding_result.embedding_dim
+        row.embedding_dim = actual_dim
         row.embedding_vector = embedding_result.vector
         row.embedding_hash = self._hash_embedding(embedding_result.vector)
         row.embedded_at = datetime.now(timezone.utc)

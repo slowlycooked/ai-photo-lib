@@ -10,6 +10,8 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from ..database import Base
 
+FACE_EMBEDDING_DIMENSION = 128
+
 
 class ProjectFaceSettings(Base):
     """Per-project configuration for local people recognition."""
@@ -138,8 +140,14 @@ class FaceEmbedding(Base):
     model_provider: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     model_name: Mapped[str] = mapped_column(Text, nullable=False)
     model_version: Mapped[str] = mapped_column(Text, server_default="", nullable=False)
-    embedding_dim: Mapped[int] = mapped_column(Integer, nullable=False)
-    embedding_vector: Mapped[Optional[list[float]]] = mapped_column(Vector(), nullable=True)
+    embedding_dim: Mapped[int] = mapped_column(
+        Integer,
+        default=FACE_EMBEDDING_DIMENSION,
+        nullable=False,
+    )
+    embedding_vector: Mapped[Optional[list[float]]] = mapped_column(
+        Vector(FACE_EMBEDDING_DIMENSION), nullable=True
+    )
     embedding_hash: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     embedded_at: Mapped[Optional[datetime]] = mapped_column(TIMESTAMP, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
@@ -252,12 +260,18 @@ class PersonPrototype(Base):
         BigInteger, ForeignKey("persons.id", ondelete="CASCADE"), nullable=False, index=True
     )
     prototype_type: Mapped[str] = mapped_column(Text, nullable=False)
-    embedding_vector: Mapped[Optional[list[float]]] = mapped_column(Vector(), nullable=True)
+    embedding_vector: Mapped[Optional[list[float]]] = mapped_column(
+        Vector(FACE_EMBEDDING_DIMENSION), nullable=True
+    )
     sample_count: Mapped[int] = mapped_column(Integer, server_default="0", nullable=False)
     source_assignment_ids: Mapped[Optional[list[int]]] = mapped_column(JSON, nullable=True)
     model_name: Mapped[str] = mapped_column(Text, nullable=False)
     model_version: Mapped[str] = mapped_column(Text, server_default="", nullable=False)
-    embedding_dim: Mapped[int] = mapped_column(Integer, nullable=False)
+    embedding_dim: Mapped[int] = mapped_column(
+        Integer,
+        default=FACE_EMBEDDING_DIMENSION,
+        nullable=False,
+    )
     updated_at: Mapped[datetime] = mapped_column(
         TIMESTAMP, server_default=func.now(), onupdate=func.now(), nullable=False
     )

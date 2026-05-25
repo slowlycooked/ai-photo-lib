@@ -20,11 +20,13 @@ function formatDateTime(value: string | null | undefined): string {
 
 function PersonCard({
   projectId,
+  faceCropEnabled,
   person,
   selected,
   onSelect,
 }: {
   projectId: number;
+  faceCropEnabled: boolean;
   person: PersonSummary;
   selected: boolean;
   onSelect: () => void;
@@ -42,7 +44,7 @@ function PersonCard({
     >
       <div className="flex gap-3">
         <div className="w-16 h-16 rounded-lg overflow-hidden border border-hairline bg-surface-soft flex-shrink-0">
-          {person.representative_face_detection_id ? (
+          {faceCropEnabled && person.representative_face_detection_id ? (
             <img
               src={api.projects.faceCropUrl(projectId, person.representative_face_detection_id, person.updated_at)}
               alt={person.display_name}
@@ -99,6 +101,7 @@ function AssignmentChip({ label, value }: { label: string; value: number }) {
 
 function PersonDetailPanel({
   projectId,
+  faceCropEnabled,
   detail,
   isLoading,
   error,
@@ -117,6 +120,7 @@ function PersonDetailPanel({
   onSetRepresentative,
 }: {
   projectId: number;
+  faceCropEnabled: boolean;
   detail: PersonDetail | undefined;
   isLoading: boolean;
   error: Error | null;
@@ -196,7 +200,7 @@ function PersonDetailPanel({
         )}
         <div className="flex items-start gap-4">
           <div className="w-20 h-20 rounded-xl overflow-hidden border border-hairline bg-surface-soft flex-shrink-0">
-            {detail.representative_face_detection_id ? (
+            {faceCropEnabled && detail.representative_face_detection_id ? (
               <img
                 src={api.projects.faceCropUrl(projectId, detail.representative_face_detection_id, detail.updated_at)}
                 alt={detail.display_name}
@@ -322,7 +326,7 @@ function PersonDetailPanel({
           <div>
             <h3 className="text-body-sm font-semibold text-ink">关联人脸</h3>
             <p className="text-caption-sm text-mute mt-1">
-              当前先展示只读详情，后续这里会接确认、移动和拆分操作。
+              当前支持人物命名、确认、排除、移动和代表头像设置。
             </p>
           </div>
           <span className="text-caption-sm text-mute">
@@ -344,7 +348,7 @@ function PersonDetailPanel({
                   className="rounded-xl border border-hairline bg-surface-soft p-3 flex gap-3"
                 >
                   <div className="w-24 h-24 rounded-lg overflow-hidden border border-hairline bg-canvas flex-shrink-0">
-                    {face.face_crop_path ? (
+                    {faceCropEnabled && face.face_crop_path ? (
                       <img
                         src={api.projects.faceCropUrl(projectId, face.id, face.updated_at)}
                         alt={`face-${face.id}`}
@@ -477,6 +481,14 @@ export function PeoplePage() {
   }, [normalizedCurrentProjectId, normalizedRouteProjectId, setCurrentProjectId]);
 
   const selectedProjectId = normalizedRouteProjectId ?? normalizedCurrentProjectId;
+
+  const { data: faceSettings } = useQuery({
+    queryKey: ["project-face-settings", selectedProjectId],
+    queryFn: () => api.projects.getFaceSettings(selectedProjectId!),
+    enabled: selectedProjectId != null,
+    staleTime: 30_000,
+  });
+  const faceCropEnabled = faceSettings?.store_face_crops === true;
 
   if (selectedProjectId == null) {
     return (
@@ -695,7 +707,7 @@ export function PeoplePage() {
           ) : people.length === 0 ? (
             <div className="bg-canvas rounded-xl border border-hairline p-8 text-center text-mute">
               <ScanFace className="w-8 h-8 mx-auto mb-3" />
-              还没有人物分组。先去照片详情里执行手动人脸扫描，或者后续接项目级批量扫描。
+              还没有人物分组。请先在 AI / Face 配置中启用人脸识别，然后执行项目级人脸扫描。
             </div>
           ) : (
             <div className="space-y-3">
@@ -703,6 +715,7 @@ export function PeoplePage() {
                 <PersonCard
                   key={person.id}
                   projectId={selectedProjectId}
+                  faceCropEnabled={faceCropEnabled}
                   person={person}
                   selected={resolvedSelectedPersonId === person.id}
                   onSelect={() => {
@@ -719,6 +732,7 @@ export function PeoplePage() {
         <section>
           <PersonDetailPanel
             projectId={selectedProjectId}
+            faceCropEnabled={faceCropEnabled}
             detail={personDetail}
             isLoading={personLoading}
             error={personError as Error | null}

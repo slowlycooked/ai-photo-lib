@@ -10,6 +10,7 @@ import type {
   FaceClusterUnknownResponse,
   FaceDetectionDetail,
   FaceDetectionListResponse,
+  FaceScanProjectStartRequest,
   FaceScanProjectStartResponse,
   FaceScanProjectStatusResponse,
   FaceScanResponse,
@@ -172,9 +173,11 @@ export const projectsApi = {
       method: "POST",
     }),
 
-  startProjectFaceScan: (id: number) =>
+  startProjectFaceScan: (id: number, body: FaceScanProjectStartRequest = {}) =>
     request<FaceScanProjectStartResponse>(`/projects/${id}/face-scan-project/start`, {
       method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
     }),
 
   projectFaceScanStatus: (id: number) =>

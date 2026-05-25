@@ -1,7 +1,7 @@
 """add photo_derivatives table
 
 Revision ID: 021_add_photo_derivatives
-Revises: 020_add_people_recognition_foundation
+Revises: 020_people_recognition_base
 Create Date: 2026-05-25
 """
 from __future__ import annotations
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "021_add_photo_derivatives"
-down_revision: Union[str, None] = "020_add_people_recognition_foundation"
+down_revision: Union[str, None] = "020_people_recognition_base"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

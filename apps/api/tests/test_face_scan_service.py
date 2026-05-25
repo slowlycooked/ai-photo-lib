@@ -24,7 +24,11 @@ from app.face.service import (  # noqa: E402
 from app.models import face as face_models  # noqa: F401, E402
 from app.models import photo as photo_models  # noqa: F401, E402
 from app.models import project as project_models  # noqa: F401, E402
-from app.models.face import FaceDetection, FaceEmbedding  # noqa: E402
+from app.models.face import (  # noqa: E402
+    FACE_EMBEDDING_DIMENSION,
+    FaceDetection,
+    FaceEmbedding,
+)
 from app.services.face_scan_service import FaceScanService  # noqa: E402
 
 
@@ -170,13 +174,13 @@ class FakeFaceProvider:
     def _fake_faces(self) -> list[DetectedFace]:
         return [
             DetectedFace(
-                bbox=FaceBoundingBox(10, 12, 30, 30),
+                bbox=FaceBoundingBox(10, 12, 60, 60),
                 detection_confidence=0.95,
                 quality_score=0.88,
                 provider_payload={"face": 1},
             ),
             DetectedFace(
-                bbox=FaceBoundingBox(55, 18, 26, 26),
+                bbox=FaceBoundingBox(55, 18, 48, 48),
                 detection_confidence=0.91,
                 quality_score=0.81,
                 provider_payload={"face": 2},
@@ -185,9 +189,10 @@ class FakeFaceProvider:
 
     def _fake_embedding(self, detected_face: DetectedFace) -> FaceEmbeddingResult:
         x = float(detected_face.bbox.x)
+        vector = [x, x + 1.0, x + 2.0] + [0.0] * (FACE_EMBEDDING_DIMENSION - 3)
         return FaceEmbeddingResult(
-            vector=[x, x + 1.0, x + 2.0],
-            embedding_dim=3,
+            vector=vector,
+            embedding_dim=FACE_EMBEDDING_DIMENSION,
             model_provider="fake",
             model_name="fake-sface",
             model_version="v1",
@@ -262,6 +267,45 @@ def test_face_scan_service_persists_detections_embeddings_and_crops() -> None:
         assert all(face.status == "embedded" for face in detections)
         assert all(face.face_crop_path for face in detections)
         assert all(Path(face.face_crop_path).exists() for face in detections if face.face_crop_path)
+    finally:
+        db.close()
+        for root, dirs, files in os.walk(temp_dir, topdown=False):
+            for name in files:
+                os.unlink(Path(root) / name)
+            for name in dirs:
+                os.rmdir(Path(root) / name)
+        os.rmdir(temp_dir)
+
+
+def test_face_scan_service_respects_project_min_face_size_and_crop_setting() -> None:
+    db, temp_dir = _make_session()
+    try:
+        db.execute(
+            sa.text(
+                """
+                UPDATE project_face_settings
+                SET store_face_crops = 0,
+                    min_face_size = 100
+                WHERE project_id = 1
+                """
+            )
+        )
+        db.commit()
+
+        service = FaceScanService(db)
+        result = service.scan_photo(1, 101, provider=FakeFaceProvider())
+
+        assert result.faces_detected == 2
+        assert result.detections_created == 2
+        assert result.embeddings_created == 0
+        assert result.embeddings_updated == 0
+        assert result.failures == 0
+
+        detections = db.query(FaceDetection).filter(FaceDetection.project_id == 1).all()
+        assert len(detections) == 2
+        assert all(face.status == "too_small_for_recognition" for face in detections)
+        assert all(face.face_crop_path is None for face in detections)
+        assert all(face.face_crop_hash is None for face in detections)
     finally:
         db.close()
         for root, dirs, files in os.walk(temp_dir, topdown=False):

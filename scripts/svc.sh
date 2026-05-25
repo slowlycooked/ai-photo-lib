@@ -103,15 +103,15 @@ PSQL_BIN="$(find_bin "${POSTGRES_BIN_DIR:+$POSTGRES_BIN_DIR/psql}" psql || true)
 CREATEDB_BIN="$(find_bin "${POSTGRES_BIN_DIR:+$POSTGRES_BIN_DIR/createdb}" createdb || true)"
 
 api_python_bin() {
-  if [ -x "$ROOT/apps/api/.venv/bin/python" ]; then
-    echo "$ROOT/apps/api/.venv/bin/python"
-  elif [ -x "$ROOT/.venv/bin/python" ]; then
-    echo "$ROOT/.venv/bin/python"
-  elif [ -x "$ROOT/venv/bin/python" ]; then
-    echo "$ROOT/venv/bin/python"
-  else
-    echo "python3"
+  local py_bin="$ROOT/apps/api/.venv/bin/python"
+  if [ -x "$py_bin" ]; then
+    echo "$py_bin"
+    return 0
   fi
+
+  log_error "未找到 API Python 解释器: $py_bin"
+  log_error "请先执行 ./scripts/bootstrap-macos.sh 或在 apps/api 下创建 .venv 并安装依赖"
+  return 1
 }
 
 service_port() {

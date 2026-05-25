@@ -4,6 +4,7 @@ import os
 import tempfile
 import unittest
 from collections.abc import Generator
+from pathlib import Path
 
 import sqlalchemy as sa
 from fastapi.testclient import TestClient
@@ -110,6 +111,26 @@ CREATE TABLE face_embeddings (
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE photo_derivatives (
+  id INTEGER PRIMARY KEY,
+  project_id INTEGER NOT NULL,
+  photo_id INTEGER NOT NULL,
+  kind TEXT NOT NULL,
+  path TEXT,
+  format TEXT,
+  width INTEGER,
+  height INTEGER,
+  source_path TEXT,
+  source_mtime REAL,
+  source_hash TEXT,
+  quality INTEGER,
+  status TEXT NOT NULL DEFAULT 'ready',
+  error_message TEXT,
+  face_detection_id INTEGER,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE project_face_settings (
   id INTEGER PRIMARY KEY,
   project_id INTEGER NOT NULL,
@@ -163,19 +184,33 @@ VALUES (1, 'Project A', '/tmp/a', '/tmp/a-thumb', 1),
 
 INSERT INTO photos (id, project_id, file_path, file_name, status)
 VALUES (101, 1, '/tmp/a/a.jpg', 'a.jpg', 'indexed'),
+  (102, 1, '/tmp/a/cat.jpg', 'cat.jpg', 'indexed'),
+  (103, 1, '/tmp/a/dog.jpg', 'dog.jpg', 'indexed'),
        (202, 2, '/tmp/b/b.jpg', 'b.jpg', 'indexed');
 
 INSERT INTO face_detections (
   id, project_id, photo_id, bbox_x, bbox_y, bbox_w, bbox_h, status
 ) VALUES
   (301, 1, 101, 10, 10, 20, 20, 'embedded'),
+  (302, 1, 102, 15, 15, 25, 25, 'embedded'),
   (401, 2, 202, 15, 15, 25, 25, 'embedded');
 
 INSERT INTO face_embeddings (
   id, project_id, face_detection_id, model_name, model_version, embedding_dim
 ) VALUES
   (501, 1, 301, 'fake-sface', 'v1', 3),
+  (502, 1, 302, 'fake-sface', 'v1', 3),
   (601, 2, 401, 'fake-sface', 'v1', 3);
+
+INSERT INTO photo_derivatives (
+  id, project_id, photo_id, kind, path, source_path, source_mtime, status
+) VALUES
+  (701, 1, 102, 'face_work_image', '/tmp/a/face-work-102.jpg', '/tmp/a/cat.jpg', 1.0, 'ready');
+
+INSERT INTO ai_jobs (
+  id, photo_id, project_id, job_type, status
+) VALUES
+  (901, 103, 1, 'face_scan', 'failed');
 
 INSERT INTO project_face_settings (
   id, project_id, face_recognition_enabled, face_embedding_model
@@ -186,77 +221,170 @@ INSERT INTO project_face_settings (
 
 
 class ProjectFacesEndpointsTest(unittest.TestCase):
-    def setUp(self) -> None:
-        self._tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
-        self._tmp.close()
-        self._engine = sa.create_engine(
-            f"sqlite:///{self._tmp.name}",
-            connect_args={"check_same_thread": False},
-            future=True,
+  def setUp(self) -> None:
+    self._tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+    self._tmp.close()
+    self._created_files = [
+      Path("/tmp/a/a.jpg"),
+      Path("/tmp/a/cat.jpg"),
+      Path("/tmp/a/face-work-102.jpg"),
+      Path("/tmp/a/dog.jpg"),
+      Path("/tmp/b/b.jpg"),
+    ]
+    self._engine = sa.create_engine(
+      f"sqlite:///{self._tmp.name}",
+      connect_args={"check_same_thread": False},
+      future=True,
+    )
+    self._SessionLocal = sessionmaker(
+      bind=self._engine,
+      autocommit=False,
+      autoflush=False,
+      future=True,
+    )
+    with self._engine.begin() as conn:
+      for stmt in [part.strip() for part in SCHEMA_SQL.split(";") if part.strip()]:
+        conn.execute(sa.text(stmt))
+      for stmt in [part.strip() for part in SEED_SQL.split(";") if part.strip()]:
+        conn.execute(sa.text(stmt))
+      conn.execute(
+        sa.text(
+          """
+          UPDATE face_detections
+          SET updated_at = '2024-01-01 00:00:00'
+          WHERE id = 302
+          """
         )
-        self._SessionLocal = sessionmaker(
-            bind=self._engine,
-            autocommit=False,
-            autoflush=False,
-            future=True,
+      )
+
+    for file_path in self._created_files:
+      file_path.parent.mkdir(parents=True, exist_ok=True)
+      file_path.write_bytes(b"test")
+
+    for file_path in [Path("/tmp/a/cat.jpg"), Path("/tmp/a/face-work-102.jpg")]:
+      os.utime(file_path, (1, 1))
+
+    def override_get_db() -> Generator[Session, None, None]:
+      db = self._SessionLocal()
+      try:
+        yield db
+      finally:
+        db.close()
+
+    app.dependency_overrides[get_db] = override_get_db
+    self.client = TestClient(app)
+
+  def tearDown(self) -> None:
+    app.dependency_overrides.clear()
+    self._engine.dispose()
+    if os.path.exists(self._tmp.name):
+      os.unlink(self._tmp.name)
+    for file_path in self._created_files:
+      if file_path.exists():
+        file_path.unlink()
+    for directory in (Path("/tmp/a"), Path("/tmp/b")):
+      if directory.exists():
+        try:
+          directory.rmdir()
+        except OSError:
+          pass
+
+  def test_project_cannot_read_other_project_face(self) -> None:
+    res = self.client.get("/projects/1/faces/401")
+    self.assertEqual(res.status_code, 404)
+
+  def test_project_can_read_own_face(self) -> None:
+    res = self.client.get("/projects/1/faces/301")
+    self.assertEqual(res.status_code, 200)
+    body = res.json()
+    self.assertEqual(body["id"], 301)
+    self.assertEqual(body["project_id"], 1)
+    self.assertEqual(len(body["embeddings"]), 1)
+
+  def test_project_face_crop_missing_file_returns_404(self) -> None:
+    with self._engine.begin() as conn:
+      conn.execute(
+        sa.text(
+          """
+          UPDATE face_detections
+          SET face_crop_path = '/tmp/a/missing-face.jpg'
+          WHERE id = 301
+          """
         )
-        with self._engine.begin() as conn:
-            for stmt in [part.strip() for part in SCHEMA_SQL.split(";") if part.strip()]:
-                conn.execute(sa.text(stmt))
-            for stmt in [part.strip() for part in SEED_SQL.split(";") if part.strip()]:
-                conn.execute(sa.text(stmt))
+      )
 
-        def override_get_db() -> Generator[Session, None, None]:
-            db = self._SessionLocal()
-            try:
-                yield db
-            finally:
-                db.close()
+    res = self.client.get("/projects/1/faces/301/crop")
+    self.assertEqual(res.status_code, 404)
 
-        app.dependency_overrides[get_db] = override_get_db
-        self.client = TestClient(app)
+  def test_project_faces_list_is_scoped(self) -> None:
+    res = self.client.get("/projects/1/faces")
+    self.assertEqual(res.status_code, 200)
+    body = res.json()
+    self.assertEqual(body["total"], 2)
+    self.assertEqual({item["id"] for item in body["items"]}, {301, 302})
 
-    def tearDown(self) -> None:
-        app.dependency_overrides.clear()
-        self._engine.dispose()
-        if os.path.exists(self._tmp.name):
-            os.unlink(self._tmp.name)
+  def test_project_face_scan_jobs_missing_scope_queues_unscanned_photos(self) -> None:
+    start = self.client.post("/projects/1/face-scan-project/start")
+    self.assertEqual(start.status_code, 200)
+    payload = start.json()
+    self.assertEqual(payload["project_id"], 1)
+    self.assertEqual(payload["scope"], "missing")
+    self.assertEqual(payload["created_jobs"], 1)
+    self.assertEqual(payload["skipped_active_jobs"], 0)
 
-    def test_project_cannot_read_other_project_face(self) -> None:
-        res = self.client.get("/projects/1/faces/401")
-        self.assertEqual(res.status_code, 404)
+  def test_project_face_scan_jobs_selected_scope_queues_requested_photos(self) -> None:
+    start = self.client.post(
+      "/projects/1/face-scan-project/start",
+      json={"scope": "selected", "photo_ids": [102, 103]},
+    )
+    self.assertEqual(start.status_code, 200)
+    payload = start.json()
+    self.assertEqual(payload["scope"], "selected")
+    self.assertEqual(payload["created_jobs"], 2)
 
-    def test_project_can_read_own_face(self) -> None:
-        res = self.client.get("/projects/1/faces/301")
-        self.assertEqual(res.status_code, 200)
-        body = res.json()
-        self.assertEqual(body["id"], 301)
-        self.assertEqual(body["project_id"], 1)
-        self.assertEqual(len(body["embeddings"]), 1)
+  def test_project_face_scan_jobs_failed_scope_queues_failed_photos(self) -> None:
+    start = self.client.post(
+      "/projects/1/face-scan-project/start",
+      json={"scope": "failed"},
+    )
+    self.assertEqual(start.status_code, 200)
+    payload = start.json()
+    self.assertEqual(payload["scope"], "failed")
+    self.assertEqual(payload["created_jobs"], 1)
 
-    def test_project_faces_list_is_scoped(self) -> None:
-        res = self.client.get("/projects/1/faces")
-        self.assertEqual(res.status_code, 200)
-        body = res.json()
-        self.assertEqual(body["total"], 1)
-        self.assertEqual(body["items"][0]["id"], 301)
+  def test_project_face_scan_jobs_stale_scope_respects_updated_settings(self) -> None:
+    settings_update = self.client.put(
+      "/projects/1/face-settings",
+      json={"store_face_crops": False},
+    )
+    self.assertEqual(settings_update.status_code, 200)
 
-    def test_project_face_scan_jobs_can_be_enqueued_and_counted(self) -> None:
-      start = self.client.post("/projects/1/face-scan-project/start")
-      self.assertEqual(start.status_code, 200)
-      payload = start.json()
-      self.assertEqual(payload["project_id"], 1)
-      self.assertEqual(payload["created_jobs"], 1)
-      self.assertEqual(payload["skipped_active_jobs"], 0)
+    start = self.client.post(
+      "/projects/1/face-scan-project/start",
+      json={"scope": "stale"},
+    )
+    self.assertEqual(start.status_code, 200)
+    payload = start.json()
+    self.assertEqual(payload["scope"], "stale")
+    self.assertEqual(payload["created_jobs"], 1)
 
-      status = self.client.get("/projects/1/face-scan-project/status")
-      self.assertEqual(status.status_code, 200)
-      status_payload = status.json()
-      self.assertEqual(status_payload["queued"], 1)
-      self.assertEqual(status_payload["total"], 1)
+  def test_project_face_scan_jobs_can_be_enqueued_and_counted(self) -> None:
+    start = self.client.post("/projects/1/face-scan-project/start")
+    self.assertEqual(start.status_code, 200)
+    payload = start.json()
+    self.assertEqual(payload["project_id"], 1)
+    self.assertEqual(payload["created_jobs"], 1)
+    self.assertEqual(payload["skipped_active_jobs"], 0)
 
-      start_again = self.client.post("/projects/1/face-scan-project/start")
-      self.assertEqual(start_again.status_code, 200)
-      payload_again = start_again.json()
-      self.assertEqual(payload_again["created_jobs"], 0)
-      self.assertEqual(payload_again["skipped_active_jobs"], 1)
+    status = self.client.get("/projects/1/face-scan-project/status")
+    self.assertEqual(status.status_code, 200)
+    status_payload = status.json()
+    self.assertEqual(status_payload["queued"], 1)
+    self.assertEqual(status_payload["failed"], 1)
+    self.assertEqual(status_payload["total"], 2)
+
+    start_again = self.client.post("/projects/1/face-scan-project/start")
+    self.assertEqual(start_again.status_code, 200)
+    payload_again = start_again.json()
+    self.assertEqual(payload_again["created_jobs"], 0)
+    self.assertEqual(payload_again["skipped_active_jobs"], 1)
