@@ -5,6 +5,8 @@ import logging
 import re
 from typing import Any
 
+from .tag_localization import to_chinese_tag
+
 logger = logging.getLogger(__name__)
 
 _DEFAULTS: dict[str, Any] = {
@@ -43,24 +45,34 @@ _SCHEMA_ALIASES: dict[str, tuple[str, ...]] = {
 }
 
 _CN_KEYWORD_TAGS: dict[str, tuple[str, str]] = {
-    "夜": ("scene_tags", "night"),
-    "夜晚": ("scene_tags", "night"),
-    "建筑": ("scene_tags", "architecture"),
-    "塔": ("object_tags", "tower"),
-    "楼": ("object_tags", "building"),
-    "传统": ("quality_tags", "traditional_style"),
-    "清晰": ("quality_tags", "clear"),
-    "高清": ("quality_tags", "high_quality"),
+    "夜": ("scene_tags", "夜晚"),
+    "夜晚": ("scene_tags", "夜晚"),
+    "建筑": ("scene_tags", "建筑"),
+    "塔": ("object_tags", "塔"),
+    "楼": ("object_tags", "楼"),
+    "传统": ("quality_tags", "传统"),
+    "清晰": ("quality_tags", "清晰"),
+    "高清": ("quality_tags", "高清"),
+    "划船": ("activity_tags", "划船"),
+    "泛舟": ("activity_tags", "划船"),
+    "游船": ("activity_tags", "划船"),
+    "皮划艇": ("activity_tags", "皮划艇"),
 }
 
 _EN_KEYWORD_TAGS: dict[str, tuple[str, str]] = {
-    "night": ("scene_tags", "night"),
-    "architecture": ("scene_tags", "architecture"),
-    "tower": ("object_tags", "tower"),
-    "building": ("object_tags", "building"),
-    "traditional": ("quality_tags", "traditional_style"),
-    "high quality": ("quality_tags", "high_quality"),
-    "clear": ("quality_tags", "clear"),
+    "night": ("scene_tags", "夜晚"),
+    "architecture": ("scene_tags", "建筑"),
+    "tower": ("object_tags", "塔"),
+    "building": ("object_tags", "楼"),
+    "traditional": ("quality_tags", "传统"),
+    "high quality": ("quality_tags", "高清"),
+    "clear": ("quality_tags", "清晰"),
+    "boating": ("activity_tags", "划船"),
+    "rowing": ("activity_tags", "划船"),
+    "sailing": ("activity_tags", "开船"),
+    "kayaking": ("activity_tags", "皮划艇"),
+    "canoeing": ("activity_tags", "独木舟"),
+    "boat": ("object_tags", "船"),
 }
 
 
@@ -129,6 +141,36 @@ def _append_unique(target: list[str], values: list[str]) -> None:
             target.append(text)
 
 
+def _localize_tag_list(values: list[str]) -> list[str]:
+    localized: list[str] = []
+    for value in values:
+        zh = to_chinese_tag(value)
+        if zh and zh not in localized:
+            localized.append(zh)
+    return localized
+
+
+def _localize_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    localized = dict(payload)
+    tag_fields = (
+        "scene_tags",
+        "object_tags",
+        "activity_tags",
+        "quality_tags",
+        "location_clues",
+        "search_keywords",
+    )
+    for field in tag_fields:
+        localized[field] = _localize_tag_list(_ensure_list(localized.get(field)))
+
+    merged_keywords: list[str] = []
+    _append_unique(merged_keywords, localized.get("search_keywords", []))
+    for field in ("scene_tags", "object_tags", "activity_tags", "quality_tags", "location_clues"):
+        _append_unique(merged_keywords, localized.get(field, []))
+    localized["search_keywords"] = merged_keywords
+    return localized
+
+
 def _to_schema_payload(data: dict) -> dict:
     """Map model-specific keys into the stable analysis schema."""
     payload: dict[str, Any] = {}
@@ -165,7 +207,7 @@ def validate_image_analysis_result(data: dict) -> dict:
     """Validate/normalize parsed image-analysis payload into required schema."""
     if not isinstance(data, dict):
         raise ValueError("Model output root must be a JSON object")
-    return _normalize(_to_schema_payload(data))
+    return _normalize(_localize_payload(_to_schema_payload(data)))
 
 
 def _first_nonempty_line(text: str) -> str:
@@ -270,7 +312,7 @@ def _extract_tags_from_keywords(text: str) -> dict[str, list[str]]:
             tags[bucket].append(tag)
 
     if "城市" in text or "city" in lowered:
-        tags["location_clues"].append("city")
+        tags["location_clues"].append("城市")
 
     for bucket in ("scene_tags", "object_tags", "location_clues"):
         for tag in tags[bucket]:
@@ -384,4 +426,3 @@ def parse_model_json_output(raw_text: str, strategy: str = "auto_extract") -> di
         f"First 300 chars: {raw_text[:300]!r}. "
         f"Raw output:\n{raw_text}"
     )
-

@@ -116,6 +116,10 @@ def upgrade() -> None:
         ).bindparams(
             user_prompt=(
                 "请重点分析场景、人物、建筑、地点线索、OCR文字、照片质量和搜索关键词。"
+                "caption 使用自然中文完整描述。"
+                "scene_tags、object_tags、activity_tags、quality_tags、location_clues、search_keywords "
+                "必须优先使用简体中文标签。"
+                "不要输出英文标签，不要输出拼音，不要输出中英混合重复标签。"
                 "如果无法判断，给出低置信度并保持字段完整。"
             ),
             output_schema=(

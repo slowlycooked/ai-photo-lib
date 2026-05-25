@@ -18,8 +18,8 @@ confidence: 0.8
 
         self.assertEqual(parsed["people_count"], 0)
         self.assertGreater(parsed["confidence"], 0.0)
-        self.assertIn("night", parsed["scene_tags"])
-        self.assertIn("tower", parsed["object_tags"])
+        self.assertIn("夜晚", parsed["scene_tags"])
+        self.assertIn("塔", parsed["object_tags"])
 
     def test_strict_json_still_raises_for_plain_text(self) -> None:
         raw = "这是一段没有 JSON 的文本输出"
@@ -51,6 +51,30 @@ confidence: 0.8
         self.assertIn("家具", parsed["object_tags"])
         self.assertIn("家庭生活", parsed["scene_tags"])
         self.assertIn("室内", parsed["location_clues"])
+
+    def test_json_tags_are_localized_to_chinese(self) -> None:
+        raw = """{
+  "caption": "A person is boating on a lake",
+  "scene_tags": ["outdoor"],
+  "object_tags": ["boat"],
+  "activity_tags": ["boating"],
+  "quality_tags": ["clear"],
+  "location_clues": ["city"],
+  "search_keywords": ["boating", "boat", "outdoor"],
+  "people_count": 1,
+  "ocr_text": [],
+  "confidence": 0.9
+}"""
+
+        parsed = parse_model_json_output(raw, strategy="auto_extract")
+
+        self.assertIn("划船", parsed["activity_tags"])
+        self.assertIn("船", parsed["object_tags"])
+        self.assertIn("户外", parsed["scene_tags"])
+        self.assertIn("清晰", parsed["quality_tags"])
+        self.assertIn("城市", parsed["location_clues"])
+        self.assertIn("划船", parsed["search_keywords"])
+        self.assertNotIn("boating", parsed["search_keywords"])
 
 
 if __name__ == "__main__":

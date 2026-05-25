@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 from ...models.ai import PhotoAIAnalysis
 from ...models.photo import Photo
 from ...services.folder_service import apply_folder_filter
+from ...services.tag_localization import expand_term_aliases
 
 logger = logging.getLogger(__name__)
 
@@ -80,17 +81,25 @@ def tag_filter_photos(
     if dialect == "sqlite":
         # SQLite stores ARRAY columns as TEXT (JSON). Use json_each().
         # Reference the table by its name as it appears in the FROM clause.
+        aliases = expand_term_aliases(tag_value)
+        bind_map = {f"tv_{idx}": alias for idx, alias in enumerate(aliases)}
+        predicates = " OR ".join(
+            f"value = :tv_{idx}" for idx, _ in enumerate(aliases)
+        )
         tag_filter_clause = sa.text(
             f"EXISTS ("  # noqa: S608
             f"  SELECT 1 FROM json_each(photo_ai_analysis.{tag_field}) "
-            f"  WHERE value = :tv"
+            f"  WHERE {predicates}"
             f")"
-        ).bindparams(tv=tag_value)
+        ).bindparams(**bind_map)
     else:
-        # PostgreSQL: :tv = ANY(column)
-        tag_filter_clause = sa.text(
-            f":tv = ANY(photo_ai_analysis.{tag_field})"  # noqa: S608
-        ).bindparams(tv=tag_value)
+        aliases = expand_term_aliases(tag_value)
+        bind_map = {f"tv_{idx}": alias for idx, alias in enumerate(aliases)}
+        predicates = " OR ".join(
+            f":tv_{idx} = ANY(photo_ai_analysis.{tag_field})"
+            for idx, _ in enumerate(aliases)
+        )
+        tag_filter_clause = sa.text(predicates).bindparams(**bind_map)  # noqa: S608
 
     query_obj = query_obj.filter(tag_filter_clause)
 

@@ -383,8 +383,8 @@ def scan_project(db: Session, project_id: int) -> None:
     library = Path(project.photo_library_path)
     resolved_library = False
     if not library.exists() and project.is_default:
-        # Compatibility fallback for local runs where DB still stores container
-        # path (/photos) while runtime config points to host path.
+        # Compatibility fallback for older records that still store `/photos`
+        # while the native runtime is configured with a host path.
         configured_default = Path(settings.photo_library_path)
         if configured_default.exists():
             logger.warning(

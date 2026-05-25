@@ -21,6 +21,7 @@ from ...models.ai import PhotoAIAnalysis
 from ...models.photo import Photo
 from ...services.folder_service import apply_folder_filter
 from ...services.query_understanding_service import SearchQueryPlan
+from ...services.tag_localization import expand_term_aliases
 from .types import (
     BROAD_TERM_MULTIPLIER,
     EXACT_TERM_MULTIPLIER,
@@ -38,32 +39,35 @@ def _build_any_match_filter(terms: list[str]):
     """Build OR filter matching any term across all keyword fields."""
     per_term = []
     for term in terms:
-        like = f"%{term}%"
-        per_term.append(
-            or_(
-                PhotoAIAnalysis.caption.ilike(like),
-                PhotoAIAnalysis.ocr_text.ilike(like),
-                func.coalesce(
-                    func.array_to_string(PhotoAIAnalysis.scene_tags, " "), ""
-                ).ilike(like),
-                func.coalesce(
-                    func.array_to_string(PhotoAIAnalysis.object_tags, " "), ""
-                ).ilike(like),
-                func.coalesce(
-                    func.array_to_string(PhotoAIAnalysis.activity_tags, " "), ""
-                ).ilike(like),
-                func.coalesce(
-                    func.array_to_string(PhotoAIAnalysis.search_keywords, " "), ""
-                ).ilike(like),
-                func.coalesce(
-                    func.array_to_string(PhotoAIAnalysis.quality_tags, " "), ""
-                ).ilike(like),
-                func.coalesce(
-                    func.array_to_string(PhotoAIAnalysis.location_clues, " "), ""
-                ).ilike(like),
-                Photo.file_name.ilike(like),
+        alias_filters = []
+        for alias in expand_term_aliases(term):
+            like = f"%{alias}%"
+            alias_filters.append(
+                or_(
+                    PhotoAIAnalysis.caption.ilike(like),
+                    PhotoAIAnalysis.ocr_text.ilike(like),
+                    func.coalesce(
+                        func.array_to_string(PhotoAIAnalysis.scene_tags, " "), ""
+                    ).ilike(like),
+                    func.coalesce(
+                        func.array_to_string(PhotoAIAnalysis.object_tags, " "), ""
+                    ).ilike(like),
+                    func.coalesce(
+                        func.array_to_string(PhotoAIAnalysis.activity_tags, " "), ""
+                    ).ilike(like),
+                    func.coalesce(
+                        func.array_to_string(PhotoAIAnalysis.search_keywords, " "), ""
+                    ).ilike(like),
+                    func.coalesce(
+                        func.array_to_string(PhotoAIAnalysis.quality_tags, " "), ""
+                    ).ilike(like),
+                    func.coalesce(
+                        func.array_to_string(PhotoAIAnalysis.location_clues, " "), ""
+                    ).ilike(like),
+                    Photo.file_name.ilike(like),
+                )
             )
-        )
+        per_term.append(or_(*alias_filters))
     return or_(*per_term)
 
 
@@ -111,20 +115,20 @@ def _score_result(
     }
 
     for term, tier_name, multiplier in term_tiers:
-        t = term.lower()
+        aliases = [alias.lower() for alias in expand_term_aliases(term)]
         matched_this_term = False
 
-        if ai.caption and t in ai.caption.lower():
+        if ai.caption and any(alias in ai.caption.lower() for alias in aliases):
             raw += weights.get("caption", 3.0) * multiplier
             field_explain.setdefault("caption", []).append(term)
             matched_this_term = True
 
-        if ai.ocr_text and t in ai.ocr_text.lower():
+        if ai.ocr_text and any(alias in ai.ocr_text.lower() for alias in aliases):
             raw += weights.get("ocr_text", 5.0) * multiplier
             field_explain.setdefault("ocr_text", []).append(term)
             matched_this_term = True
 
-        if photo.file_name and t in photo.file_name.lower():
+        if photo.file_name and any(alias in photo.file_name.lower() for alias in aliases):
             raw += weights.get("file_name", 1.0) * multiplier
             field_explain.setdefault("file_name", []).append(term)
             matched_this_term = True
@@ -141,7 +145,8 @@ def _score_result(
             if tags:
                 w = weights.get(weight_key, 2.0) * multiplier
                 for tag in tags:
-                    if t in tag.lower():
+                    lowered_tag = tag.lower()
+                    if any(alias in lowered_tag for alias in aliases):
                         raw += w
                         matched.add(tag)
                         field_explain.setdefault(field_name, []).append(tag)
@@ -155,17 +160,17 @@ def _score_result(
 
     # Track negative term hits (no score change here — penalised in app_service)
     for neg_term in query_plan.negative_terms:
-        t = neg_term.lower()
+        aliases = [alias.lower() for alias in expand_term_aliases(neg_term)]
         neg_hit = False
-        if ai.caption and t in ai.caption.lower():
+        if ai.caption and any(alias in ai.caption.lower() for alias in aliases):
             neg_hit = True
-        if not neg_hit and ai.ocr_text and t in ai.ocr_text.lower():
+        if not neg_hit and ai.ocr_text and any(alias in ai.ocr_text.lower() for alias in aliases):
             neg_hit = True
         if not neg_hit:
             for field_name in ("scene_tags", "object_tags", "activity_tags",
                                "search_keywords", "location_clues"):
                 tags = getattr(ai, field_name, None)
-                if tags and any(t in tag.lower() for tag in tags):
+                if tags and any(any(alias in tag.lower() for alias in aliases) for tag in tags):
                     neg_hit = True
                     break
         if neg_hit:

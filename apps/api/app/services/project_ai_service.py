@@ -16,6 +16,11 @@ TASK_IMAGE_ANALYSIS = "image_analysis"
 
 logger = logging.getLogger(__name__)
 
+_LEGACY_DEFAULT_USER_PROMPTS = {
+    "请重点分析场景、人物、建筑、地点线索、OCR文字、照片质量和搜索关键词。如果无法判断，给出低置信度并保持字段完整。",
+    "请重点分析以下内容：\n- 场景\n- 人物\n- 建筑\n- 地点线索\n- OCR 文字\n- 照片质量\n- 搜索关键词\n\n如果无法判断，请给出低置信度并保持字段完整。",
+}
+
 _DEFAULT_USER_PROMPT = """请重点分析以下内容：
 - 场景
 - 人物
@@ -24,6 +29,12 @@ _DEFAULT_USER_PROMPT = """请重点分析以下内容：
 - OCR 文字
 - 照片质量
 - 搜索关键词
+
+重要要求：
+- caption 使用自然中文完整描述。
+- scene_tags、object_tags、activity_tags、quality_tags、location_clues、search_keywords 必须优先使用简体中文标签。
+- 不要输出英文标签，不要输出拼音，不要输出中英混合重复标签。
+- 如果模型想到的是英文概念，请先翻译成最自然、最常见的中文再写入 JSON。
 
 如果无法判断，请给出低置信度并保持字段完整。"""
 
@@ -97,6 +108,20 @@ def build_default_template(project_id: int) -> ProjectPromptTemplate:
     )
 
 
+def _maybe_upgrade_legacy_template(template: ProjectPromptTemplate) -> None:
+    if template.task_type != TASK_IMAGE_ANALYSIS:
+        return
+    if template.name and not template.name.startswith("默认图片分析模板"):
+        return
+
+    normalized_prompt = " ".join((template.user_prompt or "").split())
+    normalized_legacy = {" ".join(p.split()) for p in _LEGACY_DEFAULT_USER_PROMPTS}
+    normalized_current = " ".join(_DEFAULT_USER_PROMPT.split())
+    if normalized_prompt in normalized_legacy and normalized_prompt != normalized_current:
+        template.user_prompt = _DEFAULT_USER_PROMPT
+        template.updated_at = datetime.now(timezone.utc)
+
+
 def _default_endpoint_url() -> str:
     return f"{settings.openai_base_url.rstrip('/')}/chat/completions"
 
@@ -126,6 +151,9 @@ def get_or_create_project_ai_settings(db: Session, project_id: int) -> ProjectAI
     )
     if settings_row:
         _maybe_upgrade_legacy_endpoint(settings_row)
+        if not (settings_row.output_language or "").lower().startswith("zh"):
+            settings_row.output_language = "zh-CN"
+            settings_row.updated_at = datetime.now(timezone.utc)
         return settings_row
 
     template = build_default_template(project_id)
@@ -181,6 +209,7 @@ def get_active_prompt_template(
         .first()
     )
     if template:
+        _maybe_upgrade_legacy_template(template)
         return template
 
     template = build_default_template(project_id)
@@ -258,7 +287,11 @@ def render_analysis_prompt_parts(
     variables = _build_prompt_variables(photo)
     rendered_user_prompt = _render_template_variables(user_prompt, variables)
 
-    language_line = f"所有文本字段必须使用{output_language}。"
+    language_line = (
+        f"所有文本字段必须使用{output_language}。"
+        "所有标签字段和搜索关键词字段必须使用简体中文 Unicode 文本。"
+        "禁止输出英文标签；如果概念来自英文，必须先翻译成中文。"
+    )
     custom_system = prompt_template.system_prompt.strip() if prompt_template.system_prompt else ""
 
     system_text = "\n\n".join(
@@ -271,6 +304,7 @@ def render_analysis_prompt_parts(
         [
             "请分析这张图片，并直接返回 JSON。",
             "不要解释，不要描述你的思考过程。",
+            "所有标签和搜索关键词都必须是简体中文。",
             rendered_user_prompt,
         ]
     )

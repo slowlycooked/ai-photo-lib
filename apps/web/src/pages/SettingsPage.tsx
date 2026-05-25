@@ -38,7 +38,7 @@ import { configureFrontendLogger } from "@/lib/logger";
 
 // ─── Path helpers ────────────────────────────────────────────────────────────
 
-/** Convert container-internal path to real host path for display. */
+/** Convert legacy container path to host path for display. */
 function containerToHost(containerPath: string, hostPrefix: string): string {
   const prefix = hostPrefix.replace(/\/$/, "");
   if (containerPath.startsWith("/photos")) {
@@ -47,7 +47,7 @@ function containerToHost(containerPath: string, hostPrefix: string): string {
   return containerPath;
 }
 
-/** Convert host path entered by user back to container-internal path. */
+/** Convert host path back to the legacy stored path shape when needed. */
 function hostToContainer(hostPath: string, hostPrefix: string): string {
   const prefix = hostPrefix.replace(/\/$/, "");
   const normalized = hostPath.replace(/\/$/, "");
@@ -114,7 +114,7 @@ function LibraryForm({
   onSubmit: (v: LibraryFormValues) => void;
   onCancel: () => void;
 }) {
-  // Display values use host paths; convert back to container path on submit
+  // Keep compatibility with older records that still store `/photos/...`.
   const initialDisplay = useMemo(
     () => ({ ...initial, photo_library_path: containerToHost(initial.photo_library_path, hostPrefix) }),
     // eslint-disable-next-line react-hooks/exhaustive-deps

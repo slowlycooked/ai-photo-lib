@@ -7,5 +7,9 @@ API_DIR="$SCRIPT_DIR/../apps/api"
 
 echo "▶ Running database migrations..."
 cd "$API_DIR"
-alembic upgrade head
+if [ -x ".venv/bin/python" ]; then
+  .venv/bin/python -m alembic upgrade head
+else
+  python3 -m alembic upgrade head
+fi
 echo "✓ Migrations complete."

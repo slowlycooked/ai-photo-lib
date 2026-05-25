@@ -49,7 +49,7 @@ setup_logging(build_default_debug_config())
 app = FastAPI(
     title="AI Photo Library API",
     version=APP_VERSION,
-    description="Private AI-powered photo library for Synology NAS",
+    description="Private AI-powered photo library for local native deployment",
 )
 
 app.add_middleware(

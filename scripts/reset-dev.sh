@@ -35,9 +35,17 @@ if [ -f "$ENV_FILE" ]; then
   set +a
 fi
 
-POSTGRES_HOST_PORT="${POSTGRES_HOST_PORT:-5432}"
+POSTGRES_PORT="${POSTGRES_PORT:-${POSTGRES_HOST_PORT:-5432}}"
 POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-photo}"
-THUMBNAIL_PATH="${THUMBNAIL_PATH:-$ROOT/data/thumbs}"
+THUMBNAIL_PATH="${THUMBNAIL_PATH:-${DATA_DIR:-$ROOT/.local}/thumbs}"
+POSTGRES_USER="${POSTGRES_USER:-photo}"
+POSTGRES_DB="${POSTGRES_DB:-photo}"
+POSTGRES_BIN_DIR="${POSTGRES_BIN_DIR:-}"
+if [ -n "$POSTGRES_BIN_DIR" ] && [ -x "$POSTGRES_BIN_DIR/pg_isready" ]; then
+  PG_ISREADY_BIN="$POSTGRES_BIN_DIR/pg_isready"
+else
+  PG_ISREADY_BIN="$(command -v pg_isready || true)"
+fi
 
 # ── 参数解析 ─────────────────────────────────────────────────────────────────
 DO_DB=true
@@ -50,7 +58,17 @@ for arg in "$@"; do
     --thumbs)     DO_THUMBS=true ;;
     --yes|-y)     AUTO_YES=true ;;
     --help|-h)
-      sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'
+      echo "scripts/reset-dev.sh — 开发调试专用：清空数据库 + 缩略图"
+      echo ""
+      echo "可选模式（默认全部清空）:"
+      echo "  --db-only      只重置数据库（alembic downgrade → upgrade）"
+      echo "  --thumbs       同时删除缩略图目录"
+      echo "  --yes / -y     跳过确认提示（CI / 脚本调用时使用）"
+      echo ""
+      echo "示例:"
+      echo "  ./scripts/reset-dev.sh"
+      echo "  ./scripts/reset-dev.sh --db-only"
+      echo "  ./scripts/reset-dev.sh --thumbs --yes"
       exit 0
       ;;
     *) log_error "未知参数: $arg"; exit 1 ;;
@@ -78,27 +96,32 @@ fi
 
 echo ""
 
-# ── 检查 Docker 容器是否运行 ──────────────────────────────────────────────────
-check_container() {
-  local svc="$1"
-  if ! docker compose -f "$ROOT/docker-compose.yml" ps "$svc" \
-       | grep -qE "running|healthy" 2>/dev/null; then
-    log_error "$svc 容器未运行，请先执行: ./scripts/svc.sh start $svc"
+# ── 检查本地 PostgreSQL 是否可用 ──────────────────────────────────────────────
+check_postgres() {
+  if [ -z "$PG_ISREADY_BIN" ] || ! "$PG_ISREADY_BIN" -h 127.0.0.1 -p "$POSTGRES_PORT" -U "$POSTGRES_USER" -d "$POSTGRES_DB" >/dev/null 2>&1; then
+    log_error "PostgreSQL 未运行，请先执行: ./scripts/svc.sh start postgres"
     exit 1
   fi
 }
 
 # ── 重置数据库 ────────────────────────────────────────────────────────────────
 reset_db() {
-  check_container postgres
+  check_postgres
 
   log_info "重置数据库 (alembic downgrade base)..."
   cd "$ROOT/apps/api"
-  [ -d ".venv" ] && source .venv/bin/activate
-  alembic downgrade base
+  if [ -d ".venv" ]; then
+    .venv/bin/python -m alembic downgrade base
+  else
+    python3 -m alembic downgrade base
+  fi
 
   log_info "重新建表 (alembic upgrade head)..."
-  alembic upgrade head
+  if [ -d ".venv" ]; then
+    .venv/bin/python -m alembic upgrade head
+  else
+    python3 -m alembic upgrade head
+  fi
 
   log_ok "数据库已重置为干净状态"
 }
