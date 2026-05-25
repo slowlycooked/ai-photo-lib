@@ -81,6 +81,7 @@ def get_project_ai_status(
 def list_project_ai_jobs(
     project_id: int,
     status: Optional[str] = None,
+    job_type: Optional[str] = Query(default=None),
     limit: int = 50,
     offset: int = 0,
     project: Project = Depends(require_project),
@@ -88,7 +89,13 @@ def list_project_ai_jobs(
 ):
     """List AI jobs for a project with optional status filter and pagination."""
     service = ProjectAIJobsAppService(db)
-    return service.list_jobs(project_id, status=status, limit=limit, offset=offset)
+    return service.list_jobs(
+        project_id,
+        status=status,
+        job_type=job_type,
+        limit=limit,
+        offset=offset,
+    )
 
 
 # ─── Retry / clear ───────────────────────────────────────────────────────────
@@ -96,19 +103,23 @@ def list_project_ai_jobs(
 
 @router.post("/{project_id}/ai/jobs/retry-failed", response_model=RetryFailedResponse)
 def retry_project_failed_jobs(
+    project_id: int,
+    job_type: Optional[str] = Query(default=None),
     project: Project = Depends(require_project),
     db: Session = Depends(get_db),
 ):
     """Re-queue all failed AI jobs that have not exceeded the retry limit."""
     service = ProjectAIJobsAppService(db)
-    return service.retry_failed(project.id)
+    return service.retry_failed(project.id, job_type=job_type)
 
 
 @router.delete("/{project_id}/ai/jobs/failed", response_model=dict)
 def clear_project_failed_jobs(
+    project_id: int,
+    job_type: Optional[str] = Query(default=None),
     project: Project = Depends(require_project),
     db: Session = Depends(get_db),
 ):
     """Delete all failed AI jobs for a project."""
     service = ProjectAIJobsAppService(db)
-    return service.clear_failed(project.id)
+    return service.clear_failed(project.id, job_type=job_type)

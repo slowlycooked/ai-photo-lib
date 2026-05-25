@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertCircle, Loader2, ScanFace, UserRound, Users } from "lucide-react";
+import { AlertCircle, GitMerge, Loader2, ScanFace, Search, Trash2, UserPlus, UserRound, Users } from "lucide-react";
 import { Link, Navigate, useParams, useSearchParams } from "react-router-dom";
 import { api, type PersonDetail, type PersonSummary } from "@/api";
 import { queryKeys } from "@/api/queryKeys";
@@ -117,6 +117,7 @@ function PersonDetailPanel({
   onBatchConfirmReview,
   onBatchRejectReview,
   onBatchMoveReview,
+  onSplitFaces,
   onSetRepresentative,
 }: {
   projectId: number;
@@ -136,11 +137,14 @@ function PersonDetailPanel({
   onBatchConfirmReview: (faceIds: number[]) => void;
   onBatchRejectReview: (faceIds: number[]) => void;
   onBatchMoveReview: (faceIds: number[], targetPersonId: number) => void;
+  onSplitFaces: (faceIds: number[], newDisplayName?: string) => void;
   onSetRepresentative: (faceId: number) => void;
 }) {
   const [renameValue, setRenameValue] = useState("");
   const [moveTargets, setMoveTargets] = useState<Record<number, number>>({});
   const [batchMoveTargetId, setBatchMoveTargetId] = useState<number | null>(null);
+  const [splitFaceIds, setSplitFaceIds] = useState<number[]>([]);
+  const [splitName, setSplitName] = useState("");
 
   useEffect(() => {
     setRenameValue(detail?.display_name ?? "");
@@ -149,6 +153,21 @@ function PersonDetailPanel({
   useEffect(() => {
     setBatchMoveTargetId(moveCandidates[0]?.id ?? null);
   }, [moveCandidates]);
+
+  useEffect(() => {
+    setSplitFaceIds([]);
+    setSplitName("");
+  }, [detail?.id]);
+
+  useEffect(() => {
+    if (!detail) return;
+    const activeFaceIds = new Set(
+      detail.assignments
+        .filter((item) => item.assignment_status !== "rejected")
+        .map((item) => item.face_detection.id),
+    );
+    setSplitFaceIds((prev) => prev.filter((faceId) => activeFaceIds.has(faceId)));
+  }, [detail]);
 
   if (isLoading) {
     return (
@@ -177,13 +196,183 @@ function PersonDetailPanel({
     );
   }
 
-  const confirmed = detail.assignments.filter((item) => item.is_positive_sample).length;
+  const positiveAssignments = detail.assignments.filter(
+    (item) => item.is_positive_sample && item.assignment_status !== "rejected",
+  );
+  const candidateAssignments = detail.assignments.filter(
+    (item) => !item.is_positive_sample && item.assignment_status !== "rejected",
+  );
+  const candidateReviewPendingAssignments = candidateAssignments.filter(
+    (item) => item.assignment_status === "review_pending",
+  );
+  const candidateAutoAssignedAssignments = candidateAssignments.filter(
+    (item) => item.assignment_status === "auto_assigned",
+  );
+  const candidateOtherAssignments = candidateAssignments.filter(
+    (item) =>
+      item.assignment_status !== "review_pending" && item.assignment_status !== "auto_assigned",
+  );
+  const negativeAssignments = detail.assignments.filter(
+    (item) => item.assignment_status === "rejected",
+  );
+
+  const confirmed = positiveAssignments.length;
   const autoAssigned = detail.assignments.filter(
     (item) => item.assignment_status === "auto_assigned",
   ).length;
   const reviewPending = detail.assignments.filter(
     (item) => item.assignment_status === "review_pending",
   ).length;
+
+  const similarityDistribution = (() => {
+    const scores = candidateAssignments
+      .map((item) => item.similarity_score)
+      .filter((value): value is number => value != null)
+      .sort((a, b) => b - a);
+    if (scores.length === 0) {
+      return null;
+    }
+    const medianIndex = Math.floor(scores.length / 2);
+    const top = scores[0];
+    const median = scores[medianIndex];
+    const bottom = scores[scores.length - 1];
+    return {
+      top,
+      median,
+      bottom,
+      count: scores.length,
+    };
+  })();
+
+  const renderAssignmentCard = (assignment: PersonDetail["assignments"][number]) => {
+    const face = assignment.face_detection;
+    const splitSelectable = assignment.assignment_status !== "rejected";
+    const splitChecked = splitFaceIds.includes(face.id);
+    return (
+      <div
+        key={assignment.id}
+        className="rounded-xl border border-hairline bg-surface-soft p-3 flex gap-3"
+      >
+        <div className="w-24 h-24 rounded-lg overflow-hidden border border-hairline bg-canvas flex-shrink-0">
+          {faceCropEnabled && face.face_crop_path ? (
+            <img
+              src={api.projects.faceCropUrl(projectId, face.id, face.updated_at)}
+              alt={`face-${face.id}`}
+              className="w-full h-full object-cover"
+            />
+          ) : (
+            <div className="w-full h-full flex items-center justify-center text-mute">
+              <ScanFace className="w-5 h-5" />
+            </div>
+          )}
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2 flex-wrap">
+            {splitSelectable && (
+              <label className="inline-flex items-center gap-1 text-caption-sm text-mute">
+                <input
+                  type="checkbox"
+                  checked={splitChecked}
+                  onChange={(e) => {
+                    setSplitFaceIds((prev) => {
+                      if (e.target.checked) return [...prev, face.id];
+                      return prev.filter((id) => id !== face.id);
+                    });
+                  }}
+                />
+                拆分
+              </label>
+            )}
+            <span className="text-body-sm font-medium text-ink">
+              face #{face.id}
+            </span>
+            <span className="px-2 py-0.5 rounded-full bg-canvas text-caption-sm text-ink border border-hairline">
+              {assignment.assignment_status}
+            </span>
+          </div>
+          <p className="mt-1 text-caption-sm text-mute">
+            source: {assignment.assignment_source}
+          </p>
+          <p className="mt-1 text-caption-sm text-mute">
+            bbox {face.bbox_x}, {face.bbox_y}, {face.bbox_w}, {face.bbox_h}
+          </p>
+          <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-caption-sm text-mute">
+            {assignment.confidence != null && (
+              <span>置信度 {(assignment.confidence * 100).toFixed(0)}%</span>
+            )}
+            {assignment.similarity_score != null && (
+              <span>相似度 {(assignment.similarity_score * 100).toFixed(0)}%</span>
+            )}
+            {face.face_quality_score != null && (
+              <span>质量 {(face.face_quality_score * 100).toFixed(0)}%</span>
+            )}
+          </div>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <button
+              type="button"
+              disabled={actionBusy}
+              onClick={() => onConfirmFace(face.id)}
+              className="px-2.5 py-1 rounded-md border border-hairline text-caption-sm text-ink hover:bg-canvas disabled:opacity-50"
+            >
+              确认属于此人
+            </button>
+            <button
+              type="button"
+              disabled={actionBusy}
+              onClick={() => onRejectFace(face.id)}
+              className="px-2.5 py-1 rounded-md border border-hairline text-caption-sm text-ink hover:bg-canvas disabled:opacity-50"
+            >
+              不是此人
+            </button>
+            <button
+              type="button"
+              disabled={actionBusy}
+              onClick={() => onSetRepresentative(face.id)}
+              className="px-2.5 py-1 rounded-md border border-hairline text-caption-sm text-ink hover:bg-canvas disabled:opacity-50"
+            >
+              设为代表头像
+            </button>
+            {moveCandidates.length > 0 && (
+              <>
+                <select
+                  value={
+                    moveTargets[face.id] ??
+                    moveCandidates[0].id
+                  }
+                  onChange={(e) =>
+                    setMoveTargets((prev) => ({
+                      ...prev,
+                      [face.id]: Number(e.target.value),
+                    }))
+                  }
+                  className="px-2 py-1 rounded-md border border-hairline bg-canvas text-caption-sm"
+                >
+                  {moveCandidates.map((candidate) => (
+                    <option key={candidate.id} value={candidate.id}>
+                      移动到：{candidate.display_name}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  disabled={actionBusy}
+                  onClick={() =>
+                    onMoveFace(
+                      face.id,
+                      moveTargets[face.id] ?? moveCandidates[0].id,
+                    )
+                  }
+                  className="px-2.5 py-1 rounded-md border border-hairline text-caption-sm text-ink hover:bg-canvas disabled:opacity-50"
+                >
+                  移动
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div className="bg-canvas rounded-xl border border-hairline overflow-hidden">
@@ -259,9 +448,11 @@ function PersonDetailPanel({
           </div>
         </div>
 
-        <div className="mt-4 grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div className="mt-4 grid grid-cols-2 md:grid-cols-6 gap-3">
           <AssignmentChip label="总样本" value={detail.sample_count} />
-          <AssignmentChip label="已确认" value={confirmed} />
+          <AssignmentChip label="正样本" value={confirmed} />
+          <AssignmentChip label="候选" value={candidateAssignments.length} />
+          <AssignmentChip label="负样本" value={negativeAssignments.length} />
           <AssignmentChip label="自动识别" value={autoAssigned} />
           <AssignmentChip label="待确认" value={reviewPending} />
         </div>
@@ -339,125 +530,177 @@ function PersonDetailPanel({
             这个人物还没有关联的人脸样本
           </div>
         ) : (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-            {detail.assignments.map((assignment) => {
-              const face = assignment.face_detection;
-              return (
-                <div
-                  key={assignment.id}
-                  className="rounded-xl border border-hairline bg-surface-soft p-3 flex gap-3"
-                >
-                  <div className="w-24 h-24 rounded-lg overflow-hidden border border-hairline bg-canvas flex-shrink-0">
-                    {faceCropEnabled && face.face_crop_path ? (
-                      <img
-                        src={api.projects.faceCropUrl(projectId, face.id, face.updated_at)}
-                        alt={`face-${face.id}`}
-                        className="w-full h-full object-cover"
-                      />
-                    ) : (
-                      <div className="w-full h-full flex items-center justify-center text-mute">
-                        <ScanFace className="w-5 h-5" />
+          <>
+            <div className="rounded-lg border border-hairline bg-canvas px-4 py-3">
+              <div className="flex items-center justify-between gap-3 flex-wrap">
+                <div>
+                  <p className="text-body-sm font-medium text-ink">拆分人物</p>
+                  <p className="text-caption-sm text-mute mt-1">
+                    仅可选择 active 样本（非 rejected）拆分到新人物。
+                  </p>
+                </div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <input
+                    value={splitName}
+                    onChange={(e) => setSplitName(e.target.value)}
+                    className="px-3 py-1.5 rounded-md border border-hairline bg-canvas text-caption-sm"
+                    placeholder="新人物名称（可选）"
+                  />
+                  <button
+                    type="button"
+                    disabled={actionBusy || splitFaceIds.length === 0}
+                    onClick={() => onSplitFaces(splitFaceIds, splitName.trim() || undefined)}
+                    className="px-2.5 py-1 rounded-md border border-hairline text-caption-sm text-ink hover:bg-surface-card disabled:opacity-50"
+                  >
+                    拆分选中 {splitFaceIds.length} 张
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <section className="space-y-2">
+              <div className="flex items-center justify-between">
+                <h4 className="text-body-sm font-semibold text-ink">正样本</h4>
+                <span className="text-caption-sm text-mute">{positiveAssignments.length} 条</span>
+              </div>
+              {positiveAssignments.length === 0 ? (
+                <div className="rounded-lg border border-dashed border-hairline px-4 py-3 text-caption-sm text-mute">
+                  暂无正样本
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                  {positiveAssignments.map(renderAssignmentCard)}
+                </div>
+              )}
+            </section>
+
+            <section className="space-y-2">
+              <div className="flex items-center justify-between">
+                <h4 className="text-body-sm font-semibold text-ink">候选样本</h4>
+                <span className="text-caption-sm text-mute">{candidateAssignments.length} 条</span>
+              </div>
+              {candidateAssignments.length === 0 ? (
+                <div className="rounded-lg border border-dashed border-hairline px-4 py-3 text-caption-sm text-mute">
+                  暂无候选样本
+                </div>
+              ) : (
+                <>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div className="rounded-lg border border-hairline bg-canvas px-3 py-2">
+                      <p className="text-caption-sm text-mute">review_pending</p>
+                      <p className="text-body-sm font-semibold text-ink mt-0.5">
+                        {candidateReviewPendingAssignments.length}
+                      </p>
+                    </div>
+                    <div className="rounded-lg border border-hairline bg-canvas px-3 py-2">
+                      <p className="text-caption-sm text-mute">auto_assigned</p>
+                      <p className="text-body-sm font-semibold text-ink mt-0.5">
+                        {candidateAutoAssignedAssignments.length}
+                      </p>
+                    </div>
+                  </div>
+
+                  {similarityDistribution && (
+                    <div className="rounded-lg border border-hairline bg-canvas px-4 py-3 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <p className="text-body-sm font-medium text-ink">相似度分布</p>
+                        <span className="text-caption-sm text-mute">样本 {similarityDistribution.count}</span>
+                      </div>
+                      <div className="grid grid-cols-3 gap-2">
+                        <div className="rounded-md border border-hairline px-2 py-1.5 text-center">
+                          <p className="text-caption-sm text-mute">top</p>
+                          <p className="text-body-sm font-semibold text-ink">
+                            {(similarityDistribution.top * 100).toFixed(1)}%
+                          </p>
+                        </div>
+                        <div className="rounded-md border border-hairline px-2 py-1.5 text-center">
+                          <p className="text-caption-sm text-mute">median</p>
+                          <p className="text-body-sm font-semibold text-ink">
+                            {(similarityDistribution.median * 100).toFixed(1)}%
+                          </p>
+                        </div>
+                        <div className="rounded-md border border-hairline px-2 py-1.5 text-center">
+                          <p className="text-caption-sm text-mute">bottom</p>
+                          <p className="text-body-sm font-semibold text-ink">
+                            {(similarityDistribution.bottom * 100).toFixed(1)}%
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="space-y-3">
+                    <div>
+                      <div className="flex items-center justify-between mb-2">
+                        <h5 className="text-caption-sm font-semibold text-ink">Review Pending</h5>
+                        <span className="text-caption-sm text-mute">{candidateReviewPendingAssignments.length} 条</span>
+                      </div>
+                      {candidateReviewPendingAssignments.length === 0 ? (
+                        <div className="rounded-lg border border-dashed border-hairline px-4 py-3 text-caption-sm text-mute">
+                          暂无 review_pending 候选
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                          {candidateReviewPendingAssignments.map(renderAssignmentCard)}
+                        </div>
+                      )}
+                    </div>
+
+                    <div>
+                      <div className="flex items-center justify-between mb-2">
+                        <h5 className="text-caption-sm font-semibold text-ink">Auto Assigned</h5>
+                        <span className="text-caption-sm text-mute">{candidateAutoAssignedAssignments.length} 条</span>
+                      </div>
+                      {candidateAutoAssignedAssignments.length === 0 ? (
+                        <div className="rounded-lg border border-dashed border-hairline px-4 py-3 text-caption-sm text-mute">
+                          暂无 auto_assigned 候选
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                          {candidateAutoAssignedAssignments.map(renderAssignmentCard)}
+                        </div>
+                      )}
+                    </div>
+
+                    {candidateOtherAssignments.length > 0 && (
+                      <div>
+                        <div className="flex items-center justify-between mb-2">
+                          <h5 className="text-caption-sm font-semibold text-ink">Other Candidate Status</h5>
+                          <span className="text-caption-sm text-mute">{candidateOtherAssignments.length} 条</span>
+                        </div>
+                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                          {candidateOtherAssignments.map(renderAssignmentCard)}
+                        </div>
                       </div>
                     )}
                   </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="text-body-sm font-medium text-ink">
-                        face #{face.id}
-                      </span>
-                      <span className="px-2 py-0.5 rounded-full bg-canvas text-caption-sm text-ink border border-hairline">
-                        {assignment.assignment_status}
-                      </span>
-                    </div>
-                    <p className="mt-1 text-caption-sm text-mute">
-                      source: {assignment.assignment_source}
-                    </p>
-                    <p className="mt-1 text-caption-sm text-mute">
-                      bbox {face.bbox_x}, {face.bbox_y}, {face.bbox_w}, {face.bbox_h}
-                    </p>
-                    <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-caption-sm text-mute">
-                      {assignment.confidence != null && (
-                        <span>置信度 {(assignment.confidence * 100).toFixed(0)}%</span>
-                      )}
-                      {assignment.similarity_score != null && (
-                        <span>相似度 {(assignment.similarity_score * 100).toFixed(0)}%</span>
-                      )}
-                      {face.face_quality_score != null && (
-                        <span>质量 {(face.face_quality_score * 100).toFixed(0)}%</span>
-                      )}
-                    </div>
-                    <div className="mt-2 flex flex-wrap gap-2">
-                      <button
-                        type="button"
-                        disabled={actionBusy}
-                        onClick={() => onConfirmFace(face.id)}
-                        className="px-2.5 py-1 rounded-md border border-hairline text-caption-sm text-ink hover:bg-canvas disabled:opacity-50"
-                      >
-                        确认属于此人
-                      </button>
-                      <button
-                        type="button"
-                        disabled={actionBusy}
-                        onClick={() => onRejectFace(face.id)}
-                        className="px-2.5 py-1 rounded-md border border-hairline text-caption-sm text-ink hover:bg-canvas disabled:opacity-50"
-                      >
-                        不是此人
-                      </button>
-                      <button
-                        type="button"
-                        disabled={actionBusy}
-                        onClick={() => onSetRepresentative(face.id)}
-                        className="px-2.5 py-1 rounded-md border border-hairline text-caption-sm text-ink hover:bg-canvas disabled:opacity-50"
-                      >
-                        设为代表头像
-                      </button>
-                      {moveCandidates.length > 0 && (
-                        <>
-                          <select
-                            value={
-                              moveTargets[face.id] ??
-                              moveCandidates[0].id
-                            }
-                            onChange={(e) =>
-                              setMoveTargets((prev) => ({
-                                ...prev,
-                                [face.id]: Number(e.target.value),
-                              }))
-                            }
-                            className="px-2 py-1 rounded-md border border-hairline bg-canvas text-caption-sm"
-                          >
-                            {moveCandidates.map((candidate) => (
-                              <option key={candidate.id} value={candidate.id}>
-                                移动到：{candidate.display_name}
-                              </option>
-                            ))}
-                          </select>
-                          <button
-                            type="button"
-                            disabled={actionBusy}
-                            onClick={() =>
-                              onMoveFace(
-                                face.id,
-                                moveTargets[face.id] ?? moveCandidates[0].id,
-                              )
-                            }
-                            className="px-2.5 py-1 rounded-md border border-hairline text-caption-sm text-ink hover:bg-canvas disabled:opacity-50"
-                          >
-                            移动
-                          </button>
-                        </>
-                      )}
-                    </div>
-                  </div>
+                </>
+              )}
+            </section>
+
+            <section className="space-y-2">
+              <div className="flex items-center justify-between">
+                <h4 className="text-body-sm font-semibold text-ink">负样本</h4>
+                <span className="text-caption-sm text-mute">{negativeAssignments.length} 条</span>
+              </div>
+              {negativeAssignments.length === 0 ? (
+                <div className="rounded-lg border border-dashed border-hairline px-4 py-3 text-caption-sm text-mute">
+                  暂无负样本
                 </div>
-              );
-            })}
-          </div>
+              ) : (
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                  {negativeAssignments.map(renderAssignmentCard)}
+                </div>
+              )}
+            </section>
+          </>
         )}
       </div>
     </div>
   );
 }
+
+type PeopleFilterMode = "all" | "named" | "unnamed" | "review_pending" | "auto_assigned";
 
 export function PeoplePage() {
   const { projectId } = useParams();
@@ -466,6 +709,9 @@ export function PeoplePage() {
   const queryClient = useQueryClient();
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [createDisplayName, setCreateDisplayName] = useState("");
+  const [filterMode, setFilterMode] = useState<PeopleFilterMode>("all");
+  const [searchText, setSearchText] = useState("");
 
   const routeProjectId = projectId ? Number(projectId) : NaN;
   const normalizedRouteProjectId = Number.isFinite(routeProjectId) ? routeProjectId : null;
@@ -512,8 +758,18 @@ export function PeoplePage() {
     isLoading: peopleLoading,
     error: peopleError,
   } = useQuery({
-    queryKey: queryKeys.projectPeople(selectedProjectId, true),
-    queryFn: () => api.projects.people(selectedProjectId, true),
+    queryKey: [
+      ...queryKeys.projectPeople(selectedProjectId, true),
+      filterMode,
+      searchText.trim(),
+    ],
+    queryFn: () =>
+      api.projects.people(selectedProjectId, true, 200, {
+        is_named: filterMode === "named" ? true : filterMode === "unnamed" ? false : undefined,
+        has_review_pending: filterMode === "review_pending" ? true : undefined,
+        min_auto_assigned_count: filterMode === "auto_assigned" ? 1 : undefined,
+        q: searchText.trim() || undefined,
+      }),
     enabled: selectedProjectId != null,
     staleTime: 15_000,
   });
@@ -554,7 +810,7 @@ export function PeoplePage() {
   });
 
   const refreshPeopleData = () => {
-    queryClient.invalidateQueries({ queryKey: queryKeys.projectPeople(selectedProjectId, true) });
+    queryClient.invalidateQueries({ queryKey: ["project-people", selectedProjectId] });
     queryClient.invalidateQueries({ queryKey: queryKeys.projectPerson(selectedProjectId, resolvedSelectedPersonId) });
     queryClient.invalidateQueries({ queryKey: ["project-review-pending", selectedProjectId, resolvedSelectedPersonId] });
   };
@@ -635,6 +891,67 @@ export function PeoplePage() {
     onError: handleError,
   });
 
+  const createPersonMutation = useMutation({
+    mutationFn: (payload: { display_name?: string }) =>
+      api.projects.createPerson(selectedProjectId, {
+        display_name: payload.display_name,
+        is_named: !!payload.display_name,
+      }),
+    onSuccess: (result) => {
+      handleSuccess("已创建新人物");
+      setCreateDisplayName("");
+      const next = new URLSearchParams(searchParams);
+      next.set("person_id", String(result.person.id));
+      setSearchParams(next, { replace: true });
+    },
+    onError: handleError,
+  });
+
+  const mergePersonMutation = useMutation({
+    mutationFn: (targetPersonId: number) =>
+      api.projects.mergePerson(selectedProjectId, resolvedSelectedPersonId!, {
+        target_person_id: targetPersonId,
+      }),
+    onSuccess: (result) => {
+      handleSuccess(`已合并人物，迁移 ${result.moved_assignments} 张人脸`);
+      const next = new URLSearchParams(searchParams);
+      next.set("person_id", String(result.target_person.id));
+      setSearchParams(next, { replace: true });
+    },
+    onError: handleError,
+  });
+
+  const splitPersonMutation = useMutation({
+    mutationFn: (payload: { faceIds: number[]; newDisplayName?: string }) =>
+      api.projects.splitPerson(selectedProjectId, resolvedSelectedPersonId!, {
+        face_detection_ids: payload.faceIds,
+        new_display_name: payload.newDisplayName,
+      }),
+    onSuccess: (result) => {
+      handleSuccess(`已拆分人物，迁移 ${result.moved_assignments} 张人脸`);
+      const next = new URLSearchParams(searchParams);
+      next.set("person_id", String(result.target_person.id));
+      setSearchParams(next, { replace: true });
+    },
+    onError: handleError,
+  });
+
+  const deletePersonMutation = useMutation({
+    mutationFn: () => api.projects.deletePerson(selectedProjectId, resolvedSelectedPersonId!),
+    onSuccess: () => {
+      handleSuccess("人物已删除");
+      const nextCandidate = people.find((p) => p.id !== resolvedSelectedPersonId);
+      const next = new URLSearchParams(searchParams);
+      if (nextCandidate) {
+        next.set("person_id", String(nextCandidate.id));
+      } else {
+        next.delete("person_id");
+      }
+      setSearchParams(next, { replace: true });
+    },
+    onError: handleError,
+  });
+
   const actionBusy =
     renameMutation.isPending ||
     confirmMutation.isPending ||
@@ -643,7 +960,11 @@ export function PeoplePage() {
     representativeMutation.isPending ||
     batchConfirmMutation.isPending ||
     batchRejectMutation.isPending ||
-    batchMoveMutation.isPending;
+    batchMoveMutation.isPending ||
+    createPersonMutation.isPending ||
+    mergePersonMutation.isPending ||
+    splitPersonMutation.isPending ||
+    deletePersonMutation.isPending;
   const moveCandidates = people.filter((person) => person.id !== resolvedSelectedPersonId);
   const reviewFaceIds = (reviewData?.items ?? []).map((item) => item.face_detection_id);
 
@@ -679,6 +1000,104 @@ export function PeoplePage() {
           >
             打开 Review 页
           </Link>
+        </div>
+      </div>
+
+      <div className="bg-canvas border border-hairline rounded-xl px-4 py-3 flex items-center justify-between gap-3 flex-wrap">
+        <div className="flex items-center gap-2 flex-wrap">
+          <label className="text-caption-sm text-mute">筛选</label>
+          <select
+            value={filterMode}
+            onChange={(e) => setFilterMode(e.target.value as PeopleFilterMode)}
+            className="px-2 py-1 rounded-md border border-hairline bg-canvas text-caption-sm"
+          >
+            <option value="all">全部</option>
+            <option value="named">已命名</option>
+            <option value="unnamed">未命名</option>
+            <option value="review_pending">有待确认</option>
+            <option value="auto_assigned">自动识别样本&gt;0</option>
+          </select>
+
+          <label className="text-caption-sm text-mute ml-2">搜索</label>
+          <div className="flex items-center gap-1 px-2 py-1 rounded-md border border-hairline bg-canvas">
+            <Search className="w-3.5 h-3.5 text-mute" />
+            <input
+              value={searchText}
+              onChange={(e) => setSearchText(e.target.value)}
+              placeholder="按人物名搜索"
+              className="bg-transparent text-caption-sm outline-none"
+            />
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2 flex-wrap">
+          <input
+            value={createDisplayName}
+            onChange={(e) => setCreateDisplayName(e.target.value)}
+            placeholder="新人物名称（可为空）"
+            className="px-3 py-1.5 rounded-md border border-hairline bg-canvas text-caption-sm"
+          />
+          <button
+            type="button"
+            disabled={actionBusy}
+            onClick={() => createPersonMutation.mutate({ display_name: createDisplayName.trim() || undefined })}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-hairline text-caption-sm text-ink hover:bg-surface-card disabled:opacity-50"
+          >
+            <UserPlus className="w-3.5 h-3.5" />
+            创建人物
+          </button>
+
+          {resolvedSelectedPersonId != null && moveCandidates.length > 0 && (
+            <>
+              <select
+                defaultValue={String(moveCandidates[0].id)}
+                onChange={(e) => {
+                  const next = new URLSearchParams(searchParams);
+                  next.set("merge_target_id", e.target.value);
+                  setSearchParams(next, { replace: true });
+                }}
+                className="px-2 py-1 rounded-md border border-hairline bg-canvas text-caption-sm"
+              >
+                {moveCandidates.map((candidate) => (
+                  <option key={candidate.id} value={candidate.id}>
+                    合并到：{candidate.display_name}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                disabled={actionBusy}
+                onClick={() => {
+                  const mergeTargetIdParam = Number(searchParams.get("merge_target_id"));
+                  const fallbackTargetId = moveCandidates[0]?.id;
+                  const targetPersonId = Number.isFinite(mergeTargetIdParam)
+                    ? mergeTargetIdParam
+                    : fallbackTargetId;
+                  if (!targetPersonId) return;
+                  mergePersonMutation.mutate(targetPersonId);
+                }}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-hairline text-caption-sm text-ink hover:bg-surface-card disabled:opacity-50"
+              >
+                <GitMerge className="w-3.5 h-3.5" />
+                合并当前人物
+              </button>
+            </>
+          )}
+
+          {resolvedSelectedPersonId != null && (
+            <button
+              type="button"
+              disabled={actionBusy}
+              onClick={() => {
+                if (!window.confirm("删除人物前，请确保没有 active assignment。确认继续？")) return;
+                deletePersonMutation.mutate();
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-red-200 text-caption-sm text-red-700 hover:bg-red-50 disabled:opacity-50"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              删除人物
+            </button>
+          )}
         </div>
       </div>
 
@@ -768,6 +1187,10 @@ export function PeoplePage() {
             onBatchMoveReview={(faceIds, targetPersonId) => {
               if (!resolvedSelectedPersonId || faceIds.length === 0) return;
               batchMoveMutation.mutate({ faceIds, targetPersonId });
+            }}
+            onSplitFaces={(faceIds, newDisplayName) => {
+              if (!resolvedSelectedPersonId || faceIds.length === 0) return;
+              splitPersonMutation.mutate({ faceIds, newDisplayName });
             }}
             onSetRepresentative={(faceId) => {
               if (!resolvedSelectedPersonId) return;

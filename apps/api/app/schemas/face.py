@@ -131,6 +131,7 @@ class FaceScanProjectStartRequest(BaseModel):
     scope: Literal["missing", "failed", "stale", "all", "selected"] = "missing"
     photo_ids: list[int] = Field(default_factory=list)
     force: bool = False
+    dry_run: bool = False
 
 
 class FaceScanProjectStartResponse(BaseModel):
@@ -138,6 +139,13 @@ class FaceScanProjectStartResponse(BaseModel):
     created_jobs: int
     skipped_active_jobs: int
     scope: Literal["missing", "failed", "stale", "all", "selected"] = "missing"
+    total_photos: int = 0
+    candidate_count: int = 0
+    skipped_already_scanned: int = 0
+    skipped_other_project: int = 0
+    stale_count: int = 0
+    failed_count: int = 0
+    dry_run: bool = False
     message: str
 
 
@@ -213,6 +221,20 @@ class PersonRenameRequest(BaseModel):
     display_name: str = Field(min_length=1, max_length=200)
 
 
+class PersonCreateRequest(BaseModel):
+    display_name: Optional[str] = Field(default=None, max_length=200)
+    is_named: bool = True
+
+
+class PersonMergeRequest(BaseModel):
+    target_person_id: int = Field(ge=1)
+
+
+class PersonSplitRequest(BaseModel):
+    face_detection_ids: list[int] = Field(min_length=1, max_length=500)
+    new_display_name: Optional[str] = Field(default=None, max_length=200)
+
+
 class PersonFaceMoveRequest(BaseModel):
     target_person_id: int = Field(ge=1)
 
@@ -226,6 +248,18 @@ class PersonActionResponse(BaseModel):
 
 
 class PersonMoveFaceResponse(BaseModel):
+    source_person: PersonSummaryResponse
+    target_person: PersonSummaryResponse
+
+
+class PersonMergeResponse(BaseModel):
+    moved_assignments: int
+    source_person: PersonSummaryResponse
+    target_person: PersonSummaryResponse
+
+
+class PersonSplitResponse(BaseModel):
+    moved_assignments: int
     source_person: PersonSummaryResponse
     target_person: PersonSummaryResponse
 

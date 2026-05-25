@@ -211,6 +211,36 @@ class FakeFaceProvider:
         return self._fake_embedding(detected_face)
 
 
+class DriftedFaceProvider(FakeFaceProvider):
+    def _fake_faces(self) -> list[DetectedFace]:
+        return [
+            DetectedFace(
+                bbox=FaceBoundingBox(12, 14, 60, 60),
+                detection_confidence=0.95,
+                quality_score=0.88,
+                provider_payload={"face": 1},
+            ),
+            DetectedFace(
+                bbox=FaceBoundingBox(57, 20, 48, 48),
+                detection_confidence=0.91,
+                quality_score=0.81,
+                provider_payload={"face": 2},
+            ),
+        ]
+
+
+class FarShiftFaceProvider(FakeFaceProvider):
+    def _fake_faces(self) -> list[DetectedFace]:
+        return [
+            DetectedFace(
+                bbox=FaceBoundingBox(75, 20, 40, 40),
+                detection_confidence=0.90,
+                quality_score=0.7,
+                provider_payload={"face": 99},
+            ),
+        ]
+
+
 def _make_session() -> tuple[Session, Path]:
     tmp_db = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
     tmp_db.close()
@@ -330,6 +360,89 @@ def test_face_scan_service_is_idempotent_for_same_bboxes() -> None:
         assert second.embeddings_updated == 2
         assert db.query(FaceDetection).count() == 2
         assert db.query(FaceEmbedding).count() == 2
+    finally:
+        db.close()
+        for root, dirs, files in os.walk(temp_dir, topdown=False):
+            for name in files:
+                os.unlink(Path(root) / name)
+            for name in dirs:
+                os.rmdir(Path(root) / name)
+        os.rmdir(temp_dir)
+
+
+def test_face_scan_service_reuses_detection_ids_when_bbox_drift_has_high_iou() -> None:
+    db, temp_dir = _make_session()
+    try:
+        service = FaceScanService(db)
+        first = service.scan_photo(1, 101, provider=FakeFaceProvider())
+        assert first.detections_created == 2
+
+        before_ids = {
+            row[0]
+            for row in db.execute(
+                sa.text(
+                    """
+                    SELECT id FROM face_detections
+                    WHERE project_id = 1
+                    ORDER BY id ASC
+                    """
+                )
+            ).fetchall()
+        }
+
+        second = service.scan_photo(1, 101, provider=DriftedFaceProvider())
+        assert second.detections_created == 0
+        assert second.detections_updated == 2
+
+        after_ids = {
+            row[0]
+            for row in db.execute(
+                sa.text(
+                    """
+                    SELECT id FROM face_detections
+                    WHERE project_id = 1
+                    ORDER BY id ASC
+                    """
+                )
+            ).fetchall()
+        }
+
+        assert after_ids == before_ids
+        assert db.query(FaceDetection).count() == 2
+    finally:
+        db.close()
+        for root, dirs, files in os.walk(temp_dir, topdown=False):
+            for name in files:
+                os.unlink(Path(root) / name)
+            for name in dirs:
+                os.rmdir(Path(root) / name)
+        os.rmdir(temp_dir)
+
+
+def test_face_scan_service_marks_unmatched_old_detections_as_disappeared() -> None:
+    db, temp_dir = _make_session()
+    try:
+        service = FaceScanService(db)
+        first = service.scan_photo(1, 101, provider=FakeFaceProvider())
+        assert first.detections_created == 2
+
+        second = service.scan_photo(1, 101, provider=FarShiftFaceProvider())
+        assert second.detections_created == 1
+
+        rows = db.execute(
+            sa.text(
+                """
+                SELECT status, COUNT(*)
+                FROM face_detections
+                WHERE project_id = 1
+                GROUP BY status
+                ORDER BY status
+                """
+            )
+        ).fetchall()
+        status_counts = {row[0]: row[1] for row in rows}
+        assert status_counts.get("embedded", 0) == 1
+        assert status_counts.get("disappeared", 0) == 2
     finally:
         db.close()
         for root, dirs, files in os.walk(temp_dir, topdown=False):

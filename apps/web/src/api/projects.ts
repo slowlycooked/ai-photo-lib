@@ -24,10 +24,15 @@ import type {
   PersonBatchMoveRequest,
   PersonBatchMoveResponse,
   PersonBatchReviewRequest,
+  PersonCreateRequest,
   PersonMoveFaceRequest,
+  PersonMergeRequest,
+  PersonMergeResponse,
   PersonMoveFaceResponse,
   PersonReviewListResponse,
   PersonListResponse,
+  PersonSplitRequest,
+  PersonSplitResponse,
   ProjectAISettings,
   ProjectAISettingsUpdate,
   ProjectCreate,
@@ -105,20 +110,26 @@ export const projectsApi = {
 
   aiStatus: (id: number) => request<AIStatus>(`/projects/${id}/ai/status`),
 
-  aiJobs: (id: number, status?: string, limit = 50, offset = 0) =>
+  aiJobs: (
+    id: number,
+    status?: string,
+    limit = 50,
+    offset = 0,
+    jobType?: string,
+  ) =>
     request<AIJobListResponse>(
-      `/projects/${id}/ai/jobs${qs({ status, limit, offset })}`,
+      `/projects/${id}/ai/jobs${qs({ status, limit, offset, job_type: jobType })}`,
     ),
 
-  retryFailedAiJobs: (id: number) =>
+  retryFailedAiJobs: (id: number, jobType?: string) =>
     request<{ retried_jobs: number; message: string }>(
-      `/projects/${id}/ai/jobs/retry-failed`,
+      `/projects/${id}/ai/jobs/retry-failed${qs({ job_type: jobType })}`,
       { method: "POST" },
     ),
 
-  clearFailedAiJobs: (id: number) =>
+  clearFailedAiJobs: (id: number, jobType?: string) =>
     request<{ deleted_jobs: number; message: string }>(
-      `/projects/${id}/ai/jobs/failed`,
+      `/projects/${id}/ai/jobs/failed${qs({ job_type: jobType })}`,
       { method: "DELETE" },
     ),
 
@@ -216,10 +227,36 @@ export const projectsApi = {
     return Number.isNaN(version) ? base : `${base}?v=${version}`;
   },
 
-  people: (id: number, includeUnnamed = true, limit = 200) =>
+  people: (
+    id: number,
+    includeUnnamed = true,
+    limit = 200,
+    filters?: {
+      is_named?: boolean;
+      has_review_pending?: boolean;
+      min_sample_count?: number;
+      min_auto_assigned_count?: number;
+      q?: string;
+    },
+  ) =>
     request<PersonListResponse>(
-      `/projects/${id}/people${qs({ include_unnamed: includeUnnamed, limit })}`,
+      `/projects/${id}/people${qs({
+        include_unnamed: includeUnnamed,
+        limit,
+        is_named: filters?.is_named,
+        has_review_pending: filters?.has_review_pending,
+        min_sample_count: filters?.min_sample_count,
+        min_auto_assigned_count: filters?.min_auto_assigned_count,
+        q: filters?.q,
+      })}`,
     ),
+
+  createPerson: (id: number, body: PersonCreateRequest) =>
+    request<PersonActionResponse>(`/projects/${id}/people`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
 
   person: (id: number, personId: number, assignmentLimit = 120) =>
     request<PersonDetail>(
@@ -231,6 +268,11 @@ export const projectsApi = {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ display_name: displayName }),
+    }),
+
+  deletePerson: (id: number, personId: number) =>
+    request<{ deleted: boolean; message: string }>(`/projects/${id}/people/${personId}`, {
+      method: "DELETE",
     }),
 
   confirmPersonFace: (id: number, personId: number, faceId: number) =>
@@ -250,6 +292,20 @@ export const projectsApi = {
     body: PersonMoveFaceRequest,
   ) =>
     request<PersonMoveFaceResponse>(`/projects/${id}/people/${personId}/faces/${faceId}/move`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+
+  mergePerson: (id: number, sourcePersonId: number, body: PersonMergeRequest) =>
+    request<PersonMergeResponse>(`/projects/${id}/people/${sourcePersonId}/merge`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+
+  splitPerson: (id: number, personId: number, body: PersonSplitRequest) =>
+    request<PersonSplitResponse>(`/projects/${id}/people/${personId}/split`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),

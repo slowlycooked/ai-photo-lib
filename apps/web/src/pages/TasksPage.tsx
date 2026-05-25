@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import {
   Brain,
   FolderSearch,
@@ -12,6 +12,7 @@ import {
   Clock,
   Settings2,
   RotateCcw,
+  ScanFace,
 } from "lucide-react";
 import { ScanPanel } from "@/components/ScanPanel";
 import { api, type AIJob } from "@/api";
@@ -45,16 +46,17 @@ function FailedJobsSection({ projectId }: { projectId: number | null }) {
   const queryClient = useQueryClient();
   const [showAll, setShowAll] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const aiJobTypes = "analyze,reanalyze";
 
   const { data } = useQuery({
     queryKey: ["ai-jobs-failed", projectId],
-    queryFn: () => api.projects.aiJobs(projectId!, "failed", 50),
+    queryFn: () => api.projects.aiJobs(projectId!, "failed", 50, 0, aiJobTypes),
     enabled: projectId != null,
     staleTime: 10_000,
   });
 
   const retryMutation = useMutation({
-    mutationFn: () => api.projects.retryFailedAiJobs(projectId!),
+    mutationFn: () => api.projects.retryFailedAiJobs(projectId!, aiJobTypes),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.aiStatus(projectId) });
       queryClient.invalidateQueries({ queryKey: ["ai-jobs-failed", projectId] });
@@ -62,7 +64,7 @@ function FailedJobsSection({ projectId }: { projectId: number | null }) {
   });
 
   const clearFailedJobsMutation = useMutation({
-    mutationFn: () => api.projects.clearFailedAiJobs(projectId!),
+    mutationFn: () => api.projects.clearFailedAiJobs(projectId!, aiJobTypes),
     onSuccess: () => {
       setError(null);
       queryClient.invalidateQueries({ queryKey: queryKeys.aiStatus(projectId) });
@@ -397,9 +399,320 @@ function AISection({ projectId }: { projectId: number | null }) {
   );
 }
 
+type FaceScanScope = "missing" | "failed" | "stale" | "all";
+type FaceScanPreviewScope = FaceScanScope | "selected";
+
+const FACE_SCAN_SCOPE_OPTIONS: Array<{
+  scope: FaceScanScope;
+  label: string;
+  hint: string;
+}> = [
+  {
+    scope: "missing",
+    label: "扫描未处理",
+    hint: "只处理未有人脸检测记录的照片",
+  },
+  {
+    scope: "failed",
+    label: "重扫失败",
+    hint: "只重试历史失败的人脸扫描照片",
+  },
+  {
+    scope: "stale",
+    label: "扫描 stale",
+    hint: "处理参数或衍生图变化后需要重扫的照片",
+  },
+  {
+    scope: "all",
+    label: "全量重扫",
+    hint: "对所有照片重新创建人脸扫描任务",
+  },
+];
+
+function FaceScanSection({ projectId }: { projectId: number | null }) {
+  const queryClient = useQueryClient();
+  const [message, setMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [preview, setPreview] = useState<{
+    scope: FaceScanPreviewScope;
+    total_photos: number;
+    candidate_count: number;
+    skipped_active_jobs: number;
+    skipped_already_scanned: number;
+    stale_count: number;
+    failed_count: number;
+    dry_run: boolean;
+  } | null>(null);
+  const [showAllFailed, setShowAllFailed] = useState(false);
+
+  const canRun = projectId != null;
+  const peoplePath = canRun ? `/projects/${projectId}/people` : "/people";
+  const reviewPath = canRun ? `/projects/${projectId}/people/review` : "/people";
+
+  const { data: faceSettings, isLoading: settingsLoading } = useQuery({
+    queryKey: ["project-face-settings", projectId],
+    queryFn: () => api.projects.getFaceSettings(projectId!),
+    enabled: canRun,
+  });
+
+  const { data: status, isLoading: statusLoading } = useQuery({
+    queryKey: ["face-scan-status", projectId],
+    queryFn: () => api.projects.projectFaceScanStatus(projectId!),
+    enabled: canRun,
+    refetchInterval: (query) => {
+      const d = query.state.data;
+      return d && (d.queued > 0 || d.running > 0) ? 3000 : 15000;
+    },
+  });
+
+  const { data: failedJobsData } = useQuery({
+    queryKey: ["face-scan-failed-jobs", projectId],
+    queryFn: () => api.projects.aiJobs(projectId!, "failed", 50, 0, "face_scan"),
+    enabled: canRun,
+    staleTime: 10_000,
+  });
+
+  const previewMutation = useMutation({
+    mutationFn: (scope: FaceScanScope) =>
+      api.projects.startProjectFaceScan(projectId!, { scope, dry_run: true }),
+    onSuccess: (result) => {
+      setPreview({
+        scope: result.scope,
+        total_photos: result.total_photos,
+        candidate_count: result.candidate_count,
+        skipped_active_jobs: result.skipped_active_jobs,
+        skipped_already_scanned: result.skipped_already_scanned,
+        stale_count: result.stale_count,
+        failed_count: result.failed_count,
+        dry_run: result.dry_run,
+      });
+      setError(null);
+      setMessage(`预览完成：${result.scope} 可创建 ${result.candidate_count} 个任务`);
+    },
+    onError: (err: Error) => {
+      setError(`预览失败：${err.message}`);
+    },
+  });
+
+  const startMutation = useMutation({
+    mutationFn: (scope: FaceScanScope) =>
+      api.projects.startProjectFaceScan(projectId!, { scope }),
+    onSuccess: (result) => {
+      setError(null);
+      setMessage(
+        result.created_jobs > 0
+          ? `已创建 ${result.created_jobs} 个人脸扫描任务（scope=${result.scope}）`
+          : `没有可创建的人脸扫描任务（scope=${result.scope}）`
+      );
+      queryClient.invalidateQueries({ queryKey: ["face-scan-status", projectId] });
+      queryClient.invalidateQueries({ queryKey: ["face-scan-failed-jobs", projectId] });
+    },
+    onError: (err: Error) => {
+      setError(`启动失败：${err.message}`);
+    },
+  });
+
+  const clusterMutation = useMutation({
+    mutationFn: () => api.projects.clusterUnknownFaces(projectId!),
+    onSuccess: (result) => {
+      setError(null);
+      setMessage(
+        `聚类完成：clusters=${result.clusters_created} · persons=${result.persons_created} · faces=${result.faces_clustered}`
+      );
+      queryClient.invalidateQueries({ queryKey: queryKeys.projectPeople(projectId, true) });
+    },
+    onError: (err: Error) => {
+      setError(`聚类失败：${err.message}`);
+    },
+  });
+
+  const retryFailedMutation = useMutation({
+    mutationFn: () => api.projects.retryFailedAiJobs(projectId!, "face_scan"),
+    onSuccess: (result) => {
+      setError(null);
+      setMessage(`已重试 ${result.retried_jobs} 个 face_scan 失败任务`);
+      queryClient.invalidateQueries({ queryKey: ["face-scan-status", projectId] });
+      queryClient.invalidateQueries({ queryKey: ["face-scan-failed-jobs", projectId] });
+    },
+    onError: (err: Error) => {
+      setError(`重试失败：${err.message}`);
+    },
+  });
+
+  const clearFailedMutation = useMutation({
+    mutationFn: () => api.projects.clearFailedAiJobs(projectId!, "face_scan"),
+    onSuccess: (result) => {
+      setError(null);
+      setMessage(`已清理 ${result.deleted_jobs} 个 face_scan 失败任务`);
+      queryClient.invalidateQueries({ queryKey: ["face-scan-status", projectId] });
+      queryClient.invalidateQueries({ queryKey: ["face-scan-failed-jobs", projectId] });
+    },
+    onError: (err: Error) => {
+      setError(`清理失败：${err.message}`);
+    },
+  });
+
+  const failedItems = failedJobsData?.items ?? [];
+  const failedVisible = showAllFailed ? failedItems : failedItems.slice(0, 5);
+  const statusLoadingNow = statusLoading || settingsLoading;
+
+  return (
+    <section className="space-y-4">
+      <div className="flex items-center gap-2">
+        {statusLoadingNow ? (
+          <Loader2 className="w-4 h-4 animate-spin text-mute" />
+        ) : status && (status.queued > 0 || status.running > 0) ? (
+          <Loader2 className="w-4 h-4 animate-spin text-primary" />
+        ) : (
+          <ScanFace className="w-4 h-4 text-primary" />
+        )}
+        <h2 className="text-body-sm font-semibold text-ink">人脸扫描任务</h2>
+      </div>
+
+      {faceSettings && (
+        <div className="bg-canvas border border-hairline rounded-md px-4 py-3 space-y-1.5">
+          <p className="text-caption-sm text-mute">配置状态</p>
+          <p className="text-body-sm text-ink">
+            {faceSettings.face_recognition_enabled ? "已启用" : "未启用"} · provider={faceSettings.face_provider} · detector={faceSettings.face_detector_model} · embedding={faceSettings.face_embedding_model}
+          </p>
+          <p className="text-caption-sm text-mute">
+            runtime={faceSettings.face_runtime} · min_face_size={faceSettings.min_face_size} · min_confidence={faceSettings.min_detection_confidence}
+          </p>
+        </div>
+      )}
+
+      {status && (
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+          <StatTile label="排队中" value={status.queued} />
+          <StatTile label="进行中" value={status.running} color={status.running > 0 ? "text-primary" : "text-ink"} />
+          <StatTile label="已完成" value={status.success} color="text-green-700" />
+          <StatTile label="失败" value={status.failed} color={status.failed > 0 ? "text-amber-600" : "text-ink"} />
+          <StatTile label="总计" value={status.total} />
+        </div>
+      )}
+
+      <div className="space-y-2">
+        {FACE_SCAN_SCOPE_OPTIONS.map((item) => {
+          const isPending = previewMutation.isPending || startMutation.isPending;
+          return (
+            <div
+              key={item.scope}
+              className="bg-canvas border border-hairline rounded-md px-4 py-3 flex flex-wrap items-center justify-between gap-2"
+            >
+              <div>
+                <p className="text-body-sm text-ink font-medium">{item.label}</p>
+                <p className="text-caption-sm text-mute">{item.hint}</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => previewMutation.mutate(item.scope)}
+                  disabled={!canRun || isPending}
+                  className="px-3 py-1.5 rounded-md border border-hairline text-btn-sm hover:bg-surface-card disabled:opacity-50 transition-colors"
+                >
+                  预览
+                </button>
+                <button
+                  onClick={() => startMutation.mutate(item.scope)}
+                  disabled={!canRun || isPending}
+                  className="px-3 py-1.5 rounded-md bg-primary text-white text-btn-sm font-bold hover:bg-primary-pressed disabled:bg-stone transition-colors"
+                >
+                  启动
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {preview && (
+        <div className="bg-surface-soft border border-hairline rounded-md px-4 py-3 space-y-1">
+          <p className="text-body-sm font-medium text-ink">Dry-run 预览（scope={preview.scope}）</p>
+          <p className="text-caption-sm text-mute">
+            total={preview.total_photos} · candidate={preview.candidate_count} · skipped_active={preview.skipped_active_jobs} · skipped_scanned={preview.skipped_already_scanned}
+          </p>
+          <p className="text-caption-sm text-mute">
+            stale={preview.stale_count} · failed={preview.failed_count} · dry_run={String(preview.dry_run)}
+          </p>
+        </div>
+      )}
+
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          onClick={() => clusterMutation.mutate()}
+          disabled={!canRun || clusterMutation.isPending}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-hairline text-btn-sm hover:bg-surface-card disabled:opacity-50 transition-colors"
+        >
+          <ScanFace className="w-3.5 h-3.5" />
+          {clusterMutation.isPending ? "聚类中…" : "聚类未知人脸"}
+        </button>
+        <Link
+          to={reviewPath}
+          className="px-3 py-1.5 rounded-md border border-hairline text-btn-sm hover:bg-surface-card transition-colors"
+        >
+          进入 Review Pending
+        </Link>
+        <Link
+          to={peoplePath}
+          className="px-3 py-1.5 rounded-md border border-hairline text-btn-sm hover:bg-surface-card transition-colors"
+        >
+          查看人物页
+        </Link>
+      </div>
+
+      {message && <p className="text-caption-sm text-mute">{message}</p>}
+      {error && <p className="text-caption-sm text-danger">{error}</p>}
+      {!canRun && <p className="text-caption-sm text-mute">请先选择项目后再执行人脸扫描任务。</p>}
+
+      {failedItems.length > 0 && (
+        <section className="space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 text-amber-500" />
+              <h3 className="text-body-sm font-semibold text-ink">Face Scan 失败任务</h3>
+              <span className="text-caption-sm text-mute">{failedItems.length} 个</span>
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={() => retryFailedMutation.mutate()}
+                disabled={retryFailedMutation.isPending}
+                className="flex items-center gap-1 text-btn-sm font-bold text-primary hover:text-primary-pressed disabled:text-stone transition-colors"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                {retryFailedMutation.isPending ? "重试中…" : "全部重试"}
+              </button>
+              <button
+                onClick={() => clearFailedMutation.mutate()}
+                disabled={clearFailedMutation.isPending}
+                className="flex items-center gap-1 text-btn-sm font-bold text-danger hover:text-danger-pressed disabled:text-stone transition-colors"
+              >
+                清除失败记录
+              </button>
+            </div>
+          </div>
+
+          <div className="space-y-1.5">
+            {failedVisible.map((job) => (
+              <FailedJobRow key={job.id} job={job} />
+            ))}
+          </div>
+
+          {failedItems.length > 5 && (
+            <button
+              onClick={() => setShowAllFailed((v) => !v)}
+              className="text-btn-sm text-primary hover:text-primary-pressed"
+            >
+              {showAllFailed ? "收起" : `显示全部 ${failedItems.length} 个`}
+            </button>
+          )}
+        </section>
+      )}
+    </section>
+  );
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
-type TaskTab = "scan" | "ai" | "ai-settings";
+type TaskTab = "scan" | "ai" | "face-scan" | "ai-settings";
 
 export function TasksPage() {
   const { currentProjectId } = useProjectContext();
@@ -410,7 +723,7 @@ export function TasksPage() {
 
   const tabParam = searchParams.get("tab");
   const initialTab: TaskTab =
-    tabParam === "scan" || tabParam === "ai" || tabParam === "ai-settings"
+    tabParam === "scan" || tabParam === "ai" || tabParam === "face-scan" || tabParam === "ai-settings"
       ? tabParam
       : "ai";
   const [tab, setTab] = useState<TaskTab>(initialTab);
@@ -449,6 +762,12 @@ export function TasksPage() {
             AI 分析任务
           </span>
         </button>
+        <button onClick={() => handleTabChange("face-scan")} className={tabClass("face-scan")}>
+          <span className="flex items-center gap-1.5">
+            <ScanFace className="w-3.5 h-3.5" />
+            人脸扫描
+          </span>
+        </button>
         <button onClick={() => handleTabChange("ai-settings")} className={tabClass("ai-settings")}>
           <span className="flex items-center gap-1.5">
             <Settings2 className="w-3.5 h-3.5" />
@@ -474,6 +793,10 @@ export function TasksPage() {
 
       {tab === "ai" && (
         <AISection projectId={currentProjectId} />
+      )}
+
+      {tab === "face-scan" && (
+        <FaceScanSection projectId={currentProjectId} />
       )}
 
       {tab === "ai-settings" && (

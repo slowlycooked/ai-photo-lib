@@ -20,14 +20,19 @@ from ..schemas.face import (
     PersonBatchMoveResponse,
     PersonBatchReviewRequest,
     FaceDetectionResponse,
+    PersonCreateRequest,
     PersonDetailResponse,
     PersonFaceMoveRequest,
     PersonFaceAssignmentResponse,
     PersonListResponse,
+    PersonMergeRequest,
+    PersonMergeResponse,
     PersonMoveFaceResponse,
     PersonRenameRequest,
     PersonReviewListResponse,
     PersonRepresentativeFaceRequest,
+    PersonSplitRequest,
+    PersonSplitResponse,
     PersonSummaryResponse,
 )
 from ..services.people_learning_service import rebuild_person_centroid_prototype
@@ -283,13 +288,46 @@ def list_project_review_pending(
 def list_project_people(
     project_id: int,
     include_unnamed: bool = True,
+    is_named: Optional[bool] = None,
+    has_review_pending: Optional[bool] = None,
+    min_sample_count: Optional[int] = Query(default=None, ge=0),
+    min_auto_assigned_count: Optional[int] = Query(default=None, ge=0),
+    q: Optional[str] = Query(default=None, max_length=200),
     limit: int = Query(200, ge=1, le=500),
     project: Project = Depends(require_project),
     db: Session = Depends(get_db),
 ) -> PersonListResponse:
     query = db.query(Person).filter(Person.project_id == project_id)
-    if not include_unnamed:
+
+    if is_named is not None:
+        query = query.filter(Person.is_named.is_(is_named))
+    elif not include_unnamed:
         query = query.filter(Person.is_named.is_(True))
+
+    if has_review_pending is not None:
+        if has_review_pending:
+            query = query.filter(Person.review_pending_count > 0)
+        else:
+            query = query.filter(Person.review_pending_count == 0)
+
+    if min_sample_count is not None:
+        query = query.filter(Person.sample_count >= min_sample_count)
+
+    if min_auto_assigned_count is not None:
+        query = query.filter(Person.auto_assigned_count >= min_auto_assigned_count)
+
+    if q:
+        q_term = q.strip()
+        if q_term:
+            like_term = f"%{q_term}%"
+            query = query.filter(
+                sa.or_(
+                    Person.display_name.ilike(like_term),
+                    Person.normalized_name.ilike(like_term.lower()),
+                )
+            )
+
+    total = query.count()
     people = (
         query.order_by(
             Person.is_named.desc(),
@@ -302,9 +340,47 @@ def list_project_people(
         .all()
     )
     return PersonListResponse(
-        total=len(people),
+        total=total,
         items=[PersonSummaryResponse.model_validate(person) for person in people],
     )
+
+
+@router.post("/{project_id}/people", response_model=PersonActionResponse)
+def create_project_person(
+    project_id: int,
+    body: PersonCreateRequest,
+    project: Project = Depends(require_project),
+    db: Session = Depends(get_db),
+) -> PersonActionResponse:
+    now = datetime.now(timezone.utc)
+    display_name = (body.display_name or "").strip()
+    if not display_name:
+        display_name = f"Person {now.strftime('%Y%m%d%H%M%S')}"
+
+    is_named = bool(body.is_named and display_name)
+    person = Person(
+        project_id=project_id,
+        display_name=display_name,
+        normalized_name=display_name.lower() if is_named else None,
+        is_named=is_named,
+        representative_face_detection_id=None,
+        sample_count=0,
+        confirmed_sample_count=0,
+        auto_assigned_count=0,
+        review_pending_count=0,
+        created_by="human_created",
+        updated_at=now,
+    )
+    db.add(person)
+    db.commit()
+    db.refresh(person)
+    logger.info(
+        "people.create project_id=%d person_id=%d display_name=%s",
+        project_id,
+        person.id,
+        display_name,
+    )
+    return PersonActionResponse(person=PersonSummaryResponse.model_validate(person))
 
 
 @router.get("/{project_id}/people/{person_id}", response_model=PersonDetailResponse)
@@ -390,6 +466,292 @@ def rename_project_person(
         display_name,
     )
     return PersonActionResponse(person=PersonSummaryResponse.model_validate(person))
+
+
+@router.delete("/{project_id}/people/{person_id}", response_model=dict)
+def delete_project_person(
+    project_id: int,
+    person_id: int,
+    project: Project = Depends(require_project),
+    db: Session = Depends(get_db),
+) -> dict:
+    person = _get_person_or_404(db, project_id, person_id)
+
+    active_assignment_count = (
+        db.query(sa.func.count(PersonFaceAssignment.id))
+        .filter(
+            PersonFaceAssignment.project_id == project_id,
+            PersonFaceAssignment.person_id == person_id,
+            PersonFaceAssignment.assignment_status != "rejected",
+        )
+        .scalar()
+        or 0
+    )
+    if int(active_assignment_count) > 0:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Cannot delete person with active assignments. "
+                "Move or reject active faces first."
+            ),
+        )
+
+    (
+        db.query(FaceNegativeConstraint)
+        .filter(
+            FaceNegativeConstraint.project_id == project_id,
+            FaceNegativeConstraint.not_person_id == person_id,
+        )
+        .delete(synchronize_session=False)
+    )
+    (
+        db.query(PersonFaceAssignment)
+        .filter(
+            PersonFaceAssignment.project_id == project_id,
+            PersonFaceAssignment.person_id == person_id,
+        )
+        .delete(synchronize_session=False)
+    )
+
+    db.delete(person)
+    db.commit()
+    logger.info(
+        "people.delete project_id=%d person_id=%d",
+        project_id,
+        person_id,
+    )
+    return {"deleted": True, "message": "Person deleted"}
+
+
+@router.post(
+    "/{project_id}/people/{source_person_id}/merge",
+    response_model=PersonMergeResponse,
+)
+def merge_project_persons(
+    project_id: int,
+    source_person_id: int,
+    body: PersonMergeRequest,
+    project: Project = Depends(require_project),
+    db: Session = Depends(get_db),
+) -> PersonMergeResponse:
+    source_person = _get_person_or_404(db, project_id, source_person_id)
+    target_person = _get_person_or_404(db, project_id, body.target_person_id)
+    if source_person.id == target_person.id:
+        raise HTTPException(status_code=422, detail="target_person_id must be different")
+
+    now = datetime.now(timezone.utc)
+    source_assignments = (
+        db.query(PersonFaceAssignment)
+        .filter(
+            PersonFaceAssignment.project_id == project_id,
+            PersonFaceAssignment.person_id == source_person.id,
+            PersonFaceAssignment.assignment_status != "rejected",
+        )
+        .all()
+    )
+
+    moved_assignments = 0
+    for assignment in source_assignments:
+        target_assignment = _get_assignment(
+            db,
+            project_id=project_id,
+            person_id=target_person.id,
+            face_id=assignment.face_detection_id,
+        )
+        if target_assignment is None:
+            assignment.person_id = target_person.id
+            assignment.assignment_source = "human_merge"
+            assignment.updated_at = now
+            moved_assignments += 1
+            continue
+
+        if target_assignment.assignment_status == "rejected":
+            target_assignment.assignment_status = assignment.assignment_status
+            target_assignment.assignment_source = "human_merge"
+            target_assignment.confidence = assignment.confidence
+            target_assignment.similarity_score = assignment.similarity_score
+            target_assignment.is_positive_sample = assignment.is_positive_sample
+            target_assignment.is_training_candidate = assignment.is_training_candidate
+            target_assignment.updated_at = now
+
+        assignment.assignment_status = "rejected"
+        assignment.assignment_source = "human_merge"
+        assignment.is_positive_sample = False
+        assignment.is_training_candidate = False
+        assignment.updated_at = now
+
+    if target_person.representative_face_detection_id is None:
+        target_person.representative_face_detection_id = source_person.representative_face_detection_id
+    source_person.representative_face_detection_id = None
+    source_person.updated_at = now
+    target_person.updated_at = now
+
+    db.flush()
+    _refresh_person_counters(db, project_id=project_id, person_id=source_person.id)
+    _refresh_person_counters(db, project_id=project_id, person_id=target_person.id)
+    rebuild_person_centroid_prototype(
+        db,
+        project_id=project_id,
+        person_id=source_person.id,
+    )
+    rebuild_person_centroid_prototype(
+        db,
+        project_id=project_id,
+        person_id=target_person.id,
+    )
+
+    db.commit()
+    db.refresh(source_person)
+    db.refresh(target_person)
+    logger.info(
+        "people.merge project_id=%d source_person_id=%d target_person_id=%d moved=%d",
+        project_id,
+        source_person.id,
+        target_person.id,
+        moved_assignments,
+    )
+    return PersonMergeResponse(
+        moved_assignments=moved_assignments,
+        source_person=PersonSummaryResponse.model_validate(source_person),
+        target_person=PersonSummaryResponse.model_validate(target_person),
+    )
+
+
+@router.post(
+    "/{project_id}/people/{person_id}/split",
+    response_model=PersonSplitResponse,
+)
+def split_project_person(
+    project_id: int,
+    person_id: int,
+    body: PersonSplitRequest,
+    project: Project = Depends(require_project),
+    db: Session = Depends(get_db),
+) -> PersonSplitResponse:
+    source_person = _get_person_or_404(db, project_id, person_id)
+    now = datetime.now(timezone.utc)
+    face_ids = sorted({int(face_id) for face_id in body.face_detection_ids})
+
+    source_assignments = (
+        db.query(PersonFaceAssignment)
+        .filter(
+            PersonFaceAssignment.project_id == project_id,
+            PersonFaceAssignment.person_id == source_person.id,
+            PersonFaceAssignment.face_detection_id.in_(face_ids),
+            PersonFaceAssignment.assignment_status != "rejected",
+        )
+        .all()
+    )
+    if not source_assignments:
+        raise HTTPException(status_code=404, detail="No active assignments found for split")
+
+    new_display_name = (body.new_display_name or "").strip()
+    if not new_display_name:
+        new_display_name = f"Split Person {now.strftime('%Y%m%d%H%M%S')}"
+
+    target_person = Person(
+        project_id=project_id,
+        display_name=new_display_name,
+        normalized_name=new_display_name.lower(),
+        is_named=True,
+        representative_face_detection_id=None,
+        sample_count=0,
+        confirmed_sample_count=0,
+        auto_assigned_count=0,
+        review_pending_count=0,
+        created_by="human_split",
+        updated_at=now,
+    )
+    db.add(target_person)
+    db.flush()
+
+    moved_assignments = 0
+    for source_assignment in source_assignments:
+        source_assignment.assignment_status = "rejected"
+        source_assignment.assignment_source = "human_split"
+        source_assignment.is_positive_sample = False
+        source_assignment.is_training_candidate = False
+        source_assignment.updated_at = now
+
+        target_assignment = _get_assignment(
+            db,
+            project_id=project_id,
+            person_id=target_person.id,
+            face_id=source_assignment.face_detection_id,
+        )
+        if target_assignment is None:
+            target_assignment = PersonFaceAssignment(
+                project_id=project_id,
+                person_id=target_person.id,
+                face_detection_id=source_assignment.face_detection_id,
+                assignment_status="human_corrected",
+                assignment_source="human_split",
+                confidence=source_assignment.confidence,
+                similarity_score=source_assignment.similarity_score,
+                is_positive_sample=True,
+                is_training_candidate=True,
+                updated_at=now,
+            )
+            db.add(target_assignment)
+        else:
+            target_assignment.assignment_status = "human_corrected"
+            target_assignment.assignment_source = "human_split"
+            target_assignment.is_positive_sample = True
+            target_assignment.is_training_candidate = True
+            target_assignment.updated_at = now
+
+        _upsert_negative_constraint(
+            db,
+            project_id=project_id,
+            face_id=source_assignment.face_detection_id,
+            not_person_id=source_person.id,
+            source="human_split",
+        )
+        _remove_negative_constraint(
+            db,
+            project_id=project_id,
+            face_id=source_assignment.face_detection_id,
+            not_person_id=target_person.id,
+        )
+        if target_person.representative_face_detection_id is None:
+            target_person.representative_face_detection_id = source_assignment.face_detection_id
+        if source_person.representative_face_detection_id == source_assignment.face_detection_id:
+            source_person.representative_face_detection_id = None
+
+        moved_assignments += 1
+
+    source_person.updated_at = now
+    target_person.updated_at = now
+
+    db.flush()
+    _refresh_person_counters(db, project_id=project_id, person_id=source_person.id)
+    _refresh_person_counters(db, project_id=project_id, person_id=target_person.id)
+    rebuild_person_centroid_prototype(
+        db,
+        project_id=project_id,
+        person_id=source_person.id,
+    )
+    rebuild_person_centroid_prototype(
+        db,
+        project_id=project_id,
+        person_id=target_person.id,
+    )
+
+    db.commit()
+    db.refresh(source_person)
+    db.refresh(target_person)
+    logger.info(
+        "people.split project_id=%d source_person_id=%d target_person_id=%d moved=%d",
+        project_id,
+        source_person.id,
+        target_person.id,
+        moved_assignments,
+    )
+    return PersonSplitResponse(
+        moved_assignments=moved_assignments,
+        source_person=PersonSummaryResponse.model_validate(source_person),
+        target_person=PersonSummaryResponse.model_validate(target_person),
+    )
 
 
 @router.post(

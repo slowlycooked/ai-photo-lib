@@ -46,6 +46,49 @@ class AIJobRepository:
         self._db.flush()
         return jobs
 
+    def enqueue_bulk_unique(
+        self,
+        project_id: int,
+        photo_ids: list[int],
+        *,
+        job_type: str = "analyze",
+    ) -> tuple[list[AIJob], list[int]]:
+        """Create queued jobs while skipping active queued/running duplicates."""
+        deduped_photo_ids = list(dict.fromkeys(photo_ids))
+        if not deduped_photo_ids:
+            return [], []
+
+        active_photo_id_rows = (
+            self._db.query(AIJob.photo_id)
+            .filter(
+                AIJob.project_id == project_id,
+                AIJob.job_type == job_type,
+                AIJob.status.in_(["queued", "running"]),
+                AIJob.photo_id.in_(deduped_photo_ids),
+            )
+            .distinct()
+            .all()
+        )
+        active_photo_ids = {row[0] for row in active_photo_id_rows}
+
+        created_jobs: list[AIJob] = []
+        skipped_photo_ids: list[int] = []
+        for photo_id in deduped_photo_ids:
+            if photo_id in active_photo_ids:
+                skipped_photo_ids.append(photo_id)
+                continue
+            job = AIJob(
+                project_id=project_id,
+                photo_id=photo_id,
+                job_type=job_type,
+                status="queued",
+                retry_count=0,
+            )
+            self._db.add(job)
+            created_jobs.append(job)
+        self._db.flush()
+        return created_jobs, skipped_photo_ids
+
     # ── claim ─────────────────────────────────────────────────────────────────
 
     def claim_next_queued(self) -> Optional[AIJob]:
@@ -102,14 +145,16 @@ class AIJobRepository:
 
     # ── bulk operations ───────────────────────────────────────────────────────
 
-    def retry_failed_for_project(self, project_id: int) -> int:
+    def retry_failed_for_project(self, project_id: int, job_types: Optional[list[str]] = None) -> int:
         """Re-queue all failed jobs for a project. Returns count."""
         now = datetime.now(timezone.utc)
         rows = (
             self._db.query(AIJob)
             .filter(AIJob.project_id == project_id, AIJob.status == "failed")
-            .all()
         )
+        if job_types:
+            rows = rows.filter(AIJob.job_type.in_(job_types))
+        rows = rows.all()
         for job in rows:
             job.status = "queued"
             job.retry_count = 0
@@ -119,17 +164,24 @@ class AIJobRepository:
         self._db.flush()
         return len(rows)
 
-    def delete_failed_for_project(self, project_id: int) -> int:
-        """Hard-delete all failed jobs for a project. Returns count."""
-        deleted = (
-            self._db.query(AIJob)
-            .filter(AIJob.project_id == project_id, AIJob.status == "failed")
-            .delete()
+    def delete_failed_for_project(self, project_id: int, job_types: Optional[list[str]] = None) -> int:
+        """Hard-delete failed jobs for a project. Returns count."""
+        query = self._db.query(AIJob).filter(
+            AIJob.project_id == project_id,
+            AIJob.status == "failed",
         )
+        if job_types:
+            query = query.filter(AIJob.job_type.in_(job_types))
+        deleted = query.delete(synchronize_session=False)
         self._db.flush()
         return deleted
 
-    def retry_failed_for_project_with_limit(self, project_id: int, max_retries: int) -> int:
+    def retry_failed_for_project_with_limit(
+        self,
+        project_id: int,
+        max_retries: int,
+        job_types: Optional[list[str]] = None,
+    ) -> int:
         """Re-queue failed jobs under max_retries and keep retry_count history."""
         now = datetime.now(timezone.utc)
         rows = (
@@ -139,8 +191,10 @@ class AIJobRepository:
                 AIJob.status == "failed",
                 AIJob.retry_count < max_retries,
             )
-            .all()
         )
+        if job_types:
+            rows = rows.filter(AIJob.job_type.in_(job_types))
+        rows = rows.all()
         for job in rows:
             job.status = "queued"
             job.error_message = None
@@ -196,6 +250,7 @@ class AIJobRepository:
         project_id: int,
         *,
         status: Optional[str] = None,
+        job_types: Optional[list[str]] = None,
         limit: int = 50,
         offset: int = 0,
     ) -> tuple[int, list[AIJob]]:
@@ -205,6 +260,8 @@ class AIJobRepository:
         q = self._db.query(AIJob).filter(AIJob.project_id == project_id)
         if status:
             q = q.filter(AIJob.status == status)
+        if job_types:
+            q = q.filter(AIJob.job_type.in_(job_types))
         total = q.count()
         items = q.order_by(AIJob.created_at.desc()).offset(offset).limit(limit).all()
         return total, items

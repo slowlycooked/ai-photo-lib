@@ -33,10 +33,17 @@ class ProjectAIJobsAppService:
         )
 
         photo_ids = [photo.id for photo in photos_to_process]
-        self._uow.ai_jobs.enqueue_bulk(project_id, photo_ids, job_type="analyze")
+        created_jobs, _ = self._uow.ai_jobs.enqueue_bulk_unique(
+            project_id,
+            photo_ids,
+            job_type="analyze",
+        )
 
         self._uow.commit()
-        return StartAnalysisResponse(created_jobs=len(photo_ids), message="AI analysis jobs created")
+        return StartAnalysisResponse(
+            created_jobs=len(created_jobs),
+            message="AI analysis jobs created",
+        )
 
     def restart_analysis(
         self,
@@ -77,7 +84,7 @@ class ProjectAIJobsAppService:
         for photo in photos:
             photo.status = "indexed"
 
-        self._uow.ai_jobs.enqueue_bulk(
+        created_jobs, _ = self._uow.ai_jobs.enqueue_bulk_unique(
             project_id,
             selected_photo_ids,
             job_type="reanalyze",
@@ -85,7 +92,7 @@ class ProjectAIJobsAppService:
 
         self._uow.commit()
         return StartAnalysisResponse(
-            created_jobs=len(selected_photo_ids),
+            created_jobs=len(created_jobs),
             message="AI re-analysis jobs created",
         )
 
@@ -121,13 +128,16 @@ class ProjectAIJobsAppService:
         project_id: int,
         *,
         status: Optional[str],
+        job_type: Optional[str],
         limit: int,
         offset: int,
     ) -> AIJobListResponse:
         limit = max(1, min(limit, 200))
+        job_types = _parse_job_types(job_type)
         total, jobs = self._uow.ai_jobs.list_for_project(
             project_id,
             status=status,
+            job_types=job_types,
             limit=limit,
             offset=offset,
         )
@@ -160,17 +170,20 @@ class ProjectAIJobsAppService:
         ]
         return AIJobListResponse(total=total, items=items)
 
-    def retry_failed(self, project_id: int) -> RetryFailedResponse:
+    def retry_failed(self, project_id: int, *, job_type: Optional[str]) -> RetryFailedResponse:
+        job_types = _parse_job_types(job_type)
         count = self._uow.ai_jobs.retry_failed_for_project_with_limit(
             project_id,
             settings.ai_max_retries,
+            job_types=job_types,
         )
 
         self._uow.commit()
         return RetryFailedResponse(retried_jobs=count, message="Failed jobs re-queued")
 
-    def clear_failed(self, project_id: int) -> dict:
-        count = self._uow.ai_jobs.delete_failed_for_project(project_id)
+    def clear_failed(self, project_id: int, *, job_type: Optional[str]) -> dict:
+        job_types = _parse_job_types(job_type)
+        count = self._uow.ai_jobs.delete_failed_for_project(project_id, job_types=job_types)
 
         self._uow.commit()
         return {"deleted_jobs": count, "message": "Failed jobs cleared"}
@@ -210,3 +223,10 @@ def _get_project_embedding_counts(
         or 0
     )
     return ready_count, failed_count, stale_count
+
+
+def _parse_job_types(job_type: Optional[str]) -> Optional[list[str]]:
+    if not job_type:
+        return None
+    parts = [item.strip() for item in job_type.split(",") if item.strip()]
+    return parts or None

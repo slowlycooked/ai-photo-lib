@@ -489,6 +489,7 @@ export interface FaceScanProjectStartRequest {
   scope?: "missing" | "failed" | "stale" | "all" | "selected";
   photo_ids?: number[];
   force?: boolean;
+  dry_run?: boolean;
 }
 
 export interface FaceScanProjectStartResponse {
@@ -496,6 +497,13 @@ export interface FaceScanProjectStartResponse {
   created_jobs: number;
   skipped_active_jobs: number;
   scope: "missing" | "failed" | "stale" | "all" | "selected";
+  total_photos: number;
+  candidate_count: number;
+  skipped_already_scanned: number;
+  skipped_other_project: number;
+  stale_count: number;
+  failed_count: number;
+  dry_run: boolean;
   message: string;
 }
 
@@ -569,7 +577,33 @@ export interface PersonMoveFaceRequest {
   target_person_id: number;
 }
 
+export interface PersonCreateRequest {
+  display_name?: string;
+  is_named?: boolean;
+}
+
+export interface PersonMergeRequest {
+  target_person_id: number;
+}
+
+export interface PersonSplitRequest {
+  face_detection_ids: number[];
+  new_display_name?: string;
+}
+
 export interface PersonMoveFaceResponse {
+  source_person: PersonSummary;
+  target_person: PersonSummary;
+}
+
+export interface PersonMergeResponse {
+  moved_assignments: number;
+  source_person: PersonSummary;
+  target_person: PersonSummary;
+}
+
+export interface PersonSplitResponse {
+  moved_assignments: number;
   source_person: PersonSummary;
   target_person: PersonSummary;
 }

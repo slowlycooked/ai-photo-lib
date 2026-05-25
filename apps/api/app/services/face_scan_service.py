@@ -111,6 +111,15 @@ class FaceScanService:
         detected_faces = resolved_provider.detect_faces_from_bgr(image_bgr)
         work_h, work_w = image_bgr.shape[:2]
 
+        # Re-scan reconciliation uses project-level threshold to avoid introducing
+        # a new config field without explicit schema approval.
+        reconcile_iou_threshold = max(
+            0.0,
+            min(1.0, float(settings.min_quality_for_prototype or 0.7)),
+        )
+        existing_detections = self._list_photo_detections(project_id=project_id, photo_id=photo_id)
+        matched_existing_ids: set[int] = set()
+
         created = 0
         updated = 0
         embedding_created = 0
@@ -124,6 +133,9 @@ class FaceScanService:
                 project_id=project_id,
                 photo_id=photo_id,
                 detected_face=detected_face,
+                existing_detections=existing_detections,
+                matched_existing_ids=matched_existing_ids,
+                iou_threshold=reconcile_iou_threshold,
             )
             if was_created:
                 created += 1
@@ -211,6 +223,11 @@ class FaceScanService:
                 detection.error_message = str(exc)[:4000]
                 detection.updated_at = datetime.now(timezone.utc)
                 failures += 1
+
+        self._mark_disappeared_detections(
+            existing_detections=existing_detections,
+            matched_existing_ids=matched_existing_ids,
+        )
 
         self._db.commit()
         return FaceScanResult(
@@ -309,19 +326,16 @@ class FaceScanService:
         project_id: int,
         photo_id: int,
         detected_face: DetectedFace,
+        existing_detections: list[FaceDetection],
+        matched_existing_ids: set[int],
+        iou_threshold: float,
     ) -> Tuple[FaceDetection, bool]:
         bbox = detected_face.bbox
-        detection = (
-            self._db.query(FaceDetection)
-            .filter(
-                FaceDetection.project_id == project_id,
-                FaceDetection.photo_id == photo_id,
-                FaceDetection.bbox_x == bbox.x,
-                FaceDetection.bbox_y == bbox.y,
-                FaceDetection.bbox_w == bbox.width,
-                FaceDetection.bbox_h == bbox.height,
-            )
-            .first()
+        detection = self._find_reconciled_detection(
+            existing_detections=existing_detections,
+            matched_existing_ids=matched_existing_ids,
+            bbox=(bbox.x, bbox.y, bbox.width, bbox.height),
+            iou_threshold=iou_threshold,
         )
         created = detection is None
         if detection is None:
@@ -334,6 +348,12 @@ class FaceScanService:
                 bbox_h=bbox.height,
             )
             self._db.add(detection)
+            existing_detections.append(detection)
+        else:
+            detection.bbox_x = bbox.x
+            detection.bbox_y = bbox.y
+            detection.bbox_w = bbox.width
+            detection.bbox_h = bbox.height
 
         detection.detection_confidence = detected_face.detection_confidence
         detection.detected_at = datetime.now(timezone.utc)
@@ -341,7 +361,95 @@ class FaceScanService:
         detection.error_message = None
         detection.updated_at = datetime.now(timezone.utc)
         self._db.flush()
+        matched_existing_ids.add(detection.id)
         return detection, created
+
+    def _list_photo_detections(self, *, project_id: int, photo_id: int) -> list[FaceDetection]:
+        return (
+            self._db.query(FaceDetection)
+            .filter(
+                FaceDetection.project_id == project_id,
+                FaceDetection.photo_id == photo_id,
+            )
+            .order_by(FaceDetection.id.asc())
+            .all()
+        )
+
+    def _find_reconciled_detection(
+        self,
+        *,
+        existing_detections: list[FaceDetection],
+        matched_existing_ids: set[int],
+        bbox: tuple[int, int, int, int],
+        iou_threshold: float,
+    ) -> Optional[FaceDetection]:
+        # Exact bbox reuse remains highest priority for strict idempotency.
+        for detection in existing_detections:
+            if detection.id in matched_existing_ids:
+                continue
+            if (
+                detection.bbox_x == bbox[0]
+                and detection.bbox_y == bbox[1]
+                and detection.bbox_w == bbox[2]
+                and detection.bbox_h == bbox[3]
+            ):
+                return detection
+
+        best_match: Optional[FaceDetection] = None
+        best_iou = -1.0
+        for detection in existing_detections:
+            if detection.id in matched_existing_ids:
+                continue
+            iou = self._bbox_iou(
+                (detection.bbox_x, detection.bbox_y, detection.bbox_w, detection.bbox_h),
+                bbox,
+            )
+            if iou >= iou_threshold and iou > best_iou:
+                best_match = detection
+                best_iou = iou
+        return best_match
+
+    def _mark_disappeared_detections(
+        self,
+        *,
+        existing_detections: list[FaceDetection],
+        matched_existing_ids: set[int],
+    ) -> None:
+        now = datetime.now(timezone.utc)
+        for detection in existing_detections:
+            if detection.id in matched_existing_ids:
+                continue
+            detection.status = "disappeared"
+            detection.error_message = "not matched by latest scan"
+            detection.updated_at = now
+
+    @staticmethod
+    def _bbox_iou(
+        bbox_a: tuple[int, int, int, int],
+        bbox_b: tuple[int, int, int, int],
+    ) -> float:
+        ax1, ay1, aw, ah = bbox_a
+        bx1, by1, bw, bh = bbox_b
+        ax2 = ax1 + max(aw, 0)
+        ay2 = ay1 + max(ah, 0)
+        bx2 = bx1 + max(bw, 0)
+        by2 = by1 + max(bh, 0)
+
+        inter_x1 = max(ax1, bx1)
+        inter_y1 = max(ay1, by1)
+        inter_x2 = min(ax2, bx2)
+        inter_y2 = min(ay2, by2)
+
+        inter_w = max(0, inter_x2 - inter_x1)
+        inter_h = max(0, inter_y2 - inter_y1)
+        intersection = float(inter_w * inter_h)
+
+        area_a = float(max(aw, 0) * max(ah, 0))
+        area_b = float(max(bw, 0) * max(bh, 0))
+        union = area_a + area_b - intersection
+        if union <= 0.0:
+            return 0.0
+        return intersection / union
 
     def _upsert_embedding(
         self,

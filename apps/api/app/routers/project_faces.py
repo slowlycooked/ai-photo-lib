@@ -10,12 +10,10 @@ from sqlalchemy.orm import Session
 
 from ..api.deps import get_db, require_project, require_project_photo
 from ..models.ai import AIJob
-from ..models.derivative import PhotoDerivative
 from ..face.providers import FaceRecognitionProviderUnavailableError
 from ..models.face import FaceDetection, FaceEmbedding
 from ..models.photo import Photo
 from ..models.project import Project
-from ..repositories.unit_of_work import UnitOfWork
 from ..schemas.face import (
     FaceClusterUnknownRequest,
     FaceClusterUnknownResponse,
@@ -27,6 +25,7 @@ from ..schemas.face import (
     FaceScanProjectStatusResponse,
     FaceScanResponse,
 )
+from ..services.face_scan_batch_service import FaceScanBatchService
 from ..services.face_scan_service import FaceScanDisabledError, FaceScanService
 from ..services.project_face_settings_service import get_or_create_project_face_settings
 from ..services.unknown_face_clustering_service import cluster_unknown_faces
@@ -70,182 +69,44 @@ def start_project_face_scan_jobs(
         )
 
     body = body or FaceScanProjectStartRequest()
+    if body.scope == "selected" and not body.photo_ids:
+        raise HTTPException(
+            status_code=400,
+            detail="photo_ids is required when scope is selected",
+        )
 
-    active_face_scan_photo_ids = {
-        row[0]
-        for row in (
-            db.query(AIJob.photo_id)
-            .filter(
-                AIJob.project_id == project_id,
-                AIJob.job_type == "face_scan",
-                AIJob.status.in_(["queued", "running"]),
-            )
-            .distinct()
-            .all()
-        )
-    }
-
-    project_photo_ids = [
-        row[0]
-        for row in (
-            db.query(Photo.id)
-            .filter(
-                Photo.project_id == project_id,
-                Photo.deleted_at.is_(None),
-            )
-            .order_by(Photo.id.asc())
-            .all()
-        )
-    ]
-
-    face_detection_photo_ids = {
-        row[0]
-        for row in (
-            db.query(FaceDetection.photo_id)
-            .filter(FaceDetection.project_id == project_id)
-            .distinct()
-            .all()
-        )
-    }
-
-    failed_photo_ids = {
-        row[0]
-        for row in (
-            db.query(FaceDetection.photo_id)
-            .filter(
-                FaceDetection.project_id == project_id,
-                FaceDetection.status == "failed",
-            )
-            .distinct()
-            .all()
-        )
-    }
-    failed_photo_ids.update(
-        row[0]
-        for row in (
-            db.query(AIJob.photo_id)
-            .filter(
-                AIJob.project_id == project_id,
-                AIJob.job_type == "face_scan",
-                AIJob.status == "failed",
-            )
-            .distinct()
-            .all()
-        )
+    service = FaceScanBatchService(db)
+    plan = service.plan(
+        project_id,
+        scope=body.scope,
+        photo_ids=body.photo_ids,
+        force=body.force,
     )
 
-    stale_photo_ids = set()
-    settings_updated_at = settings.updated_at
-    if settings_updated_at is not None:
-        for photo_id in face_detection_photo_ids:
-            detection_updated_at = (
-                db.query(sa.func.max(FaceDetection.updated_at))
-                .filter(
-                    FaceDetection.project_id == project_id,
-                    FaceDetection.photo_id == photo_id,
-                )
-                .scalar()
-            )
-            if detection_updated_at is not None and detection_updated_at < settings_updated_at:
-                stale_photo_ids.add(photo_id)
-
-    for photo in (
-        db.query(Photo)
-        .filter(Photo.project_id == project_id, Photo.deleted_at.is_(None))
-        .all()
-    ):
-        derivative = (
-            db.query(PhotoDerivative)
-            .filter(
-                PhotoDerivative.project_id == project_id,
-                PhotoDerivative.photo_id == photo.id,
-                PhotoDerivative.kind == "face_work_image",
-            )
-            .first()
-        )
-        if derivative is None:
-            continue
-        derivative_path = Path(derivative.path) if derivative.path else None
-        source_path = Path(derivative.source_path) if derivative.source_path else None
-        derivative_missing = derivative_path is None or not derivative_path.exists()
-        source_missing = source_path is None or not source_path.exists()
-        source_mtime_changed = False
-        if not source_missing and derivative.source_mtime is not None:
-            try:
-                source_mtime_changed = float(derivative.source_mtime) != source_path.stat().st_mtime
-            except OSError:
-                source_mtime_changed = True
-        if (
-            derivative.status != "ready"
-            or derivative_missing
-            or source_missing
-            or source_mtime_changed
-        ):
-            stale_photo_ids.add(photo.id)
-
-    effective_scope = "all" if body.force else body.scope
-    if effective_scope == "all":
-        candidate_photo_ids = [
-            photo_id
-            for photo_id in project_photo_ids
-            if photo_id not in active_face_scan_photo_ids
-        ]
-    elif effective_scope == "missing":
-        candidate_photo_ids = [
-            photo_id
-            for photo_id in project_photo_ids
-            if photo_id not in active_face_scan_photo_ids
-            and photo_id not in face_detection_photo_ids
-        ]
-    elif effective_scope == "failed":
-        candidate_photo_ids = [
-            photo_id
-            for photo_id in project_photo_ids
-            if photo_id not in active_face_scan_photo_ids
-            and photo_id in failed_photo_ids
-        ]
-    elif effective_scope == "stale":
-        candidate_photo_ids = [
-            photo_id
-            for photo_id in project_photo_ids
-            if photo_id not in active_face_scan_photo_ids
-            and photo_id in stale_photo_ids
-        ]
-    else:
-        if not body.photo_ids:
-            raise HTTPException(
-                status_code=400,
-                detail="photo_ids is required when scope is selected",
-            )
-        selected_photo_ids = list(dict.fromkeys(body.photo_ids))
-        candidate_photo_ids = [
-            photo_id
-            for photo_id in selected_photo_ids
-            if photo_id in project_photo_ids and photo_id not in active_face_scan_photo_ids
-        ]
-
-    active_count = (
-        db.query(sa.func.count(AIJob.id))
-        .filter(
-            AIJob.project_id == project_id,
-            AIJob.job_type == "face_scan",
-            AIJob.status.in_(["queued", "running"]),
-        )
-        .scalar()
-        or 0
-    )
-
-    if candidate_photo_ids:
-        uow = UnitOfWork(db)
-        uow.ai_jobs.enqueue_bulk(project_id, candidate_photo_ids, job_type="face_scan")
-        uow.commit()
+    created_jobs = 0
+    skipped_active = plan.skipped_active
+    message = "Face scan batch plan generated"
+    if not body.dry_run and plan.candidate_photo_ids:
+        enqueue_result = service.enqueue(plan)
+        created_jobs = enqueue_result.created_jobs
+        skipped_active = enqueue_result.skipped_active
+        message = "Project face scan jobs created"
+    elif not body.dry_run:
+        message = "No face scan jobs created"
 
     return FaceScanProjectStartResponse(
         project_id=project_id,
-        created_jobs=len(candidate_photo_ids),
-        skipped_active_jobs=int(active_count),
-        scope=effective_scope,
-        message="Project face scan jobs created",
+        created_jobs=created_jobs,
+        skipped_active_jobs=skipped_active,
+        scope=plan.scope,
+        total_photos=plan.total_photos,
+        candidate_count=plan.candidate_count,
+        skipped_already_scanned=plan.skipped_already_scanned,
+        skipped_other_project=plan.skipped_other_project,
+        stale_count=plan.stale_count,
+        failed_count=plan.failed_count,
+        dry_run=body.dry_run,
+        message=message,
     )
 
 
@@ -258,16 +119,7 @@ def get_project_face_scan_job_status(
     project: Project = Depends(require_project),
     db: Session = Depends(get_db),
 ) -> FaceScanProjectStatusResponse:
-    rows = (
-        db.query(AIJob.status, sa.func.count(AIJob.id))
-        .filter(
-            AIJob.project_id == project_id,
-            AIJob.job_type == "face_scan",
-        )
-        .group_by(AIJob.status)
-        .all()
-    )
-    counts = {status: int(count) for status, count in rows}
+    counts = FaceScanBatchService(db).status(project_id)
     return FaceScanProjectStatusResponse(
         queued=counts.get("queued", 0),
         running=counts.get("running", 0),

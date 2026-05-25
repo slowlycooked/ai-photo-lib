@@ -388,3 +388,65 @@ class ProjectFacesEndpointsTest(unittest.TestCase):
     payload_again = start_again.json()
     self.assertEqual(payload_again["created_jobs"], 0)
     self.assertEqual(payload_again["skipped_active_jobs"], 1)
+
+  def test_project_face_scan_jobs_dry_run_returns_plan_without_enqueue(self) -> None:
+    start = self.client.post(
+      "/projects/1/face-scan-project/start",
+      json={"scope": "missing", "dry_run": True},
+    )
+    self.assertEqual(start.status_code, 200)
+    payload = start.json()
+    self.assertEqual(payload["scope"], "missing")
+    self.assertTrue(payload["dry_run"])
+    self.assertEqual(payload["candidate_count"], 1)
+    self.assertEqual(payload["created_jobs"], 0)
+
+    status = self.client.get("/projects/1/face-scan-project/status")
+    self.assertEqual(status.status_code, 200)
+    status_payload = status.json()
+    self.assertEqual(status_payload["queued"], 0)
+    self.assertEqual(status_payload["failed"], 1)
+
+  def test_ai_jobs_failed_list_can_filter_job_type(self) -> None:
+    with self._engine.begin() as conn:
+      conn.execute(
+        sa.text(
+          """
+          INSERT INTO ai_jobs (id, photo_id, project_id, job_type, status)
+          VALUES (902, 101, 1, 'analyze', 'failed')
+          """
+        )
+      )
+
+    res = self.client.get("/projects/1/ai/jobs?status=failed&job_type=analyze,reanalyze")
+    self.assertEqual(res.status_code, 200)
+    payload = res.json()
+    self.assertEqual(payload["total"], 1)
+    self.assertEqual(payload["items"][0]["job_type"], "analyze")
+
+  def test_retry_failed_can_filter_job_type(self) -> None:
+    with self._engine.begin() as conn:
+      conn.execute(
+        sa.text(
+          """
+          INSERT INTO ai_jobs (id, photo_id, project_id, job_type, status)
+          VALUES (902, 101, 1, 'analyze', 'failed')
+          """
+        )
+      )
+
+    retry = self.client.post("/projects/1/ai/jobs/retry-failed?job_type=analyze,reanalyze")
+    self.assertEqual(retry.status_code, 200)
+    self.assertEqual(retry.json()["retried_jobs"], 1)
+
+    with self._engine.begin() as conn:
+      rows = conn.execute(
+        sa.text(
+          """
+          SELECT id, status FROM ai_jobs
+          WHERE project_id = 1 AND id IN (901, 902)
+          ORDER BY id ASC
+          """
+        )
+      ).fetchall()
+    self.assertEqual([(row[0], row[1]) for row in rows], [(901, "failed"), (902, "queued")])

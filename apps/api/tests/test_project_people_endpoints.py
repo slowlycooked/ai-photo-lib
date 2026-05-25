@@ -337,3 +337,93 @@ class ProjectPeopleEndpointsTest(unittest.TestCase):
       target_assignment = [a for a in target_detail["assignments"] if a["face_detection_id"] == 302][0]
       self.assertEqual(source_assignment["assignment_status"], "rejected")
       self.assertEqual(target_assignment["assignment_status"], "human_corrected")
+
+    def test_create_empty_person(self) -> None:
+      res = self.client.post(
+        "/projects/1/people",
+        json={"display_name": "朋友A", "is_named": True},
+      )
+      self.assertEqual(res.status_code, 200)
+      body = res.json()
+      self.assertEqual(body["person"]["display_name"], "朋友A")
+      self.assertTrue(body["person"]["is_named"])
+      self.assertEqual(body["person"]["sample_count"], 0)
+
+    def test_merge_people_moves_active_assignments(self) -> None:
+      res = self.client.post(
+        "/projects/1/people/101/merge",
+        json={"target_person_id": 102},
+      )
+      self.assertEqual(res.status_code, 200)
+      body = res.json()
+      self.assertEqual(body["moved_assignments"], 2)
+      self.assertEqual(body["source_person"]["sample_count"], 0)
+      self.assertEqual(body["target_person"]["sample_count"], 2)
+
+      target_detail = self.client.get("/projects/1/people/102").json()
+      moved_face_ids = {a["face_detection_id"] for a in target_detail["assignments"]}
+      self.assertEqual(moved_face_ids, {301, 302})
+
+    def test_split_people_creates_new_person_and_moves_selected_faces(self) -> None:
+      res = self.client.post(
+        "/projects/1/people/101/split",
+        json={"face_detection_ids": [302], "new_display_name": "拆分人物"},
+      )
+      self.assertEqual(res.status_code, 200)
+      body = res.json()
+      self.assertEqual(body["moved_assignments"], 1)
+      self.assertEqual(body["source_person"]["sample_count"], 1)
+      self.assertEqual(body["target_person"]["display_name"], "拆分人物")
+      self.assertEqual(body["target_person"]["sample_count"], 1)
+
+      source_detail = self.client.get("/projects/1/people/101").json()
+      source_assignment = [a for a in source_detail["assignments"] if a["face_detection_id"] == 302][0]
+      self.assertEqual(source_assignment["assignment_status"], "rejected")
+
+      target_id = body["target_person"]["id"]
+      target_detail = self.client.get(f"/projects/1/people/{target_id}").json()
+      target_assignment = [a for a in target_detail["assignments"] if a["face_detection_id"] == 302][0]
+      self.assertEqual(target_assignment["assignment_status"], "human_corrected")
+
+    def test_people_list_supports_filters(self) -> None:
+      unnamed_only = self.client.get("/projects/1/people?is_named=false")
+      self.assertEqual(unnamed_only.status_code, 200)
+      unnamed_payload = unnamed_only.json()
+      self.assertEqual(unnamed_payload["total"], 1)
+      self.assertEqual(unnamed_payload["items"][0]["id"], 102)
+
+      with_review = self.client.get("/projects/1/people?has_review_pending=true")
+      self.assertEqual(with_review.status_code, 200)
+      with_review_payload = with_review.json()
+      self.assertEqual(with_review_payload["total"], 1)
+      self.assertEqual(with_review_payload["items"][0]["id"], 101)
+
+      by_query = self.client.get("/projects/1/people?q=爸爸")
+      self.assertEqual(by_query.status_code, 200)
+      by_query_payload = by_query.json()
+      self.assertEqual(by_query_payload["total"], 1)
+      self.assertEqual(by_query_payload["items"][0]["id"], 101)
+
+    def test_delete_person_requires_no_active_assignments(self) -> None:
+      blocked = self.client.delete("/projects/1/people/101")
+      self.assertEqual(blocked.status_code, 409)
+
+      with self._engine.begin() as conn:
+        conn.execute(
+          sa.text(
+            """
+            UPDATE person_face_assignments
+            SET assignment_status = 'rejected',
+                is_positive_sample = 0,
+                is_training_candidate = 0
+            WHERE project_id = 1 AND person_id = 101
+            """
+          )
+        )
+
+      ok = self.client.delete("/projects/1/people/101")
+      self.assertEqual(ok.status_code, 200)
+      self.assertTrue(ok.json()["deleted"])
+
+      missing = self.client.get("/projects/1/people/101")
+      self.assertEqual(missing.status_code, 404)
