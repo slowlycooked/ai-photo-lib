@@ -94,3 +94,24 @@ def test_resolve_photo_location_no_provider_is_safe(monkeypatch) -> None:
         changed = location_service.resolve_photo_location(db, photo)
         assert changed is False
         assert photo.city is None
+
+
+def test_resolve_photo_location_same_session_duplicate_key_safe(monkeypatch) -> None:
+    engine = sa.create_engine("sqlite:///:memory:", future=True)
+    PhotoLocationCache.__table__.create(bind=engine)
+    SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
+    fake = _FakeProvider()
+    monkeypatch.setattr(location_service, "_build_provider", lambda: fake)
+
+    with SessionLocal() as db:
+        first = _build_photo(40.9638, 115.3018)
+        second = _build_photo(40.9638, 115.3018)
+
+        assert location_service.resolve_photo_location(db, first) is True
+        assert location_service.resolve_photo_location(db, second) is True
+
+        db.commit()
+
+        rows = db.query(PhotoLocationCache).all()
+        assert len(rows) == 1
+        assert rows[0].location_key == "40.9638,115.3018"

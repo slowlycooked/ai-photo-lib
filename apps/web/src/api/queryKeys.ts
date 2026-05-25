@@ -7,6 +7,16 @@ export const queryKeys = {
   projectPhotoAiBase: (projectId: number | null) => ["project-photo-ai", projectId] as const,
   projectPhotoAi: (projectId: number | null, photoId: number | null) =>
     ["project-photo-ai", projectId, photoId] as const,
+  projectPhotoDetail: (projectId: number | null, photoId: number | null) =>
+    ["project-photo-detail", projectId, photoId] as const,
+  projectFaces: (projectId: number | null, photoId?: number | null, status?: string | null) =>
+    ["project-faces", projectId, photoId ?? null, status ?? null] as const,
+  projectFace: (projectId: number | null, faceId: number | null) =>
+    ["project-face", projectId, faceId] as const,
+  projectPeople: (projectId: number | null, includeUnnamed?: boolean) =>
+    ["project-people", projectId, includeUnnamed ?? true] as const,
+  projectPerson: (projectId: number | null, personId: number | null) =>
+    ["project-person", projectId, personId] as const,
   projectScanStatus: (projectId: number | null) => ["project-scan-status", projectId] as const,
   photos: (
     projectId: number | null,

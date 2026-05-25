@@ -7,6 +7,8 @@ import { TagsPage } from "@/pages/TagsPage";
 import { TasksPage } from "@/pages/TasksPage";
 import { SettingsPage } from "@/pages/SettingsPage";
 import { ProjectAISettingsPage } from "@/pages/ProjectAISettingsPage";
+import { PeoplePage } from "@/pages/PeoplePage";
+import { PeopleReviewPage } from "@/pages/PeopleReviewPage";
 import { ProjectProvider } from "@/contexts/ProjectContext";
 import { api } from "@/api";
 import { configureFrontendLogger, logger } from "@/lib/logger";
@@ -45,11 +47,14 @@ export default function App() {
             <Route path="/" element={<Navigate to="/photos" replace />} />
             <Route path="/photos" element={<PhotosPage />} />
             <Route path="/search" element={<SearchPage />} />
+            <Route path="/people" element={<PeoplePage />} />
             <Route path="/tags" element={<TagsPage />} />
             <Route path="/tasks" element={<TasksPage />} />
             <Route path="/settings" element={<SettingsPage />} />
             {/* Canonical project AI settings route */}
             <Route path="/projects/:projectId/settings/ai" element={<ProjectAISettingsPage />} />
+            <Route path="/projects/:projectId/people" element={<PeoplePage />} />
+            <Route path="/projects/:projectId/people/review" element={<PeopleReviewPage />} />
           </Routes>
         </div>
       </ProjectProvider>

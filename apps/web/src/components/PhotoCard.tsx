@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { X, Calendar, Ruler, Tag, ImageIcon, Brain, Loader2, Download, MapPin, Camera, Aperture } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { X, Calendar, Ruler, Tag, ImageIcon, Brain, Loader2, Download, MapPin, Camera, Aperture, ScanFace, RefreshCw, UserRound, Trash2 } from "lucide-react";
 import type { Photo } from "@/api";
 import { api } from "@/api";
 import { queryKeys } from "@/api/queryKeys";
@@ -31,10 +31,14 @@ interface DetailModalProps {
 
 function DetailModal({ photo, onClose }: DetailModalProps) {
   const [loaded, setLoaded] = useState(false);
+  const [faceMessage, setFaceMessage] = useState<string | null>(null);
+  const [deleteOriginal, setDeleteOriginal] = useState(false);
+  const [deleteMessage, setDeleteMessage] = useState<string | null>(null);
   const projectId = photo.project_id;
+  const queryClient = useQueryClient();
 
   const { data: detail } = useQuery({
-    queryKey: ["project-photo-detail", projectId, photo.id],
+    queryKey: queryKeys.projectPhotoDetail(projectId, photo.id),
     queryFn: () => api.projects.photo(projectId, photo.id),
     enabled: projectId != null,
     staleTime: 30_000,
@@ -46,6 +50,53 @@ function DetailModal({ photo, onClose }: DetailModalProps) {
     enabled: projectId != null,
     retry: false,
   });
+  const {
+    data: facesData,
+    isLoading: facesLoading,
+    error: facesError,
+  } = useQuery({
+    queryKey: queryKeys.projectFaces(projectId, photo.id),
+    queryFn: () => api.projects.faces(projectId, 1, 50, photo.id),
+    enabled: projectId != null,
+    staleTime: 10_000,
+  });
+
+  const faceScanMutation = useMutation({
+    mutationFn: () => api.projects.scanPhotoFaces(projectId, photo.id),
+    onSuccess: (result) => {
+      setFaceMessage(`已扫描 ${result.faces_detected} 张脸`);
+      queryClient.invalidateQueries({ queryKey: queryKeys.projectFaces(projectId, photo.id) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.projectPhotoDetail(projectId, photo.id) });
+    },
+    onError: (error: Error) => {
+      setFaceMessage(error.message);
+    },
+  });
+
+  const deletePhotoMutation = useMutation({
+    mutationFn: () => api.projects.deletePhotoRecord(projectId, photo.id, deleteOriginal),
+    onSuccess: () => {
+      setDeleteMessage(deleteOriginal ? "已删除库记录、缩略图和本地原图" : "已删除库记录和缩略图");
+      queryClient.invalidateQueries({ queryKey: queryKeys.photosBase(projectId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.timeline(projectId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.tags(projectId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.projectPhotoDetail(projectId, photo.id) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.projectPhotoAi(projectId, photo.id) });
+      queryClient.invalidateQueries({ queryKey: ["search"] });
+      onClose();
+    },
+    onError: (error: Error) => {
+      setDeleteMessage(`删除失败：${error.message}`);
+    },
+  });
+
+  function handleDeleteRecord() {
+    const actionText = deleteOriginal ? "删除库记录、缩略图并尝试删除本地原图" : "仅删除库记录和缩略图";
+    if (!window.confirm(`确认${actionText}吗？`)) {
+      return;
+    }
+    deletePhotoMutation.mutate();
+  }
   const locationSummary = formatLocationSummary(detail, { short: true });
   const locationAddress = formatLocationAddress(detail);
 
@@ -95,6 +146,20 @@ function DetailModal({ photo, onClose }: DetailModalProps) {
           >
             <Download className="w-4 h-4 text-ink" />
           </a>
+          <button
+            type="button"
+            onClick={handleDeleteRecord}
+            disabled={deletePhotoMutation.isPending}
+            className="absolute top-3 right-24 w-9 h-9 rounded-full bg-canvas flex items-center justify-center shadow-md hover:bg-surface-card transition-colors disabled:opacity-60"
+            aria-label="删除库记录"
+            title={deleteOriginal ? "删除库记录、缩略图和本地原图" : "仅删除库记录和缩略图"}
+          >
+            {deletePhotoMutation.isPending ? (
+              <Loader2 className="w-4 h-4 text-danger animate-spin" />
+            ) : (
+              <Trash2 className="w-4 h-4 text-danger" />
+            )}
+          </button>
         </div>
 
         {/* Info */}
@@ -276,6 +341,135 @@ function DetailModal({ photo, onClose }: DetailModalProps) {
               </div>
             ) : (
               <p className="text-caption-sm text-mute">尚未分析 — 请点击「开始分析」按钮。</p>
+            )}
+          </div>
+
+          <div className="pt-2 border-t border-hairline">
+            <div className="mb-3 rounded-md border border-danger/30 bg-danger/5 p-3">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-body-sm font-semibold text-danger">手动清理</p>
+                  <p className="text-caption-sm text-mute mt-1">
+                    默认仅删除库记录与缩略图，不会删除本地原图。
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleDeleteRecord}
+                  disabled={deletePhotoMutation.isPending}
+                  className="inline-flex items-center gap-1.5 rounded-md border border-danger/40 px-3 py-1.5 text-body-sm text-danger hover:bg-danger/10 disabled:opacity-60"
+                >
+                  {deletePhotoMutation.isPending ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Trash2 className="w-3.5 h-3.5" />
+                  )}
+                  删除记录
+                </button>
+              </div>
+              <label className="mt-2 flex items-center gap-2 text-caption-sm text-ink">
+                <input
+                  type="checkbox"
+                  checked={deleteOriginal}
+                  onChange={(e) => setDeleteOriginal(e.target.checked)}
+                  className="h-4 w-4"
+                />
+                同时删除本地原图（hard copy 删除，谨慎操作）
+              </label>
+              {deleteMessage && <p className="mt-2 text-caption-sm text-mute">{deleteMessage}</p>}
+            </div>
+
+            <div className="flex items-center justify-between gap-3 mb-3">
+              <div className="flex items-center gap-2">
+                <UserRound className="w-4 h-4 text-primary" />
+                <span className="text-body-sm font-semibold text-ink">人脸识别</span>
+                {facesLoading && <Loader2 className="w-3.5 h-3.5 animate-spin text-mute" />}
+              </div>
+              <button
+                type="button"
+                onClick={() => faceScanMutation.mutate()}
+                disabled={faceScanMutation.isPending}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-hairline text-body-sm text-ink hover:bg-surface-card disabled:opacity-60"
+              >
+                {faceScanMutation.isPending ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <ScanFace className="w-3.5 h-3.5" />
+                )}
+                手动扫描
+              </button>
+            </div>
+
+            {faceMessage && (
+              <p className="text-caption-sm text-mute mb-2">{faceMessage}</p>
+            )}
+
+            {facesError ? (
+              <p className="text-caption-sm text-amber-700">
+                {(facesError as Error).message}
+              </p>
+            ) : facesData && facesData.total > 0 ? (
+              <div className="space-y-2">
+                <div className="flex items-center gap-2 text-caption-sm text-mute">
+                  <span>检测到 {facesData.total} 张脸</span>
+                  <button
+                    type="button"
+                    onClick={() => queryClient.invalidateQueries({ queryKey: queryKeys.projectFaces(projectId, photo.id) })}
+                    className="inline-flex items-center gap-1 text-primary hover:text-primary-pressed"
+                  >
+                    <RefreshCw className="w-3 h-3" />
+                    刷新
+                  </button>
+                </div>
+                <div className="grid grid-cols-1 gap-2">
+                  {facesData.items.map((face) => (
+                    <div
+                      key={face.id}
+                      className="rounded-md border border-hairline bg-surface-soft p-2 flex gap-3"
+                    >
+                      <div className="w-20 h-20 flex-shrink-0 rounded-md overflow-hidden bg-canvas border border-hairline">
+                        {face.face_crop_path ? (
+                          <img
+                            src={api.projects.faceCropUrl(projectId, face.id, face.updated_at)}
+                            alt={`face-${face.id}`}
+                            className="w-full h-full object-cover"
+                          />
+                        ) : (
+                          <div className="w-full h-full flex items-center justify-center text-mute">
+                            <ScanFace className="w-5 h-5" />
+                          </div>
+                        )}
+                      </div>
+                      <div className="min-w-0 flex-1 space-y-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-body-sm font-medium text-ink">face #{face.id}</span>
+                          <span className="px-2 py-0.5 rounded-full bg-secondary-bg text-caption-sm text-ink">
+                            {face.status}
+                          </span>
+                        </div>
+                        <p className="text-caption-sm text-mute">
+                          bbox: {face.bbox_x}, {face.bbox_y}, {face.bbox_w}, {face.bbox_h}
+                        </p>
+                        <div className="flex flex-wrap gap-x-3 gap-y-1 text-caption-sm text-mute">
+                          {face.detection_confidence != null && (
+                            <span>检测置信度 {(face.detection_confidence * 100).toFixed(0)}%</span>
+                          )}
+                          {face.face_quality_score != null && (
+                            <span>质量 {(face.face_quality_score * 100).toFixed(0)}%</span>
+                          )}
+                        </div>
+                        {face.error_message && (
+                          <p className="text-caption-sm text-danger break-all">{face.error_message}</p>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <p className="text-caption-sm text-mute">
+                还没有人脸结果。先在项目配置里启用人脸识别，再点击“手动扫描”。
+              </p>
             )}
           </div>
         </div>

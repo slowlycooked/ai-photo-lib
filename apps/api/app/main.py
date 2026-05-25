@@ -12,7 +12,7 @@ from sqlalchemy.exc import OperationalError
 
 from ._version import APP_VERSION
 from .config import settings
-from .database import SessionLocal
+from .database import SessionLocal, engine
 from .logging_config import (
     _NOISY_PATH_RE,
     project_id_ctx,
@@ -35,12 +35,16 @@ from .routers import (
     project_search_settings,
     project_tags,
     project_photos,
+    project_face_settings,
+    project_faces,
+    project_people,
 )
 from .schemas.debug_config import build_default_debug_config
 from .services.runtime_settings_service import (
     RuntimeSettingsService,
     RuntimeSettingsStorageUnavailableError,
 )
+from .services.startup_schema_service import StartupSchemaCheckError, validate_required_tables
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +67,12 @@ app.add_middleware(
 
 @app.on_event("startup")
 def load_runtime_debug_config() -> None:
+    try:
+        validate_required_tables(engine)
+    except StartupSchemaCheckError:
+        logger.exception("Startup schema self-check failed")
+        raise
+
     db = SessionLocal()
     try:
         config = RuntimeSettingsService.get_debug_config(db)
@@ -170,3 +180,6 @@ app.include_router(project_embeddings.router)
 app.include_router(project_search.router)
 app.include_router(project_search_settings.router)
 app.include_router(project_tags.router)
+app.include_router(project_face_settings.router)
+app.include_router(project_faces.router)
+app.include_router(project_people.router)

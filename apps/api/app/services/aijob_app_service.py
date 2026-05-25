@@ -25,6 +25,7 @@ from ..models.ai import AIJob, PhotoAIAnalysis
 from ..models.photo import Photo
 from ..services.embedding_client import EmbeddingRequestError
 from ..services.embedding_service import upsert_photo_embeddings
+from ..services.face_scan_service import FaceScanDisabledError, FaceScanService
 from ..services.json_parser import parse_model_json_output
 from ..services.project_ai_service import (
     TASK_IMAGE_ANALYSIS,
@@ -36,6 +37,7 @@ from ..services.project_ai_service import (
 from ..services.project_embedding_settings_service import resolve_embedding_settings
 from ..services.thumbnail import generate_thumbnail
 from ..services.vlm_client import VLMRequestError, analyze_image
+from ..face.providers import FaceRecognitionProviderUnavailableError
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +91,8 @@ class AIJobAppService:
 
         if job.job_type == "embed":
             self._process_embedding_job(job, photo, project_id)
+        elif job.job_type == "face_scan":
+            self._process_face_scan_job(job, photo, project_id)
         else:
             self._process_analysis_job(job, photo, project_id)
 
@@ -356,6 +360,46 @@ class AIJobAppService:
                 exc,
                 is_retryable=is_retryable,
                 log_prefix="Embedding job",
+            )
+            self._db.commit()
+
+    # ── private: face scan job ───────────────────────────────────────────────
+
+    def _process_face_scan_job(
+        self, job: AIJob, photo: Photo, project_id: int
+    ) -> None:
+        try:
+            result = FaceScanService(self._db).scan_photo(project_id, photo.id)
+            now = datetime.now(timezone.utc)
+            job.status = "success"
+            job.error_message = None
+            job.parse_error = None
+            job.raw_model_output = (
+                "face_scan_result: "
+                f"faces_detected={result.faces_detected}, "
+                f"review_pending={result.review_pending}, "
+                f"auto_assigned={result.auto_assigned}, "
+                f"failures={result.failures}"
+            )
+            job.finished_at = now
+            job.updated_at = now
+            self._db.commit()
+        except Exception as exc:  # noqa: BLE001
+            self._db.rollback()
+            is_retryable = not isinstance(
+                exc,
+                (
+                    FaceScanDisabledError,
+                    FaceRecognitionProviderUnavailableError,
+                    FileNotFoundError,
+                ),
+            )
+            self._handle_job_error(
+                job,
+                photo,
+                exc,
+                is_retryable=is_retryable,
+                log_prefix="Face scan job",
             )
             self._db.commit()
 

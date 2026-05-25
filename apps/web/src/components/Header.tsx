@@ -1,9 +1,10 @@
-import { useEffect, useState } from "react";
-import { Camera, Search, X, Images, Tag, ListTodo, Settings } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { Camera, Search, X, Images, Tag, ListTodo, Settings, Users } from "lucide-react";
 import { NavLink, useNavigate, useSearchParams, useLocation } from "react-router-dom";
 import { ProjectSelector } from "./ProjectSelector";
+import { useProjectContext } from "@/contexts/ProjectContext";
 
-const navItems = [
+const staticNavItems = [
   { to: "/photos", label: "照片", icon: Images },
   { to: "/tags", label: "标签", icon: Tag },
   { to: "/tasks", label: "任务", icon: ListTodo },
@@ -11,9 +12,22 @@ const navItems = [
 ];
 
 export function Header() {
+  const { currentProjectId } = useProjectContext();
   const [params] = useSearchParams();
   const location = useLocation();
   const navigate = useNavigate();
+  const navItems = useMemo(
+    () => [
+      { to: "/photos", label: "照片", icon: Images },
+      {
+        to: currentProjectId != null ? `/projects/${currentProjectId}/people` : "/people",
+        label: "人物",
+        icon: Users,
+      },
+      ...staticNavItems.slice(1),
+    ],
+    [currentProjectId],
+  );
 
   // Pre-fill search input from URL when on /search
   const urlQuery = location.pathname === "/search" ? (params.get("q") ?? "") : "";

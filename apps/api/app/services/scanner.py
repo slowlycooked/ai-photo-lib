@@ -20,6 +20,7 @@ from .thumbnail import SUPPORTED_SUFFIXES, generate_thumbnail
 from .path_utils import build_relative_paths
 from .folder_service import ensure_folder_path
 from .location_service import resolve_photo_location
+from .photo_cleanup import cleanup_missing_project_photos
 
 logger = logging.getLogger(__name__)
 
@@ -493,6 +494,12 @@ def scan_project(db: Session, project_id: int) -> None:
             if pending_writes > 0:
                 db.commit()
                 commit_count += 1
+
+            cleanup_missing_project_photos(
+                db,
+                project_id=project_id,
+                batch_size=_SCAN_COMMIT_BATCH_SIZE,
+            )
 
             # 扫描结束后重算文件夹计数（若失败也不能阻塞状态收尾）
             from .folder_service import recompute_project_folder_counts

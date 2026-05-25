@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 
 from ..config import settings as global_settings
 from ..models.ai import ProjectAISettings
+from ..models.face import ProjectFaceSettings
 
 
 @dataclass(frozen=True)
@@ -70,6 +71,30 @@ class EffectiveLibrarySettings:
 
 
 @dataclass(frozen=True)
+class EffectiveFaceSettings:
+    """People recognition parameters for a specific project."""
+
+    enabled: bool
+    provider: str
+    detector_model: str
+    embedding_model: str
+    runtime: str
+    store_face_crops: bool
+    face_crop_storage: str
+    auto_accept_threshold: float
+    review_threshold: float
+    cluster_threshold: float
+    min_face_size: int
+    min_detection_confidence: float
+    min_quality_for_prototype: float
+    max_positive_samples_per_person: int
+    allow_auto_assignment: bool
+    require_human_confirmation_for_new_person: bool
+    enable_negative_constraints: bool
+    enable_person_cannot_links: bool
+
+
+@dataclass(frozen=True)
 class EffectiveProjectSettings:
     """Merged effective settings for a project.
 
@@ -82,6 +107,7 @@ class EffectiveProjectSettings:
     embedding: EffectiveEmbeddingSettings
     search: EffectiveSearchSettings
     library: EffectiveLibrarySettings
+    face: EffectiveFaceSettings
 
 
 def _default_endpoint_url() -> str:
@@ -104,6 +130,11 @@ class ProjectSettingsResolver:
         ai_row = (
             db.query(ProjectAISettings)
             .filter(ProjectAISettings.project_id == project_id)
+            .first()
+        )
+        face_row = (
+            db.query(ProjectFaceSettings)
+            .filter(ProjectFaceSettings.project_id == project_id)
             .first()
         )
 
@@ -180,4 +211,96 @@ class ProjectSettingsResolver:
                 ocr_vector_weight=global_settings.search_ocr_vector_weight,
             ),
             library=library,
+            face=EffectiveFaceSettings(
+                enabled=(
+                    face_row.face_recognition_enabled
+                    if face_row is not None
+                    else global_settings.face_recognition_enabled
+                ),
+                provider=(
+                    face_row.face_provider
+                    if face_row is not None
+                    else global_settings.face_provider
+                ),
+                detector_model=(
+                    face_row.face_detector_model
+                    if face_row is not None
+                    else global_settings.face_detector_model
+                ),
+                embedding_model=(
+                    face_row.face_embedding_model
+                    if face_row is not None
+                    else global_settings.face_embedding_model
+                ),
+                runtime=(
+                    face_row.face_runtime
+                    if face_row is not None
+                    else global_settings.face_runtime
+                ),
+                store_face_crops=(
+                    face_row.store_face_crops
+                    if face_row is not None
+                    else global_settings.store_face_crops
+                ),
+                face_crop_storage=(
+                    face_row.face_crop_storage
+                    if face_row is not None
+                    else global_settings.face_crop_storage
+                ),
+                auto_accept_threshold=(
+                    face_row.auto_accept_threshold
+                    if face_row is not None
+                    else global_settings.face_auto_accept_threshold
+                ),
+                review_threshold=(
+                    face_row.review_threshold
+                    if face_row is not None
+                    else global_settings.face_review_threshold
+                ),
+                cluster_threshold=(
+                    face_row.cluster_threshold
+                    if face_row is not None
+                    else global_settings.face_cluster_threshold
+                ),
+                min_face_size=(
+                    face_row.min_face_size
+                    if face_row is not None
+                    else global_settings.face_min_face_size
+                ),
+                min_detection_confidence=(
+                    face_row.min_detection_confidence
+                    if face_row is not None
+                    else global_settings.face_min_detection_confidence
+                ),
+                min_quality_for_prototype=(
+                    face_row.min_quality_for_prototype
+                    if face_row is not None
+                    else global_settings.face_min_quality_for_prototype
+                ),
+                max_positive_samples_per_person=(
+                    face_row.max_positive_samples_per_person
+                    if face_row is not None
+                    else global_settings.face_max_positive_samples_per_person
+                ),
+                allow_auto_assignment=(
+                    face_row.allow_auto_assignment
+                    if face_row is not None
+                    else global_settings.face_allow_auto_assignment
+                ),
+                require_human_confirmation_for_new_person=(
+                    face_row.require_human_confirmation_for_new_person
+                    if face_row is not None
+                    else global_settings.face_require_human_confirmation_for_new_person
+                ),
+                enable_negative_constraints=(
+                    face_row.enable_negative_constraints
+                    if face_row is not None
+                    else global_settings.face_enable_negative_constraints
+                ),
+                enable_person_cannot_links=(
+                    face_row.enable_person_cannot_links
+                    if face_row is not None
+                    else global_settings.face_enable_person_cannot_links
+                ),
+            ),
         )

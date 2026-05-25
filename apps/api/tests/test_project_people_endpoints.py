@@ -1,0 +1,339 @@
+from __future__ import annotations
+
+import os
+import tempfile
+import unittest
+from collections.abc import Generator
+
+import sqlalchemy as sa
+from fastapi.testclient import TestClient
+from sqlalchemy.orm import Session, sessionmaker
+
+os.environ.setdefault("DATABASE_URL", "sqlite:///ignored.db")
+os.environ.setdefault("PHOTO_LIBRARY_PATH", "/tmp")
+os.environ.setdefault("THUMBNAIL_PATH", "/tmp")
+os.environ.setdefault("OPENAI_API_KEY", "test")
+os.environ.setdefault("OPENAI_BASE_URL", "http://127.0.0.1:9999/v1")
+os.environ.setdefault("OPENAI_MODEL", "test-model")
+os.environ.setdefault("OPENAI_VISION_MODEL", "test-model")
+
+from app.database import get_db  # noqa: E402
+from app.main import app  # noqa: E402
+
+
+SCHEMA_SQL = """
+CREATE TABLE projects (
+  id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL,
+  description TEXT,
+  photo_library_path TEXT NOT NULL,
+  thumbnail_path TEXT,
+  is_default BOOLEAN NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  deleted_at TEXT
+);
+
+CREATE TABLE persons (
+  id INTEGER PRIMARY KEY,
+  project_id INTEGER NOT NULL,
+  display_name TEXT NOT NULL,
+  normalized_name TEXT,
+  is_named BOOLEAN NOT NULL DEFAULT 0,
+  representative_face_detection_id INTEGER,
+  sample_count INTEGER NOT NULL DEFAULT 0,
+  confirmed_sample_count INTEGER NOT NULL DEFAULT 0,
+  auto_assigned_count INTEGER NOT NULL DEFAULT 0,
+  review_pending_count INTEGER NOT NULL DEFAULT 0,
+  created_by TEXT NOT NULL DEFAULT 'system',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE face_negative_constraints (
+  id INTEGER PRIMARY KEY,
+  project_id INTEGER NOT NULL,
+  face_detection_id INTEGER NOT NULL,
+  not_person_id INTEGER NOT NULL,
+  source TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE face_detections (
+  id INTEGER PRIMARY KEY,
+  project_id INTEGER NOT NULL,
+  photo_id INTEGER NOT NULL,
+  bbox_x INTEGER NOT NULL,
+  bbox_y INTEGER NOT NULL,
+  bbox_w INTEGER NOT NULL,
+  bbox_h INTEGER NOT NULL,
+  detection_confidence REAL,
+  face_quality_score REAL,
+  face_crop_path TEXT,
+  face_crop_hash TEXT,
+  status TEXT NOT NULL DEFAULT 'embedded',
+  error_message TEXT,
+  detected_at TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE person_face_assignments (
+  id INTEGER PRIMARY KEY,
+  project_id INTEGER NOT NULL,
+  person_id INTEGER NOT NULL,
+  face_detection_id INTEGER NOT NULL,
+  assignment_status TEXT NOT NULL,
+  assignment_source TEXT NOT NULL,
+  confidence REAL,
+  similarity_score REAL,
+  is_positive_sample BOOLEAN NOT NULL DEFAULT 0,
+  is_training_candidate BOOLEAN NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+"""
+
+SEED_SQL = """
+INSERT INTO projects (id, name, photo_library_path, thumbnail_path, is_default)
+VALUES (1, 'Project A', '/tmp/a', '/tmp/a-thumb', 1),
+       (2, 'Project B', '/tmp/b', '/tmp/b-thumb', 0);
+
+INSERT INTO persons (
+  id, project_id, display_name, normalized_name, is_named,
+  representative_face_detection_id, sample_count, confirmed_sample_count,
+  auto_assigned_count, review_pending_count, created_by
+) VALUES
+  (101, 1, '爸爸', '爸爸', 1, 301, 8, 5, 2, 1, 'user'),
+  (102, 1, '人物 2', '人物 2', 0, NULL, 0, 0, 0, 0, 'system'),
+  (201, 2, 'Project B Person', 'project b person', 1, 401, 1, 1, 0, 0, 'system');
+
+INSERT INTO face_detections (
+  id, project_id, photo_id, bbox_x, bbox_y, bbox_w, bbox_h, status
+) VALUES
+  (301, 1, 11, 10, 10, 20, 20, 'embedded'),
+  (302, 1, 12, 15, 15, 18, 18, 'embedded'),
+  (401, 2, 21, 12, 12, 16, 16, 'embedded');
+
+INSERT INTO person_face_assignments (
+  id, project_id, person_id, face_detection_id, assignment_status,
+  assignment_source, confidence, similarity_score, is_positive_sample, is_training_candidate
+) VALUES
+  (501, 1, 101, 301, 'human_confirmed', 'human_label', 0.99, 0.88, 1, 1),
+  (502, 1, 101, 302, 'review_pending', 'similarity_match', 0.74, 0.69, 0, 1),
+  (601, 2, 201, 401, 'human_confirmed', 'human_label', 0.98, 0.91, 1, 1);
+"""
+
+
+class ProjectPeopleEndpointsTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        self._tmp.close()
+        self._engine = sa.create_engine(
+            f"sqlite:///{self._tmp.name}",
+            connect_args={"check_same_thread": False},
+            future=True,
+        )
+        self._SessionLocal = sessionmaker(
+            bind=self._engine,
+            autocommit=False,
+            autoflush=False,
+            future=True,
+        )
+        with self._engine.begin() as conn:
+            for stmt in [part.strip() for part in SCHEMA_SQL.split(";") if part.strip()]:
+                conn.execute(sa.text(stmt))
+            for stmt in [part.strip() for part in SEED_SQL.split(";") if part.strip()]:
+                conn.execute(sa.text(stmt))
+
+        def override_get_db() -> Generator[Session, None, None]:
+            db = self._SessionLocal()
+            try:
+                yield db
+            finally:
+                db.close()
+
+        app.dependency_overrides[get_db] = override_get_db
+        self.client = TestClient(app)
+
+    def tearDown(self) -> None:
+        app.dependency_overrides.clear()
+        self._engine.dispose()
+        if os.path.exists(self._tmp.name):
+            os.unlink(self._tmp.name)
+
+    def test_project_people_list_is_scoped(self) -> None:
+        res = self.client.get("/projects/1/people")
+        self.assertEqual(res.status_code, 200)
+        body = res.json()
+        self.assertEqual(body["total"], 2)
+        self.assertEqual(body["items"][0]["id"], 101)
+        self.assertEqual(body["items"][0]["display_name"], "爸爸")
+
+    def test_project_person_detail_returns_assignments(self) -> None:
+        res = self.client.get("/projects/1/people/101")
+        self.assertEqual(res.status_code, 200)
+        body = res.json()
+        self.assertEqual(body["id"], 101)
+        self.assertEqual(len(body["assignments"]), 2)
+        self.assertEqual(body["assignments"][0]["face_detection"]["project_id"], 1)
+
+    def test_project_cannot_read_other_project_person(self) -> None:
+        res = self.client.get("/projects/1/people/201")
+        self.assertEqual(res.status_code, 404)
+
+    def test_can_rename_person(self) -> None:
+      res = self.client.patch(
+        "/projects/1/people/102",
+        json={"display_name": "妈妈"},
+      )
+      self.assertEqual(res.status_code, 200)
+      body = res.json()
+      self.assertEqual(body["person"]["display_name"], "妈妈")
+      self.assertTrue(body["person"]["is_named"])
+
+    def test_confirm_face_assignment_promotes_to_positive(self) -> None:
+      res = self.client.post("/projects/1/people/101/faces/302/confirm")
+      self.assertEqual(res.status_code, 200)
+      body = res.json()
+      self.assertEqual(body["person"]["confirmed_sample_count"], 2)
+      self.assertEqual(body["person"]["review_pending_count"], 0)
+
+      detail = self.client.get("/projects/1/people/101").json()
+      target = [a for a in detail["assignments"] if a["face_detection_id"] == 302][0]
+      self.assertEqual(target["assignment_status"], "human_confirmed")
+      self.assertTrue(target["is_positive_sample"])
+
+    def test_reject_face_assignment_creates_negative_constraint(self) -> None:
+      res = self.client.post("/projects/1/people/101/faces/302/reject")
+      self.assertEqual(res.status_code, 200)
+      body = res.json()
+      self.assertEqual(body["person"]["sample_count"], 1)
+
+      with self._engine.connect() as conn:
+        row = conn.execute(
+          sa.text(
+            """
+            SELECT source
+            FROM face_negative_constraints
+            WHERE project_id = 1 AND face_detection_id = 302 AND not_person_id = 101
+            """
+          )
+        ).first()
+      self.assertIsNotNone(row)
+      self.assertEqual(row[0], "human_rejected")
+
+    def test_move_face_assignment_between_people(self) -> None:
+      res = self.client.post(
+        "/projects/1/people/101/faces/302/move",
+        json={"target_person_id": 102},
+      )
+      self.assertEqual(res.status_code, 200)
+      body = res.json()
+      self.assertEqual(body["source_person"]["id"], 101)
+      self.assertEqual(body["target_person"]["id"], 102)
+      self.assertEqual(body["target_person"]["sample_count"], 1)
+      self.assertEqual(body["target_person"]["confirmed_sample_count"], 1)
+
+      source_detail = self.client.get("/projects/1/people/101").json()
+      target_detail = self.client.get("/projects/1/people/102").json()
+      source_assignment = [a for a in source_detail["assignments"] if a["face_detection_id"] == 302][0]
+      target_assignment = [a for a in target_detail["assignments"] if a["face_detection_id"] == 302][0]
+      self.assertEqual(source_assignment["assignment_status"], "rejected")
+      self.assertEqual(target_assignment["assignment_status"], "human_corrected")
+
+    def test_set_representative_face_requires_assignment(self) -> None:
+      bad = self.client.post(
+        "/projects/1/people/102/representative-face",
+        json={"face_detection_id": 301},
+      )
+      self.assertEqual(bad.status_code, 422)
+
+      move = self.client.post(
+        "/projects/1/people/101/faces/302/move",
+        json={"target_person_id": 102},
+      )
+      self.assertEqual(move.status_code, 200)
+
+      ok = self.client.post(
+        "/projects/1/people/102/representative-face",
+        json={"face_detection_id": 302},
+      )
+      self.assertEqual(ok.status_code, 200)
+      self.assertEqual(ok.json()["person"]["representative_face_detection_id"], 302)
+
+    def test_cannot_mutate_other_project_face_or_person(self) -> None:
+      res = self.client.post("/projects/1/people/101/faces/401/confirm")
+      self.assertEqual(res.status_code, 404)
+
+      res = self.client.patch(
+        "/projects/1/people/201",
+        json={"display_name": "x"},
+      )
+      self.assertEqual(res.status_code, 404)
+
+    def test_review_pending_list_is_project_scoped(self) -> None:
+      res = self.client.get("/projects/1/people/review")
+      self.assertEqual(res.status_code, 200)
+      body = res.json()
+      self.assertEqual(body["total"], 1)
+      self.assertEqual(body["items"][0]["person_id"], 101)
+      self.assertEqual(body["items"][0]["face_detection_id"], 302)
+
+    def test_batch_confirm_review_pending(self) -> None:
+      res = self.client.post(
+        "/projects/1/people/101/review/batch-confirm",
+        json={
+          "face_detection_ids": [302],
+          "request_id": "req-people-batch-1",
+          "operator": "tester",
+          "max_retries": 2,
+        },
+      )
+      self.assertEqual(res.status_code, 200)
+      self.assertEqual(res.json()["updated"], 1)
+      self.assertEqual(res.json()["request_id"], "req-people-batch-1")
+      self.assertEqual(res.json()["operator"], "tester")
+      self.assertEqual(res.json()["attempts"], 1)
+
+      detail = self.client.get("/projects/1/people/101").json()
+      target = [a for a in detail["assignments"] if a["face_detection_id"] == 302][0]
+      self.assertEqual(target["assignment_status"], "human_confirmed")
+      self.assertTrue(target["is_positive_sample"])
+
+    def test_batch_reject_and_move_review_pending(self) -> None:
+      reject = self.client.post(
+        "/projects/1/people/101/review/batch-reject",
+        json={"face_detection_ids": [302]},
+      )
+      self.assertEqual(reject.status_code, 200)
+      self.assertEqual(reject.json()["updated"], 1)
+
+      # Reset assignment to review_pending for move test within same test case.
+      with self._engine.begin() as conn:
+        conn.execute(
+          sa.text(
+            """
+            UPDATE person_face_assignments
+            SET assignment_status = 'review_pending',
+                assignment_source = 'similarity_match',
+                is_positive_sample = 0,
+                is_training_candidate = 1
+            WHERE project_id = 1 AND person_id = 101 AND face_detection_id = 302
+            """
+          )
+        )
+
+      move = self.client.post(
+        "/projects/1/people/101/review/batch-move",
+        json={"face_detection_ids": [302], "target_person_id": 102},
+      )
+      self.assertEqual(move.status_code, 200)
+      self.assertEqual(move.json()["updated"], 1)
+
+      source_detail = self.client.get("/projects/1/people/101").json()
+      target_detail = self.client.get("/projects/1/people/102").json()
+      source_assignment = [a for a in source_detail["assignments"] if a["face_detection_id"] == 302][0]
+      target_assignment = [a for a in target_detail["assignments"] if a["face_detection_id"] == 302][0]
+      self.assertEqual(source_assignment["assignment_status"], "rejected")
+      self.assertEqual(target_assignment["assignment_status"], "human_corrected")

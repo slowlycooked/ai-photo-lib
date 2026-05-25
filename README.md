@@ -13,6 +13,38 @@
 - 初始化脚本：`./scripts/bootstrap-macos.sh`
 - 配置方式：每台机器各自维护一份 `.env`
 
+## People Recognition 当前状态
+
+本项目已经开始落地本地人物识别能力，但目前仍处于“基础链路已通、人物闭环未完成”的阶段。
+
+当前已经完成：
+
+- 项目级人脸数据模型与 Alembic migration：
+  - `face_detections`
+  - `face_embeddings`
+  - `persons`
+  - `person_face_assignments`
+  - `person_prototypes`
+  - `face_negative_constraints`
+  - `person_cannot_links`
+- 项目级人脸配置 API 与前端配置面板
+- 单张照片手动 `face scan` 链路
+- `faces` / `people` 只读 API
+- 照片详情页的人脸调试区块
+- `/projects/:projectId/people` 人物页只读视图
+
+当前还没有完成：
+
+- 人物自动聚类与自动创建 `人物 1 / 人物 2`
+- 人工确认 / 排除 / 移动 / 合并 / 拆分 API
+- 待确认队列与批量操作
+- worker 化批量扫描、重匹配、prototype rebuild
+- 搜索页的人物过滤与多人共现搜索
+
+如果你想了解更完整的设计边界、当前进度和下一步实施计划，请看：
+
+- [Design-document/faceDetectionDesgin.md](Design-document/faceDetectionDesgin.md)
+
 ## 架构
 
 | 服务 | 角色 | 默认端口 | 运行方式 |
@@ -87,6 +119,40 @@ WEB_MODE=dev
 ```bash
 ./scripts/bootstrap-macos.sh
 ```
+
+### 数据库初始化、升级与状态检查
+
+推荐在仓库根目录按下面顺序执行：
+
+```bash
+# 1) 确保 PostgreSQL 已启动
+./scripts/svc.sh start postgres
+
+# 2) 初始化/升级数据库到最新 migration
+./scripts/init-db.sh
+
+# 3) 检查 migration 状态（是否有 pending）
+./scripts/db-schema.sh check
+
+# 4) 深度校验关键表/字段/约束
+./scripts/db-schema.sh verify
+```
+
+常用补充命令：
+
+```bash
+# 一键做检查 + 深度校验（不执行 upgrade）
+./scripts/db-schema.sh all
+
+# 服务运行状态检查
+./scripts/svc.sh status
+```
+
+说明：
+
+- `init-db.sh` 仅执行 `alembic upgrade head`。
+- `db-schema.sh upgrade` 与 `init-db.sh` 作用等价，二选一即可。
+- 如果出现 `alembic_version` 多行异常，可执行 `./scripts/db-schema.sh fix-version` 后再 `upgrade`。
 
 ### 启动开发服务
 

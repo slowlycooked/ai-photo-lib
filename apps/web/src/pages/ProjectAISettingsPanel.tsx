@@ -9,6 +9,7 @@ import {
   type PromptTemplate,
   type PromptTemplateTestResponse,
 } from "@/api";
+import { ProjectFaceSettingsPanel } from "./ProjectFaceSettingsPanel";
 import ProjectSearchSettingsPanel from "./ProjectSearchSettingsPanel";
 
 interface ModelForm {
@@ -1102,6 +1103,8 @@ export function ProjectAISettingsPanel({ projectId }: { projectId: number }) {
           )}
         </div>
       </SettingsCard>
+
+      <ProjectFaceSettingsPanel projectId={projectId} />
 
       {/* Embedding Settings Section */}
       <EmbeddingSettingsSection projectId={projectId} />

@@ -1,4 +1,4 @@
-import { request, qs, BASE } from "./client";
+import { ApiError, request, qs, BASE } from "./client";
 import type {
   AIAnalysis,
   AIJobListResponse,
@@ -6,14 +6,34 @@ import type {
   EmbeddingStatusResponse,
   EmbeddingTestRequest,
   EmbeddingTestResponse,
+  FaceClusterUnknownRequest,
+  FaceClusterUnknownResponse,
+  FaceDetectionDetail,
+  FaceDetectionListResponse,
+  FaceScanProjectStartResponse,
+  FaceScanProjectStatusResponse,
+  FaceScanResponse,
   FolderScope,
   PhotoDetail,
+  PhotoDeleteResponse,
   PhotoListResponse,
+  PersonDetail,
+  PersonActionResponse,
+  PersonBatchActionResponse,
+  PersonBatchMoveRequest,
+  PersonBatchMoveResponse,
+  PersonBatchReviewRequest,
+  PersonMoveFaceRequest,
+  PersonMoveFaceResponse,
+  PersonReviewListResponse,
+  PersonListResponse,
   ProjectAISettings,
   ProjectAISettingsUpdate,
   ProjectCreate,
   ProjectEmbeddingSettings,
   ProjectEmbeddingSettingsUpdate,
+  ProjectFaceSettings,
+  ProjectFaceSettingsUpdate,
   ProjectListResponse,
   ProjectSearchSettings,
   ProjectSearchSettingsUpdate,
@@ -126,6 +146,141 @@ export const projectsApi = {
   updateAiSettings: (id: number, body: ProjectAISettingsUpdate) =>
     request<ProjectAISettings>(`/projects/${id}/ai-settings`, {
       method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+
+  // ── Face Settings ─────────────────────────────────────────────────────────
+
+  getFaceSettings: (id: number) =>
+    request<ProjectFaceSettings>(`/projects/${id}/face-settings`),
+
+  updateFaceSettings: (id: number, body: ProjectFaceSettingsUpdate) =>
+    request<ProjectFaceSettings>(`/projects/${id}/face-settings`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+
+  resetFaceSettings: (id: number) =>
+    request<ProjectFaceSettings>(`/projects/${id}/face-settings/reset`, {
+      method: "POST",
+    }),
+
+  scanPhotoFaces: (id: number, photoId: number) =>
+    request<FaceScanResponse>(`/projects/${id}/photos/${photoId}/face-scan`, {
+      method: "POST",
+    }),
+
+  startProjectFaceScan: (id: number) =>
+    request<FaceScanProjectStartResponse>(`/projects/${id}/face-scan-project/start`, {
+      method: "POST",
+    }),
+
+  projectFaceScanStatus: (id: number) =>
+    request<FaceScanProjectStatusResponse>(`/projects/${id}/face-scan-project/status`),
+
+  clusterUnknownFaces: (id: number, body: FaceClusterUnknownRequest = {}) =>
+    request<FaceClusterUnknownResponse>(`/projects/${id}/face-cluster-unknown`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+
+  faces: (
+    id: number,
+    page = 1,
+    pageSize = 50,
+    photoId?: number | null,
+    status?: string | null,
+  ) =>
+    request<FaceDetectionListResponse>(
+      `/projects/${id}/faces${qs({
+        page,
+        page_size: pageSize,
+        photo_id: photoId,
+        status: status ?? undefined,
+      })}`,
+    ),
+
+  face: (id: number, faceId: number) =>
+    request<FaceDetectionDetail>(`/projects/${id}/faces/${faceId}`),
+
+  faceCropUrl: (id: number, faceId: number, updatedAt?: string | null) => {
+    const base = `${BASE}/projects/${id}/faces/${faceId}/crop`;
+    if (!updatedAt) return base;
+    const version = Date.parse(updatedAt);
+    return Number.isNaN(version) ? base : `${base}?v=${version}`;
+  },
+
+  people: (id: number, includeUnnamed = true, limit = 200) =>
+    request<PersonListResponse>(
+      `/projects/${id}/people${qs({ include_unnamed: includeUnnamed, limit })}`,
+    ),
+
+  person: (id: number, personId: number, assignmentLimit = 120) =>
+    request<PersonDetail>(
+      `/projects/${id}/people/${personId}${qs({ assignment_limit: assignmentLimit })}`,
+    ),
+
+  renamePerson: (id: number, personId: number, displayName: string) =>
+    request<PersonActionResponse>(`/projects/${id}/people/${personId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ display_name: displayName }),
+    }),
+
+  confirmPersonFace: (id: number, personId: number, faceId: number) =>
+    request<PersonActionResponse>(`/projects/${id}/people/${personId}/faces/${faceId}/confirm`, {
+      method: "POST",
+    }),
+
+  rejectPersonFace: (id: number, personId: number, faceId: number) =>
+    request<PersonActionResponse>(`/projects/${id}/people/${personId}/faces/${faceId}/reject`, {
+      method: "POST",
+    }),
+
+  movePersonFace: (
+    id: number,
+    personId: number,
+    faceId: number,
+    body: PersonMoveFaceRequest,
+  ) =>
+    request<PersonMoveFaceResponse>(`/projects/${id}/people/${personId}/faces/${faceId}/move`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+
+  setPersonRepresentativeFace: (id: number, personId: number, faceDetectionId: number) =>
+    request<PersonActionResponse>(`/projects/${id}/people/${personId}/representative-face`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ face_detection_id: faceDetectionId }),
+    }),
+
+  reviewPending: (id: number, personId?: number | null, limit = 200, offset = 0) =>
+    request<PersonReviewListResponse>(
+      `/projects/${id}/people/review${qs({ person_id: personId ?? undefined, limit, offset })}`,
+    ),
+
+  batchConfirmReview: (id: number, personId: number, body: PersonBatchReviewRequest) =>
+    request<PersonBatchActionResponse>(`/projects/${id}/people/${personId}/review/batch-confirm`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+
+  batchRejectReview: (id: number, personId: number, body: PersonBatchReviewRequest) =>
+    request<PersonBatchActionResponse>(`/projects/${id}/people/${personId}/review/batch-reject`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+
+  batchMoveReview: (id: number, personId: number, body: PersonBatchMoveRequest) =>
+    request<PersonBatchMoveResponse>(`/projects/${id}/people/${personId}/review/batch-move`, {
+      method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     }),
@@ -282,6 +437,24 @@ export const projectsApi = {
 
   previewUrl: (id: number, photoId: number) =>
     `${BASE}/projects/${id}/photos/${photoId}/preview`,
+
+  deletePhotoRecord: async (id: number, photoId: number, deleteOriginal = false) => {
+    const query = qs({ delete_original: deleteOriginal || undefined });
+    try {
+      return await request<PhotoDeleteResponse>(
+        `/projects/${id}/photos/${photoId}${query}`,
+        { method: "DELETE" },
+      );
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 405) {
+        return request<PhotoDeleteResponse>(
+          `/projects/${id}/photos/${photoId}/delete${query}`,
+          { method: "POST" },
+        );
+      }
+      throw error;
+    }
+  },
 
   // ── Search Settings ───────────────────────────────────────────────────────
 

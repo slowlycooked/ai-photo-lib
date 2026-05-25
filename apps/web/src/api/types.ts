@@ -91,6 +91,14 @@ export interface PhotoListResponse {
   items: Photo[];
 }
 
+export interface PhotoDeleteResponse {
+  project_id: number;
+  photo_id: number;
+  deleted_thumbnail: boolean;
+  deleted_original: boolean;
+  message: string;
+}
+
 export interface TimelineItem {
   key: string;
   year: number;
@@ -384,6 +392,213 @@ export interface DebugSettingsUpdate {
 }
 
 // ─── AI Settings / Prompt Templates ──────────────────────────────────────────
+
+export interface ProjectFaceSettings {
+  id: number;
+  project_id: number;
+  face_recognition_enabled: boolean;
+  face_provider: string;
+  face_detector_model: string;
+  face_embedding_model: string;
+  face_runtime: string;
+  store_face_crops: boolean;
+  face_crop_storage: string;
+  auto_accept_threshold: number;
+  review_threshold: number;
+  cluster_threshold: number;
+  min_face_size: number;
+  min_detection_confidence: number;
+  min_quality_for_prototype: number;
+  max_positive_samples_per_person: number;
+  allow_auto_assignment: boolean;
+  require_human_confirmation_for_new_person: boolean;
+  enable_negative_constraints: boolean;
+  enable_person_cannot_links: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export type ProjectFaceSettingsUpdate = Partial<
+  Omit<ProjectFaceSettings, "id" | "project_id" | "created_at" | "updated_at">
+>;
+
+export interface FaceEmbedding {
+  id: number;
+  project_id: number;
+  face_detection_id: number;
+  model_provider: string | null;
+  model_name: string;
+  model_version: string;
+  embedding_dim: number;
+  embedding_hash: string | null;
+  embedded_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface FaceDetection {
+  id: number;
+  project_id: number;
+  photo_id: number;
+  bbox_x: number;
+  bbox_y: number;
+  bbox_w: number;
+  bbox_h: number;
+  detection_confidence: number | null;
+  face_quality_score: number | null;
+  face_crop_path: string | null;
+  face_crop_hash: string | null;
+  status: string;
+  error_message: string | null;
+  detected_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface FaceDetectionDetail extends FaceDetection {
+  embeddings: FaceEmbedding[];
+}
+
+export interface FaceDetectionListResponse {
+  total: number;
+  page: number;
+  page_size: number;
+  items: FaceDetection[];
+}
+
+export interface FaceScanResponse {
+  project_id: number;
+  photo_id: number;
+  provider: string;
+  detector_model: string;
+  embedding_model: string;
+  faces_detected: number;
+  detections_created: number;
+  detections_updated: number;
+  embeddings_created: number;
+  embeddings_updated: number;
+  auto_assigned: number;
+  review_pending: number;
+  failures: number;
+  message: string;
+  scan_source: string;
+  scan_quality_degraded: boolean;
+}
+
+export interface FaceScanProjectStartResponse {
+  project_id: number;
+  created_jobs: number;
+  skipped_active_jobs: number;
+  message: string;
+}
+
+export interface FaceScanProjectStatusResponse {
+  queued: number;
+  running: number;
+  success: number;
+  failed: number;
+  total: number;
+}
+
+export interface FaceClusterUnknownRequest {
+  max_faces?: number;
+}
+
+export interface FaceClusterUnknownResponse {
+  project_id: number;
+  clusters_created: number;
+  persons_created: number;
+  faces_clustered: number;
+  assignments_created: number;
+  message: string;
+}
+
+export interface PersonSummary {
+  id: number;
+  project_id: number;
+  display_name: string;
+  normalized_name: string | null;
+  is_named: boolean;
+  representative_face_detection_id: number | null;
+  sample_count: number;
+  confirmed_sample_count: number;
+  auto_assigned_count: number;
+  review_pending_count: number;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PersonFaceAssignment {
+  id: number;
+  project_id: number;
+  person_id: number;
+  face_detection_id: number;
+  assignment_status: string;
+  assignment_source: string;
+  confidence: number | null;
+  similarity_score: number | null;
+  is_positive_sample: boolean;
+  is_training_candidate: boolean;
+  created_at: string;
+  updated_at: string;
+  face_detection: FaceDetection;
+}
+
+export interface PersonDetail extends PersonSummary {
+  assignments: PersonFaceAssignment[];
+}
+
+export interface PersonListResponse {
+  total: number;
+  items: PersonSummary[];
+}
+
+export interface PersonActionResponse {
+  person: PersonSummary;
+}
+
+export interface PersonMoveFaceRequest {
+  target_person_id: number;
+}
+
+export interface PersonMoveFaceResponse {
+  source_person: PersonSummary;
+  target_person: PersonSummary;
+}
+
+export interface PersonReviewListResponse {
+  total: number;
+  items: PersonFaceAssignment[];
+}
+
+export interface PersonBatchReviewRequest {
+  face_detection_ids: number[];
+  request_id?: string;
+  operator?: string;
+  max_retries?: number;
+}
+
+export interface PersonBatchMoveRequest extends PersonBatchReviewRequest {
+  target_person_id: number;
+}
+
+export interface PersonBatchActionResponse {
+  updated: number;
+  person: PersonSummary;
+  request_id?: string | null;
+  operator?: string | null;
+  attempts?: number;
+}
+
+export interface PersonBatchMoveResponse {
+  updated: number;
+  source_person: PersonSummary;
+  target_person: PersonSummary;
+  request_id?: string | null;
+  operator?: string | null;
+  attempts?: number;
+}
 
 export interface ProjectAISettings {
   id: number;

@@ -6,6 +6,8 @@ import logging
 from typing import Optional
 
 import httpx
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
 from ..config import settings
@@ -205,32 +207,87 @@ def _upsert_cache_row(
     location_key = _build_location_key(latitude, longitude)
     rounded_lat = _round_coordinate(latitude)
     rounded_lon = _round_coordinate(longitude)
+    now = _now_utc_naive()
+
+    values = {
+        "location_key": location_key,
+        "latitude_rounded": rounded_lat,
+        "longitude_rounded": rounded_lon,
+        "country_code": resolved.country_code,
+        "country_name": resolved.country_name,
+        "admin1": resolved.admin1,
+        "admin2": resolved.admin2,
+        "city": resolved.city,
+        "district": resolved.district,
+        "formatted_address": resolved.formatted_address,
+        "location_source": resolved.location_source,
+        "updated_at": now,
+    }
+
+    update_fields = {
+        "latitude_rounded": rounded_lat,
+        "longitude_rounded": rounded_lon,
+        "country_code": resolved.country_code,
+        "country_name": resolved.country_name,
+        "admin1": resolved.admin1,
+        "admin2": resolved.admin2,
+        "city": resolved.city,
+        "district": resolved.district,
+        "formatted_address": resolved.formatted_address,
+        "location_source": resolved.location_source,
+        "updated_at": now,
+    }
+
+    dialect_name = db.get_bind().dialect.name
+    if dialect_name == "postgresql":
+        stmt = (
+            pg_insert(PhotoLocationCache.__table__)
+            .values(**values)
+            .on_conflict_do_update(
+                index_elements=[PhotoLocationCache.__table__.c.location_key],
+                set_=update_fields,
+            )
+        )
+        db.execute(stmt)
+    elif dialect_name == "sqlite":
+        stmt = (
+            sqlite_insert(PhotoLocationCache.__table__)
+            .values(**values)
+            .on_conflict_do_update(
+                index_elements=[PhotoLocationCache.__table__.c.location_key],
+                set_=update_fields,
+            )
+        )
+        db.execute(stmt)
+    else:
+        row = (
+            db.query(PhotoLocationCache)
+            .filter(PhotoLocationCache.location_key == location_key)
+            .first()
+        )
+        if row is None:
+            row = PhotoLocationCache(**values)
+            db.add(row)
+        else:
+            row.latitude_rounded = rounded_lat
+            row.longitude_rounded = rounded_lon
+            row.country_code = resolved.country_code
+            row.country_name = resolved.country_name
+            row.admin1 = resolved.admin1
+            row.admin2 = resolved.admin2
+            row.city = resolved.city
+            row.district = resolved.district
+            row.formatted_address = resolved.formatted_address
+            row.location_source = resolved.location_source
+            row.updated_at = now
+
     row = (
         db.query(PhotoLocationCache)
         .filter(PhotoLocationCache.location_key == location_key)
         .first()
     )
-    now = _now_utc_naive()
-
     if row is None:
-        row = PhotoLocationCache(
-            location_key=location_key,
-            latitude_rounded=rounded_lat,
-            longitude_rounded=rounded_lon,
-        )
-        db.add(row)
-
-    row.latitude_rounded = rounded_lat
-    row.longitude_rounded = rounded_lon
-    row.country_code = resolved.country_code
-    row.country_name = resolved.country_name
-    row.admin1 = resolved.admin1
-    row.admin2 = resolved.admin2
-    row.city = resolved.city
-    row.district = resolved.district
-    row.formatted_address = resolved.formatted_address
-    row.location_source = resolved.location_source
-    row.updated_at = now
+        raise RuntimeError(f"location cache upsert failed for key={location_key}")
     return row
 
 

@@ -60,3 +60,11 @@ class PhotoListResponse(BaseModel):
     page: int
     page_size: int
     items: List[PhotoResponse]
+
+
+class PhotoDeleteResponse(BaseModel):
+    project_id: int
+    photo_id: int
+    deleted_thumbnail: bool
+    deleted_original: bool
+    message: str

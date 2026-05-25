@@ -1,0 +1,1 @@
+"""People recognition service abstractions."""

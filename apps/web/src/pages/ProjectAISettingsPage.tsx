@@ -18,16 +18,15 @@ export function ProjectAISettingsPage() {
       ? currentProjectId
       : null;
 
-  // When entering from /projects/:projectId/settings/ai and no
-  // project is selected yet, hydrate the project context once from route id.
+  // Keep project context aligned with route id when route is explicit.
   useEffect(() => {
-    if (normalizedCurrentProjectId !== null) return;
     if (normalizedRouteProjectId === null) return;
+    if (normalizedCurrentProjectId === normalizedRouteProjectId) return;
     setCurrentProjectId(normalizedRouteProjectId);
   }, [normalizedCurrentProjectId, normalizedRouteProjectId, setCurrentProjectId]);
 
   const selectedProjectId =
-    normalizedCurrentProjectId ?? normalizedRouteProjectId;
+    normalizedRouteProjectId ?? normalizedCurrentProjectId;
 
   if (selectedProjectId == null) {
     return (

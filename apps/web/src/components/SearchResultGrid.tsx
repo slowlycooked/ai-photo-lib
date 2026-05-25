@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import { Loader2, SearchX, ImageIcon, ChevronDown, ChevronRight, Download, X, ZoomIn, MapPin, Calendar } from "lucide-react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { Loader2, SearchX, ImageIcon, ChevronDown, ChevronRight, Download, X, ZoomIn, MapPin, Calendar, Trash2 } from "lucide-react";
 import { useSearch } from "@/hooks/useSearch";
 import { api } from "@/api";
 import type { SearchDebugPayload, SearchMode, SearchResultItem, SearchTraceStep, TagField } from "@/api/types";
+import { queryKeys } from "@/api/queryKeys";
 import { formatLocationAddress, formatLocationSummary } from "@/lib/utils";
 
 interface SearchResultGridProps {
@@ -19,12 +21,17 @@ function SearchPhotoLightbox({
   item,
   projectId,
   onClose,
+  onDeleted,
 }: {
   item: SearchResultItem;
   projectId: number | null | undefined;
   onClose: () => void;
+  onDeleted?: () => void;
 }) {
   const [imgLoaded, setImgLoaded] = useState(false);
+  const [deleteOriginal, setDeleteOriginal] = useState(false);
+  const [deleteMessage, setDeleteMessage] = useState<string | null>(null);
+  const queryClient = useQueryClient();
   const locationSummary = formatLocationSummary(item, { short: true });
   const takenAtLabel = item.taken_at
     ? new Date(item.taken_at).toLocaleDateString("zh-CN", {
@@ -52,6 +59,31 @@ function SearchPhotoLightbox({
       ? api.projects.originalUrl(projectId, item.photo_id)
       : undefined;
 
+  const deletePhotoMutation = useMutation({
+    mutationFn: () => api.projects.deletePhotoRecord(projectId!, item.photo_id, deleteOriginal),
+    onSuccess: () => {
+      setDeleteMessage(deleteOriginal ? "已删除库记录、缩略图和本地原图" : "已删除库记录和缩略图");
+      if (projectId != null) {
+        queryClient.invalidateQueries({ queryKey: queryKeys.photosBase(projectId) });
+        queryClient.invalidateQueries({ queryKey: queryKeys.timeline(projectId) });
+        queryClient.invalidateQueries({ queryKey: queryKeys.tags(projectId) });
+      }
+      queryClient.invalidateQueries({ queryKey: ["search"] });
+      onDeleted?.();
+      onClose();
+    },
+    onError: (error: Error) => setDeleteMessage(`删除失败：${error.message}`),
+  });
+
+  function handleDeleteRecord() {
+    if (projectId == null) return;
+    const actionText = deleteOriginal ? "删除库记录、缩略图并尝试删除本地原图" : "仅删除库记录和缩略图";
+    if (!window.confirm(`确认${actionText}吗？`)) {
+      return;
+    }
+    deletePhotoMutation.mutate();
+  }
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center p-4"
@@ -75,6 +107,22 @@ function SearchPhotoLightbox({
             >
               <Download className="w-4 h-4 text-white" />
             </a>
+          )}
+          {projectId != null && (
+            <button
+              type="button"
+              onClick={handleDeleteRecord}
+              disabled={deletePhotoMutation.isPending}
+              className="w-9 h-9 rounded-full bg-black/60 flex items-center justify-center hover:bg-black/80 transition-colors disabled:opacity-60"
+              aria-label="删除库记录"
+              title={deleteOriginal ? "删除库记录、缩略图和本地原图" : "仅删除库记录和缩略图"}
+            >
+              {deletePhotoMutation.isPending ? (
+                <Loader2 className="w-4 h-4 text-red-300 animate-spin" />
+              ) : (
+                <Trash2 className="w-4 h-4 text-red-300" />
+              )}
+            </button>
           )}
           <button
             onClick={onClose}
@@ -115,6 +163,21 @@ function SearchPhotoLightbox({
               </div>
             )}
             <p className="text-white/60 text-xs truncate">{item.file_name}</p>
+            {projectId != null && (
+              <div className="border-t border-white/15 pt-2 mt-2 space-y-2 text-left">
+                <label className="flex items-center gap-2 text-xs text-white/85">
+                  <input
+                    type="checkbox"
+                    checked={deleteOriginal}
+                    onChange={(e) => setDeleteOriginal(e.target.checked)}
+                    className="h-3.5 w-3.5"
+                  />
+                  同时删除本地原图（hard copy 删除）
+                </label>
+                <p className="text-[11px] text-white/65">默认只清理库记录与缩略图。</p>
+                {deleteMessage && <p className="text-[11px] text-white/70">{deleteMessage}</p>}
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -664,6 +727,9 @@ export function SearchResultGrid({ query, projectId, mode = "hybrid", debug = fa
         <SearchPhotoLightbox
           item={previewItem}
           projectId={projectId}
+          onDeleted={() => {
+            setPreviewItem(null);
+          }}
           onClose={() => setPreviewItem(null)}
         />
       )}

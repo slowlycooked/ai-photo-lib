@@ -72,6 +72,45 @@ class Settings(BaseSettings):
     location_resolver_user_agent: str = "ai-photo-lib/1.0"
     location_cache_rounding_decimals: int = 4
 
+    # ── Derivative image settings ────────────────────────────────────────────
+    # ai_thumbnail: small JPEG for VLM analysis and photo wall
+    ai_thumbnail_max_edge: int = 768
+    # face_work_image: medium-high res JPEG for face detection
+    face_work_image_max_edge: int = 2048
+    face_work_image_min_edge: int = 1280
+    face_work_image_jpeg_quality: int = 94
+    # face_crop: aligned square crop for face embedding / review UI
+    face_crop_size: int = 112
+    # Minimum face detection size (pixels on the shorter axis)
+    face_min_detect_size: int = 40
+    # Minimum face size to attempt recognition embedding.
+    # Set to 0 (default) to disable the filter and attempt embedding for all
+    # detected faces, preserving backward-compatible behavior.
+    # Set to e.g. 80 to skip very small faces that yield unreliable vectors.
+    face_min_recognition_size: int = 0
+
+    # ── Face / people recognition defaults ──────────────────────────────────
+    face_recognition_enabled: bool = False
+    face_provider: str = "opencv"
+    face_detector_model: str = "yunet"
+    face_embedding_model: str = "sface"
+    face_runtime: str = "cpu"
+    face_detector_model_path: str = ""
+    face_embedding_model_path: str = ""
+    store_face_crops: bool = True
+    face_crop_storage: str = "local"
+    face_auto_accept_threshold: float = 0.62
+    face_review_threshold: float = 0.48
+    face_cluster_threshold: float = 0.50
+    face_min_face_size: int = 40
+    face_min_detection_confidence: float = 0.75
+    face_min_quality_for_prototype: float = 0.70
+    face_max_positive_samples_per_person: int = 200
+    face_allow_auto_assignment: bool = True
+    face_require_human_confirmation_for_new_person: bool = True
+    face_enable_negative_constraints: bool = True
+    face_enable_person_cannot_links: bool = True
+
     @model_validator(mode="after")
     def _set_host_path_default(self) -> "Settings":
         if not self.host_photo_library_path:

@@ -17,8 +17,9 @@ from ..models.ai import PhotoAIAnalysis
 from ..models.photo import Photo
 from ..models.project import Project
 from ..schemas.ai import AIAnalysisResponse
-from ..schemas.photo import PhotoDetailResponse, PhotoListResponse
+from ..schemas.photo import PhotoDeleteResponse, PhotoDetailResponse, PhotoListResponse
 from ..services.folder_service import apply_folder_filter
+from ..services.photo_cleanup import delete_photo_record
 from ..services.thumbnail import generate_thumbnail
 
 router = APIRouter(prefix="/projects", tags=["projects-photos"])
@@ -238,3 +239,60 @@ def get_project_photo_ai(
     if not analysis:
         raise HTTPException(status_code=404, detail="No AI analysis found for this photo")
     return analysis
+
+
+@router.delete("/{project_id}/photos/{photo_id}", response_model=PhotoDeleteResponse)
+def delete_project_photo(
+    project_id: int,
+    delete_original: bool = Query(False),
+    photo: Photo = Depends(require_project_photo),
+    db: Session = Depends(get_db),
+):
+    """Delete a project photo record and cleanup thumbnail.
+
+    Original file deletion is opt-in through ``delete_original=true``.
+    """
+    try:
+        result = delete_photo_record(
+            db,
+            project_id=project_id,
+            photo=photo,
+            delete_original=delete_original,
+        )
+        db.commit()
+    except FileNotFoundError:
+        db.rollback()
+        raise HTTPException(status_code=404, detail="Original file not found on disk")
+    except PermissionError:
+        db.rollback()
+        raise HTTPException(status_code=403, detail="No permission to delete original file")
+    except OSError as exc:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to delete original file: {exc}")
+    except ValueError:
+        db.rollback()
+        raise HTTPException(status_code=400, detail="Photo project mismatch")
+
+    return PhotoDeleteResponse(
+        project_id=result.project_id,
+        photo_id=result.photo_id,
+        deleted_thumbnail=result.deleted_thumbnail,
+        deleted_original=result.deleted_original,
+        message="Photo record deleted",
+    )
+
+
+@router.post("/{project_id}/photos/{photo_id}/delete", response_model=PhotoDeleteResponse)
+def delete_project_photo_compat(
+    project_id: int,
+    delete_original: bool = Query(False),
+    photo: Photo = Depends(require_project_photo),
+    db: Session = Depends(get_db),
+):
+    """Compatibility alias for photo deletion when DELETE is unavailable."""
+    return delete_project_photo(
+        project_id=project_id,
+        delete_original=delete_original,
+        photo=photo,
+        db=db,
+    )
