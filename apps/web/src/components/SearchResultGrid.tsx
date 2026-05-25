@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
-import { Loader2, SearchX, ImageIcon, ChevronDown, ChevronRight, Download, X, ZoomIn } from "lucide-react";
+import { Loader2, SearchX, ImageIcon, ChevronDown, ChevronRight, Download, X, ZoomIn, MapPin, Calendar } from "lucide-react";
 import { useSearch } from "@/hooks/useSearch";
 import { api } from "@/api";
 import type { SearchDebugPayload, SearchMode, SearchResultItem, SearchTraceStep, TagField } from "@/api/types";
+import { formatLocationAddress, formatLocationSummary } from "@/lib/utils";
 
 interface SearchResultGridProps {
   query: string;
@@ -24,6 +25,14 @@ function SearchPhotoLightbox({
   onClose: () => void;
 }) {
   const [imgLoaded, setImgLoaded] = useState(false);
+  const locationSummary = formatLocationSummary(item, { short: true });
+  const takenAtLabel = item.taken_at
+    ? new Date(item.taken_at).toLocaleDateString("zh-CN", {
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+      })
+    : null;
 
   useEffect(() => {
     function handleKey(e: KeyboardEvent) {
@@ -99,6 +108,12 @@ function SearchPhotoLightbox({
         {(item.caption || item.file_name) && (
           <div className="mt-3 px-4 py-2 rounded-md bg-black/60 text-white text-sm max-w-lg text-center space-y-1">
             {item.caption && <p className="line-clamp-2">{item.caption}</p>}
+            {(locationSummary || takenAtLabel) && (
+              <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-xs text-white/80">
+                {locationSummary && <span>{locationSummary}</span>}
+                {takenAtLabel && <span>{takenAtLabel}</span>}
+              </div>
+            )}
             <p className="text-white/60 text-xs truncate">{item.file_name}</p>
           </div>
         )}
@@ -119,6 +134,15 @@ function SearchCard({
   onPreview?: (item: SearchResultItem) => void;
 }) {
   const [loaded, setLoaded] = useState(false);
+  const locationSummary = formatLocationSummary(item, { short: true });
+  const locationAddress = formatLocationAddress(item);
+  const takenAtLabel = item.taken_at
+    ? new Date(item.taken_at).toLocaleDateString("zh-CN", {
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+      })
+    : null;
 
   return (
     <div className="break-inside-avoid mb-3">
@@ -156,6 +180,25 @@ function SearchCard({
             <p className="text-body-sm text-ink line-clamp-2">{item.caption}</p>
           )}
 
+          {(locationSummary || takenAtLabel) && (
+            <div className="flex flex-wrap gap-1.5">
+              {locationSummary && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-1 text-[11px] font-medium text-emerald-800">
+                  <MapPin className="h-3.5 w-3.5" />
+                  <span className="max-w-[180px] truncate" title={locationAddress ?? locationSummary}>
+                    {locationSummary}
+                  </span>
+                </span>
+              )}
+              {takenAtLabel && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-surface-card px-2.5 py-1 text-[11px] font-medium text-mute">
+                  <Calendar className="h-3.5 w-3.5" />
+                  {takenAtLabel}
+                </span>
+              )}
+            </div>
+          )}
+
           {/* Matched tags */}
           {item.matched_tags.length > 0 && (
             <div className="flex flex-wrap gap-1">
@@ -179,6 +222,7 @@ function SearchCard({
               {(item.taken_at || item.camera_make || item.camera_model || item.iso != null || item.gps_latitude != null) && (
                 <div className="text-[9px] text-teal-700 dark:text-teal-300 space-y-0">
                   {item.taken_at && <div>📅 {new Date(item.taken_at).toLocaleDateString("zh-CN")}</div>}
+                  {locationSummary && <div>📍 {locationSummary}</div>}
                   {(item.camera_make || item.camera_model) && (
                     <div>📷 {[item.camera_make, item.camera_model].filter(Boolean).join(" ")}</div>
                   )}
@@ -394,6 +438,9 @@ function DebugPanel({ payload }: { payload: SearchDebugPayload }) {
             {payload.metadata_filters.iso_min != null && (
               <span><span className="opacity-60">ISO:</span> {String(payload.metadata_filters.iso_min)}{payload.metadata_filters.iso_max !== payload.metadata_filters.iso_min ? `~${String(payload.metadata_filters.iso_max)}` : ""}</span>
             )}
+            {((payload.metadata_filters.place_terms as string[] | undefined)?.length ?? 0) > 0 && (
+              <span><span className="opacity-60">地点:</span> {(payload.metadata_filters.place_terms as string[]).join("、")}</span>
+            )}
           </div>
         </div>
       )}
@@ -474,6 +521,14 @@ function buildExportJson({
       file_name: item.file_name,
       caption: item.caption ?? null,
       taken_at: item.taken_at ?? null,
+      location: {
+        country_name: item.country_name ?? null,
+        admin1: item.admin1 ?? null,
+        admin2: item.admin2 ?? null,
+        city: item.city ?? null,
+        district: item.district ?? null,
+        formatted_address: item.formatted_address ?? null,
+      },
       width: item.width ?? null,
       height: item.height ?? null,
       scores: {

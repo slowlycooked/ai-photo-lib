@@ -46,6 +46,7 @@ def get_project_scan_status(project: Project = Depends(require_project)):
 class _ReindexScope(str, Enum):
     all = "all"
     missing_metadata = "missing_metadata"
+    missing_location = "missing_location"
 
 
 @router.post("/{project_id}/scan/reindex")
@@ -56,6 +57,7 @@ def start_project_reindex(
     """Re-extract EXIF metadata for photos already in the DB.
 
     scope=missing_metadata (default): only photos where taken_at IS NULL
+    scope=missing_location: only photos where GPS exists but place fields are empty
     scope=all: every photo in the project
     """
     project_id = project.id

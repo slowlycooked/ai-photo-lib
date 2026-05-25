@@ -577,6 +577,7 @@ def search_photos(
         or metadata_filters.get("camera_model")
         or (metadata_filters.get("iso_min") is not None)
         or (metadata_filters.get("iso_max") is not None)
+        or metadata_filters.get("place_terms")
     )
 
     if _mf_active and project_id is not None:

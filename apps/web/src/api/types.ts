@@ -49,6 +49,14 @@ export interface Photo {
   file_size: number | null;
   status: string;
   thumbnail_path: string | null;
+  gps_latitude: number | null;
+  gps_longitude: number | null;
+  country_name: string | null;
+  admin1: string | null;
+  admin2: string | null;
+  city: string | null;
+  district: string | null;
+  formatted_address: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -58,6 +66,14 @@ export interface PhotoDetail extends Photo {
   gps_latitude: number | null;
   gps_longitude: number | null;
   gps_altitude: number | null;
+  country_code: string | null;
+  country_name: string | null;
+  admin1: string | null;
+  admin2: string | null;
+  city: string | null;
+  district: string | null;
+  formatted_address: string | null;
+  location_source: string | null;
   camera_make: string | null;
   camera_model: string | null;
   lens_model: string | null;
@@ -125,6 +141,7 @@ export interface ScanStatus {
   errors: number;
   current_path: string | null;
   message: string;
+  recent_errors: string[];
 }
 
 // ─── AI ───────────────────────────────────────────────────────────────────────
@@ -231,6 +248,12 @@ export interface SearchResultItem {
   iso?: number | null;
   gps_latitude?: number | null;
   gps_longitude?: number | null;
+  country_name?: string | null;
+  admin1?: string | null;
+  admin2?: string | null;
+  city?: string | null;
+  district?: string | null;
+  formatted_address?: string | null;
 }
 
 export interface SearchTraceStep {

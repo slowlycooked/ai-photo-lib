@@ -19,6 +19,7 @@ from ..models.photo import Photo
 from .thumbnail import SUPPORTED_SUFFIXES, generate_thumbnail
 from .path_utils import build_relative_paths
 from .folder_service import ensure_folder_path
+from .location_service import resolve_photo_location
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +39,7 @@ def _empty_state() -> dict[str, Any]:
         "errors": 0,
         "current_path": None,
         "message": "idle",
+        "recent_errors": [],
     }
 
 
@@ -49,6 +51,13 @@ def get_project_scan_state(project_id: int) -> dict[str, Any]:
     if project_id not in _project_scan_states:
         _project_scan_states[project_id] = _empty_state()
     return _project_scan_states[project_id]
+
+
+def _push_scan_error(state: dict[str, Any], message: str, *, limit: int = 20) -> None:
+    errors = state.setdefault("recent_errors", [])
+    errors.append(message)
+    if len(errors) > limit:
+        del errors[:-limit]
 
 
 # ---------------------------------------------------------------------------
@@ -284,8 +293,11 @@ def _process_file(
             existing.relative_path = relative_path
             existing.folder_path = folder_path
             dirty = True
+        if resolve_photo_location(db, existing):
+            dirty = True
         if dirty:
             existing.updated_at = datetime.now()
+            state["updated"] += 1
         return
 
     mime_type, _ = mimetypes.guess_type(path_str)
@@ -329,21 +341,23 @@ def _process_file(
             existing.folder_id = folder_id
             existing.relative_path = relative_path
             existing.folder_path = folder_path
+        resolve_photo_location(db, existing, force=True)
         existing.updated_at = datetime.now()
         state["updated"] += 1
     else:
-        db.add(
-            Photo(
-                file_path=path_str,
-                file_name=file_path.name,
-                status="pending",
-                project_id=project_id,
-                folder_id=folder_id,
-                relative_path=relative_path,
-                folder_path=folder_path,
-                **common_fields,
-            )
+        photo = Photo(
+            file_path=path_str,
+            file_name=file_path.name,
+            status="pending",
+            project_id=project_id,
+            folder_id=folder_id,
+            relative_path=relative_path,
+            folder_path=folder_path,
+            **common_fields,
         )
+        db.add(photo)
+        db.flush()
+        resolve_photo_location(db, photo, force=True)
         state["inserted"] += 1
 
 
@@ -378,6 +392,7 @@ def scan_project(db: Session, project_id: int) -> None:
         errors=0,
         current_path=None,
         message="scanning",
+        recent_errors=[],
     )
 
     library = Path(project.photo_library_path)
@@ -471,6 +486,7 @@ def scan_project(db: Session, project_id: int) -> None:
                 logger.error("Failed to process %s: %s", entry, exc)
                 db.rollback()
                 state["errors"] += 1
+                _push_scan_error(state, f"{entry.name}: {exc}")
     finally:
         final_message = "done"
         try:
@@ -490,6 +506,7 @@ def scan_project(db: Session, project_id: int) -> None:
                 exc,
             )
             state["errors"] += 1
+            _push_scan_error(state, f"重算文件夹计数失败: {exc}")
             final_message = "done_with_errors"
         finally:
             state.pop("_folder_cache", None)
@@ -516,6 +533,7 @@ def reindex_project(db: Session, project_id: int, scope: str = "missing_metadata
 
     scope:
       "missing_metadata" — only photos where taken_at IS NULL
+      "missing_location" — only photos with GPS but no resolved place fields
       "all"              — every photo belonging to this project
 
     Uses the same per-project scan state so the frontend progress panel works
@@ -529,6 +547,12 @@ def reindex_project(db: Session, project_id: int, scope: str = "missing_metadata
     )
     if scope == "missing_metadata":
         query = query.filter(Photo.taken_at.is_(None))
+    elif scope == "missing_location":
+        query = query.filter(
+            Photo.gps_latitude.is_not(None),
+            Photo.gps_longitude.is_not(None),
+            Photo.location_resolved_at.is_(None),
+        )
 
     photos: list[Photo] = query.all()
 
@@ -540,6 +564,7 @@ def reindex_project(db: Session, project_id: int, scope: str = "missing_metadata
         errors=0,
         current_path=None,
         message=f"reindexing ({scope})",
+        recent_errors=[],
     )
 
     try:
@@ -548,11 +573,9 @@ def reindex_project(db: Session, project_id: int, scope: str = "missing_metadata
             state["scanned"] += 1
 
             if not Path(photo.file_path).exists():
-                logger.warning(
-                    "reindex: file not found, skipping photo %d: %s",
-                    photo.id,
-                    photo.file_path,
-                )
+                warning = f"photo#{photo.id} 文件不存在: {photo.file_path}"
+                logger.warning("reindex: %s", warning)
+                _push_scan_error(state, warning)
                 continue
 
             try:
@@ -578,6 +601,9 @@ def reindex_project(db: Session, project_id: int, scope: str = "missing_metadata
                         setattr(photo, attr, value)
                         changed = True
 
+                if resolve_photo_location(db, photo, force=(scope == "all")):
+                    changed = True
+
                 if changed:
                     photo.updated_at = datetime.now()
                     db.commit()
@@ -591,6 +617,7 @@ def reindex_project(db: Session, project_id: int, scope: str = "missing_metadata
                 )
                 db.rollback()
                 state["errors"] += 1
+                _push_scan_error(state, f"photo#{photo.id} {Path(photo.file_path).name}: {exc}")
     finally:
         state.update(running=False, current_path=None, message="done")
         logger.info(

@@ -14,6 +14,7 @@ from app.models import photo  # noqa: F401, E402 — import so metadata is popul
 from app.models import ai  # noqa: F401, E402
 from app.models import project  # noqa: F401, E402
 from app.models import app_settings  # noqa: F401, E402
+from app.models import location_cache  # noqa: F401, E402
 from app.models import project_search_settings  # noqa: F401, E402
 
 config = context.config

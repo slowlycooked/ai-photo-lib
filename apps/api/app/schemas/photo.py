@@ -19,6 +19,14 @@ class PhotoResponse(BaseModel):
     file_size: Optional[int] = None
     status: str
     thumbnail_path: Optional[str] = None
+    gps_latitude: Optional[float] = None
+    gps_longitude: Optional[float] = None
+    country_name: Optional[str] = None
+    admin1: Optional[str] = None
+    admin2: Optional[str] = None
+    city: Optional[str] = None
+    district: Optional[str] = None
+    formatted_address: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 
@@ -29,6 +37,14 @@ class PhotoDetailResponse(PhotoResponse):
     gps_latitude: Optional[float] = None
     gps_longitude: Optional[float] = None
     gps_altitude: Optional[float] = None
+    country_code: Optional[str] = None
+    country_name: Optional[str] = None
+    admin1: Optional[str] = None
+    admin2: Optional[str] = None
+    city: Optional[str] = None
+    district: Optional[str] = None
+    formatted_address: Optional[str] = None
+    location_source: Optional[str] = None
     camera_make: Optional[str] = None
     camera_model: Optional[str] = None
     lens_model: Optional[str] = None

@@ -100,6 +100,12 @@ def build_result_items(
             "iso": photo.iso,
             "gps_latitude": photo.gps_latitude,
             "gps_longitude": photo.gps_longitude,
+            "country_name": photo.country_name,
+            "admin1": photo.admin1,
+            "admin2": photo.admin2,
+            "city": photo.city,
+            "district": photo.district,
+            "formatted_address": photo.formatted_address,
             # P2: evidence level always present (frontend uses for fold/filter UI)
             "evidence_level": candidate.evidence_level or "E",
         }

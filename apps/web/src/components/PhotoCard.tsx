@@ -4,6 +4,7 @@ import { X, Calendar, Ruler, Tag, ImageIcon, Brain, Loader2, Download, MapPin, C
 import type { Photo } from "@/api";
 import { api } from "@/api";
 import { queryKeys } from "@/api/queryKeys";
+import { formatLocationAddress, formatLocationSummary } from "@/lib/utils";
 
 interface PhotoCardProps {
   photo: Photo;
@@ -45,6 +46,8 @@ function DetailModal({ photo, onClose }: DetailModalProps) {
     enabled: projectId != null,
     retry: false,
   });
+  const locationSummary = formatLocationSummary(detail, { short: true });
+  const locationAddress = formatLocationAddress(detail);
 
   return (
     // Scrim
@@ -114,51 +117,70 @@ function DetailModal({ photo, onClose }: DetailModalProps) {
           </div>
 
           {/* GPS + Camera + Exposure from PhotoDetail */}
-          {detail && (detail.gps_latitude != null || detail.camera_make || detail.aperture) && (
-            <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-body-sm pt-1 border-t border-hairline">
-              {detail.gps_latitude != null && detail.gps_longitude != null && (
-                <InfoRow
-                  icon={<MapPin className="w-3.5 h-3.5" />}
-                  label="GPS"
-                  value={
-                    <a
-                      href={`https://maps.apple.com/?ll=${detail.gps_latitude},${detail.gps_longitude}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-primary underline underline-offset-2"
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      {detail.gps_latitude.toFixed(5)}, {detail.gps_longitude.toFixed(5)}
-                    </a>
-                  }
-                />
+          {detail && (locationSummary || detail.gps_latitude != null || detail.camera_make || detail.aperture) && (
+            <div className="space-y-3 pt-1 border-t border-hairline">
+              {locationSummary && (
+                <div className="rounded-md border border-emerald-200 bg-emerald-50/70 p-3">
+                  <div className="flex items-start gap-2">
+                    <span className="mt-0.5 text-emerald-700">
+                      <MapPin className="h-4 w-4" />
+                    </span>
+                    <div className="min-w-0">
+                      <p className="text-caption-sm text-emerald-700">拍摄地点</p>
+                      <p className="text-body-sm font-semibold text-emerald-950">{locationSummary}</p>
+                      {locationAddress && locationAddress !== locationSummary && (
+                        <p className="mt-1 break-words text-caption-sm text-emerald-800">{locationAddress}</p>
+                      )}
+                    </div>
+                  </div>
+                </div>
               )}
-              {(detail.camera_make || detail.camera_model) && (
-                <InfoRow
-                  icon={<Camera className="w-3.5 h-3.5" />}
-                  label="相机"
-                  value={[detail.camera_make, detail.camera_model].filter(Boolean).join(" ")}
-                />
-              )}
-              {detail.lens_model && (
-                <InfoRow
-                  icon={<Aperture className="w-3.5 h-3.5" />}
-                  label="镜头"
-                  value={detail.lens_model}
-                />
-              )}
-              {(detail.aperture || detail.exposure_time || detail.iso) && (
-                <InfoRow
-                  icon={<Aperture className="w-3.5 h-3.5" />}
-                  label="曝光"
-                  value={[
-                    detail.aperture ? `f/${detail.aperture}` : null,
-                    detail.exposure_time ? `${detail.exposure_time}s` : null,
-                    detail.iso ? `ISO ${detail.iso}` : null,
-                    detail.focal_length ? `${detail.focal_length}mm` : null,
-                  ].filter(Boolean).join("  ")}
-                />
-              )}
+
+              <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-body-sm">
+                {detail.gps_latitude != null && detail.gps_longitude != null && (
+                  <InfoRow
+                    icon={<MapPin className="w-3.5 h-3.5" />}
+                    label="GPS"
+                    value={
+                      <a
+                        href={`https://maps.apple.com/?ll=${detail.gps_latitude},${detail.gps_longitude}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-primary underline underline-offset-2"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        {detail.gps_latitude.toFixed(5)}, {detail.gps_longitude.toFixed(5)}
+                      </a>
+                    }
+                  />
+                )}
+                {(detail.camera_make || detail.camera_model) && (
+                  <InfoRow
+                    icon={<Camera className="w-3.5 h-3.5" />}
+                    label="相机"
+                    value={[detail.camera_make, detail.camera_model].filter(Boolean).join(" ")}
+                  />
+                )}
+                {detail.lens_model && (
+                  <InfoRow
+                    icon={<Aperture className="w-3.5 h-3.5" />}
+                    label="镜头"
+                    value={detail.lens_model}
+                  />
+                )}
+                {(detail.aperture || detail.exposure_time || detail.iso) && (
+                  <InfoRow
+                    icon={<Aperture className="w-3.5 h-3.5" />}
+                    label="曝光"
+                    value={[
+                      detail.aperture ? `f/${detail.aperture}` : null,
+                      detail.exposure_time ? `${detail.exposure_time}s` : null,
+                      detail.iso ? `ISO ${detail.iso}` : null,
+                      detail.focal_length ? `${detail.focal_length}mm` : null,
+                    ].filter(Boolean).join("  ")}
+                  />
+                )}
+              </div>
             </div>
           )}
 
@@ -278,6 +300,12 @@ export function PhotoCard({ photo }: PhotoCardProps) {
   const [loaded, setLoaded] = useState(false);
   const [errored, setErrored] = useState(false);
   const [showDetail, setShowDetail] = useState(false);
+  const locationSummary = formatLocationSummary(photo, { short: true });
+  const locationAddress = formatLocationAddress(photo);
+  const gpsFallback =
+    photo.gps_latitude != null && photo.gps_longitude != null
+      ? `${photo.gps_latitude.toFixed(5)}, ${photo.gps_longitude.toFixed(5)}`
+      : null;
 
   return (
     <>
@@ -325,9 +353,20 @@ export function PhotoCard({ photo }: PhotoCardProps) {
 
         {/* Date pill overlay — bottom-left, visible on hover */}
         {photo.taken_at && (
-          <div className="absolute bottom-2 left-2 opacity-0 group-hover:opacity-100 transition-opacity duration-150">
-            <span className="bg-canvas text-ink text-btn-sm font-bold px-3 py-1 rounded-full shadow-sm">
+          <div className="absolute left-2 bottom-2 opacity-0 group-hover:opacity-100 transition-opacity duration-150">
+            <span className="bg-canvas text-ink text-btn-sm font-bold px-3 py-1 rounded-full shadow-sm whitespace-nowrap">
               {new Date(photo.taken_at).toLocaleDateString("zh-CN", { month: "short", year: "numeric" })}
+            </span>
+          </div>
+        )}
+        {(locationSummary || gpsFallback) && (
+          <div className="absolute right-2 bottom-2 max-w-[62%] opacity-95 group-hover:opacity-100 transition-opacity duration-150">
+            <span
+              className="inline-flex items-center gap-1.5 bg-black/72 text-white text-[11px] font-medium px-3 py-1 rounded-full shadow-sm truncate border border-white/12 backdrop-blur-sm"
+              title={locationAddress ?? locationSummary ?? gpsFallback ?? ""}
+            >
+              <MapPin className="w-3.5 h-3.5 shrink-0" />
+              <span className="truncate">{locationSummary ?? gpsFallback}</span>
             </span>
           </div>
         )}

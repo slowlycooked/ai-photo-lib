@@ -19,7 +19,7 @@ export function PhotoBrowseLayout({
   onClearFolder,
   children,
 }: PhotoBrowseLayoutProps) {
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
 
   return (
     <div className="flex h-full gap-4">

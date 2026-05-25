@@ -15,6 +15,10 @@ class Photo(Base):
         Index("ix_photos_project_taken_at", "project_id", "taken_at"),
         Index("ix_photos_project_status", "project_id", "status"),
         Index("ix_photos_project_folder_taken_at", "project_id", "folder_id", "taken_at"),
+        Index("ix_photos_project_country_name", "project_id", "country_name"),
+        Index("ix_photos_project_admin1", "project_id", "admin1"),
+        Index("ix_photos_project_city", "project_id", "city"),
+        Index("ix_photos_project_district", "project_id", "district"),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
@@ -36,6 +40,15 @@ class Photo(Base):
     gps_latitude: Mapped[Optional[float]] = mapped_column(Double, nullable=True)
     gps_longitude: Mapped[Optional[float]] = mapped_column(Double, nullable=True)
     gps_altitude: Mapped[Optional[float]] = mapped_column(Double, nullable=True)
+    country_code: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    country_name: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    admin1: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    admin2: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    city: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    district: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    formatted_address: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    location_source: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    location_resolved_at: Mapped[Optional[datetime]] = mapped_column(TIMESTAMP, nullable=True)
     # ── Camera / lens ───────────────────────────────────────────────────────────
     camera_make: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     camera_model: Mapped[Optional[str]] = mapped_column(Text, nullable=True)

@@ -65,6 +65,12 @@ class Settings(BaseSettings):
     search_tag_vector_weight: float = 0.25
     search_caption_vector_weight: float = 0.20
     search_ocr_vector_weight: float = 0.05
+    # ── Reverse geocoding / location enrichment ────────────────────────────
+    location_resolver_provider: str = "none"
+    location_resolver_endpoint: str = "https://nominatim.openstreetmap.org/reverse"
+    location_resolver_timeout_seconds: int = 8
+    location_resolver_user_agent: str = "ai-photo-lib/1.0"
+    location_cache_rounding_decimals: int = 4
 
     @model_validator(mode="after")
     def _set_host_path_default(self) -> "Settings":

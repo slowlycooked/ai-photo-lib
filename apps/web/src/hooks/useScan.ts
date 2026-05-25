@@ -15,7 +15,9 @@ export function useScanStatus(projectId: number | null) {
 export function useStartReindex(projectId: number | null) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (scope: "all" | "missing_metadata" = "missing_metadata") => {
+    mutationFn: (
+      scope: "all" | "missing_metadata" | "missing_location" = "missing_metadata",
+    ) => {
       if (projectId === null) return Promise.reject(new Error("No project selected"));
       return api.projects.startReindex(projectId, scope);
     },

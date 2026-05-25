@@ -41,6 +41,12 @@ class SearchResultItem(BaseModel):
     iso: Optional[int] = None
     gps_latitude: Optional[float] = None
     gps_longitude: Optional[float] = None
+    country_name: Optional[str] = None
+    admin1: Optional[str] = None
+    admin2: Optional[str] = None
+    city: Optional[str] = None
+    district: Optional[str] = None
+    formatted_address: Optional[str] = None
 
 
 class SearchResponse(BaseModel):

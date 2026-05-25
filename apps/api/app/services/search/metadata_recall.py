@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from sqlalchemy import extract
+from sqlalchemy import extract, or_
 from sqlalchemy.sql import Select
 from sqlalchemy.orm import Session
 
@@ -103,6 +103,7 @@ class MetadataRecallService:
         camera_model = metadata_filters.get("camera_model")
         iso_min = metadata_filters.get("iso_min")
         iso_max = metadata_filters.get("iso_max")
+        place_terms: list[str] = metadata_filters.get("place_terms") or []
 
         # ── Date / time ────────────────────────────────────────────────────────
         if date_from and date_to:
@@ -150,6 +151,20 @@ class MetadataRecallService:
             q = q.filter(Photo.iso >= iso_min)
         if iso_max is not None:
             q = q.filter(Photo.iso <= iso_max)
+
+        # ── Place name filters ───────────────────────────────────────────────
+        for place_term in place_terms:
+            like = f"%{place_term}%"
+            q = q.filter(
+                or_(
+                    Photo.country_name.ilike(like),
+                    Photo.admin1.ilike(like),
+                    Photo.admin2.ilike(like),
+                    Photo.city.ilike(like),
+                    Photo.district.ilike(like),
+                    Photo.formatted_address.ilike(like),
+                )
+            )
 
         # ── Folder scope ───────────────────────────────────────────────────────
         if folder_photo_subquery is not None:

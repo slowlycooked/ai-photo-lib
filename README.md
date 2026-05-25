@@ -46,6 +46,7 @@
 - `.env` 不要在两台机器之间直接复用，路径和暴露地址通常不同。
 - `PHOTO_LIBRARY_PATH`、`THUMBNAIL_PATH`、`POSTGRES_DATA_DIR` 都建议写绝对路径。
 - 如果未来切到第二台 Mac mini，只要新机器重新准备这些目录并填写新的 `.env` 即可。
+- `LOCATION_RESOLVER_PROVIDER=none` 表示只保存 GPS，不做地点名反查；需要地点搜索时再开启 provider。
 
 ## 1. 开发机：MacBook Air M4
 
@@ -193,6 +194,12 @@ git pull
 - 不需要手动额外执行 `alembic upgrade`
 - `start api` / `restart api` 时会自动跑 migration
 
+如果你想在部署前手动确认 migration：
+
+```bash
+./scripts/init-db.sh
+```
+
 如果改动涉及前端依赖：
 
 - `bootstrap-macos.sh` 会重新执行 `npm install`
@@ -242,7 +249,93 @@ postgres ai embed api worker web
 - `OPENAI_BASE_URL`、`EMBEDDING_BASE_URL` 默认都走本机 `127.0.0.1`
 - 运行机如果要被局域网访问，请把 `API_HOST`、`WEB_HOST` 设为 `0.0.0.0`
 
-## 7. 当前保留的 Docker 文件
+## 7. 地点搜索与 reverse geocode
+
+当前后端已经支持两层地点能力：
+
+- 第一层：扫描 EXIF 时提取 `gps_latitude/gps_longitude`
+- 第二层：可选地把坐标反查成 `country_name/admin1/city/district/formatted_address`
+
+推荐配置策略：
+
+- 默认保持 `LOCATION_RESOLVER_PROVIDER=none`
+  适合纯离线或首次导库，扫描稳定、无外部依赖
+- 需要“2024年5月 杭州”这类地点词检索时，再开启 `nominatim`
+
+示例配置：
+
+```env
+LOCATION_RESOLVER_PROVIDER=nominatim
+LOCATION_RESOLVER_ENDPOINT=https://nominatim.openstreetmap.org/reverse
+LOCATION_RESOLVER_TIMEOUT_SECONDS=8
+LOCATION_RESOLVER_USER_AGENT=ai-photo-lib/1.0
+LOCATION_CACHE_ROUNDING_DECIMALS=4
+```
+
+说明：
+
+- `LOCATION_CACHE_ROUNDING_DECIMALS=4` 会把相近坐标归并到缓存，减少重复 reverse geocode 请求
+- provider 关闭时不会报错，只是不会填充地点名字段
+- 当前实现已经内置地点缓存表 `photo_location_cache`
+
+## 8. 批量回填地点运维说明
+
+适用场景：
+
+- 旧照片已经有 GPS，但新增地点字段还没填
+- 之前 `LOCATION_RESOLVER_PROVIDER=none`，后来想补地点名
+- 更换 reverse geocode provider 后，需要重新补齐地点
+
+推荐操作顺序：
+
+1. 确认数据库 migration 已经完成
+
+```bash
+./scripts/init-db.sh
+```
+
+2. 在 `.env` 中开启 reverse geocode provider
+
+```env
+LOCATION_RESOLVER_PROVIDER=nominatim
+```
+
+3. 重启 API，让新配置生效
+
+```bash
+./scripts/svc.sh restart api
+```
+
+4. 对目标项目触发“只补地点”的 reindex
+
+```bash
+curl -X POST "http://127.0.0.1:8000/projects/1/scan/reindex?scope=missing_location"
+```
+
+5. 查看进度
+
+```bash
+curl "http://127.0.0.1:8000/projects/1/scan/status"
+```
+
+6. 如果需要全量重跑元数据和地点，可使用：
+
+```bash
+curl -X POST "http://127.0.0.1:8000/projects/1/scan/reindex?scope=all"
+```
+
+建议：
+
+- 首次开启 provider 时，优先用 `missing_location`
+- 如果照片很多，建议分项目分批执行
+- Nominatim 属于公共服务，批量回填时应控制节奏，避免高并发频繁重试
+- 如果后续切到商业地理服务，优先保留当前“扫描写入 + 缓存表复用”的结构，不需要改搜索层
+
+更详细的操作步骤见：
+
+- `Design-document/location-backfill-runbook.md`
+
+## 9. 当前保留的 Docker 文件
 
 仓库中仍保留旧的 `docker-compose.yml` 与 `Dockerfile`，用于历史兼容和参考。
 

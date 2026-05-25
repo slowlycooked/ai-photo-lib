@@ -183,6 +183,15 @@ def test_query_understanding_behavior_contract_metadata_only_query():
     assert metadata["has_gps"] is True
 
 
+def test_query_understanding_behavior_contract_time_and_place_query():
+    plan = understand_query("2024年5月 杭州的照片")
+    metadata = plan.metadata_filters
+    assert metadata["metadata_only"] is True
+    assert metadata["year"] == 2024
+    assert metadata["month"] == 5
+    assert metadata["place_terms"] == ["杭州"]
+
+
 def test_query_understanding_behavior_contract_folder_filter_agnostic():
     """Folder filtering is handled in search SQL layer, not query understanding."""
     plan = understand_query("夜景")

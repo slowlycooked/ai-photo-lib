@@ -83,6 +83,11 @@ _YEAR_RE = re.compile(r"(20\d{2}|19\d{2})年")
 _META_NOISE_RE = re.compile(
     r"的照片|的相片|的图片|的图|照片|相片|图片|[的了在里中是]|拍的|拍摄|摄影|帮我找|搜索|找|查"
 )
+_PLACE_SPLIT_RE = re.compile(r"[\s,/，、]+")
+_GENERIC_NON_PLACE_TERMS: frozenset[str] = frozenset({
+    "夜景", "夜晚", "室内", "室外", "风景", "美食", "人物", "猫", "狗", "下雨天",
+    "晴天", "雪天", "海边", "日落", "日出", "晚霞", "建筑", "街景", "自拍",
+})
 
 
 def _parse_metadata_filters(original_query: str) -> dict:
@@ -99,6 +104,7 @@ def _parse_metadata_filters(original_query: str) -> dict:
         camera_model         — str | None  (used for ILIKE, combined with camera_make)
         iso_min              — int | None
         iso_max              — int | None
+        place_terms          — list[str]
         metadata_only        — bool  (True if no semantic content remains after filters)
         matched_metadata_terms — list[str]  (human-readable matched terms)
     """
@@ -118,6 +124,7 @@ def _parse_metadata_filters(original_query: str) -> dict:
         "camera_model": None,
         "iso_min": None,
         "iso_max": None,
+        "place_terms": [],
         "metadata_only": False,
         "matched_metadata_terms": [],
     }
@@ -233,6 +240,22 @@ def _parse_metadata_filters(original_query: str) -> dict:
         matched.append("高ISO")
         remaining = re.sub(r"高iso|高感光|高感", "", remaining, flags=re.IGNORECASE)
 
+    # ── Structured place terms ─────────────────────────────────────────────
+    cleaned_remaining = _META_NOISE_RE.sub("", remaining).strip()
+    place_terms: list[str] = []
+    if cleaned_remaining:
+        for raw_term in _PLACE_SPLIT_RE.split(cleaned_remaining):
+            term = raw_term.strip()
+            if not term or term in _GENERIC_NON_PLACE_TERMS:
+                continue
+            if term not in place_terms:
+                place_terms.append(term)
+    if place_terms:
+        result["place_terms"] = place_terms
+        matched.extend(place_terms)
+        for term in place_terms:
+            remaining = _strip(remaining, term)
+
     result["matched_metadata_terms"] = matched
 
     # ── metadata_only detection ────────────────────────────────────────────
@@ -243,6 +266,7 @@ def _parse_metadata_filters(original_query: str) -> dict:
         or (result["has_gps"] is not None)
         or result["camera_make"] or result["camera_model"]
         or (result["iso_min"] is not None) or (result["iso_max"] is not None)
+        or result["place_terms"]
     )
     if has_any:
         cleaned = _META_NOISE_RE.sub("", remaining).strip()

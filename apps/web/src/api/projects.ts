@@ -65,7 +65,10 @@ export const projectsApi = {
 
   scanStatus: (id: number) => request<ScanStatus>(`/projects/${id}/scan/status`),
 
-  startReindex: (id: number, scope: "all" | "missing_metadata" = "missing_metadata") =>
+  startReindex: (
+    id: number,
+    scope: "all" | "missing_metadata" | "missing_location" = "missing_metadata",
+  ) =>
     request<{ message: string; status: ScanStatus }>(
       `/projects/${id}/scan/reindex?scope=${scope}`,
       { method: "POST" },

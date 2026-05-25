@@ -13,3 +13,4 @@ class ScanStatus(BaseModel):
     errors: int
     current_path: Optional[str] = None
     message: str
+    recent_errors: list[str] = []

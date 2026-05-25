@@ -38,6 +38,14 @@ def test_real_query_regression_metadata_queries_keep_structured_filters() -> Non
     assert plan.metadata_filters["has_gps"] is True
 
 
+def test_real_query_regression_time_and_place_filters() -> None:
+    plan = understand_query("2024年5月 杭州")
+    assert plan.metadata_filters["year"] == 2024
+    assert plan.metadata_filters["month"] == 5
+    assert plan.metadata_filters["place_terms"] == ["杭州"]
+    assert plan.metadata_filters["metadata_only"] is True
+
+
 def test_real_query_regression_semantic_light_mode() -> None:
     plan = understand_query("室内")
     assert plan.intent == "semantic_photo_search"

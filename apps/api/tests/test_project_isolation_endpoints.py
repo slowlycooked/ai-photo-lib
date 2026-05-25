@@ -66,6 +66,15 @@ CREATE TABLE photos (
   gps_latitude REAL,
   gps_longitude REAL,
   gps_altitude REAL,
+  country_code TEXT,
+  country_name TEXT,
+  admin1 TEXT,
+  admin2 TEXT,
+  city TEXT,
+  district TEXT,
+  formatted_address TEXT,
+  location_source TEXT,
+  location_resolved_at TEXT,
   camera_make TEXT,
   camera_model TEXT,
   lens_model TEXT,
@@ -200,6 +209,29 @@ CREATE TABLE project_ai_settings (
         FOREIGN KEY (project_id, active_prompt_template_id)
         REFERENCES project_prompt_templates (project_id, id)
 );
+
+CREATE TABLE project_search_settings (
+    id INTEGER PRIMARY KEY,
+    project_id INTEGER NOT NULL UNIQUE,
+    default_mode TEXT NOT NULL DEFAULT 'hybrid',
+    keyword_top_k INTEGER NOT NULL DEFAULT 2000,
+    vector_top_k INTEGER NOT NULL DEFAULT 200,
+    page_size_default INTEGER NOT NULL DEFAULT 50,
+    page_size_max INTEGER NOT NULL DEFAULT 200,
+    rrf_k INTEGER NOT NULL DEFAULT 60,
+    keyword_weight REAL NOT NULL DEFAULT 0.40,
+    vector_weight REAL NOT NULL DEFAULT 0.60,
+    vector_min_score REAL NOT NULL DEFAULT 0.30,
+    keyword_field_weights TEXT,
+    vector_field_weights TEXT,
+    ocr_query_vector_field_weights TEXT,
+    enable_query_understanding BOOLEAN NOT NULL DEFAULT 1,
+    enable_structured_filters BOOLEAN NOT NULL DEFAULT 1,
+    enable_semantic_tag_boost BOOLEAN NOT NULL DEFAULT 0,
+    search_quality_settings TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 """
 
 SEED_SQL = """
@@ -207,11 +239,15 @@ INSERT INTO projects (id, name, photo_library_path, thumbnail_path, is_default)
 VALUES (1, 'Project A', '/tmp/a', '/tmp/a-thumb', 1),
        (2, 'Project B', '/tmp/b', '/tmp/b-thumb', 0);
 
-INSERT INTO photos (id, project_id, file_path, file_name, status, created_at, updated_at)
-VALUES (101, 1, '/tmp/a/a.jpg',   'a.jpg',   'indexed', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-       (102, 1, '/tmp/a/cat.jpg', 'cat.jpg', 'indexed', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-       (103, 1, '/tmp/a/dog.jpg', 'dog.jpg', 'indexed', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-       (202, 2, '/tmp/b/b.jpg',   'b.jpg',   'indexed', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+INSERT INTO photos (
+    id, project_id, file_path, file_name, status, taken_at,
+    city, district, formatted_address, created_at, updated_at
+)
+VALUES
+    (101, 1, '/tmp/a/a.jpg',   'a.jpg',   'indexed', '2024-05-03 08:00:00', '杭州', '西湖区', '中国浙江省杭州市西湖区龙井路', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+    (102, 1, '/tmp/a/cat.jpg', 'cat.jpg', 'indexed', '2024-05-14 10:00:00', '上海', '浦东新区', '中国上海市浦东新区世纪大道', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+    (103, 1, '/tmp/a/dog.jpg', 'dog.jpg', 'indexed', '2023-05-02 09:00:00', '杭州', '余杭区', '中国浙江省杭州市余杭区', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+    (202, 2, '/tmp/b/b.jpg',   'b.jpg',   'indexed', '2024-05-05 12:00:00', '杭州', '西湖区', '中国浙江省杭州市西湖区', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
 
 INSERT INTO photo_ai_analysis (id, project_id, photo_id, caption, object_tags)
 VALUES (2, 1, 102, 'a cat photo', '["猫"]'),
@@ -399,6 +435,14 @@ class ProjectIsolationEndpointsTest(unittest.TestCase):
             "/projects/1/search?filter=tag&tag_field=object_tags"
         )
         self.assertEqual(res.status_code, 422)
+
+    def test_search_time_and_place_filters_are_project_scoped(self) -> None:
+        res = self.client.get("/projects/1/search?q=2024年5月 杭州")
+        self.assertEqual(res.status_code, 200)
+        body = res.json()
+        self.assertEqual(body["total"], 1)
+        self.assertEqual(body["items"][0]["photo_id"], 101)
+        self.assertEqual(body["items"][0]["city"], "杭州")
 
 
 if __name__ == "__main__":
