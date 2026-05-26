@@ -447,6 +447,9 @@ function DebugPanel({ payload }: { payload: SearchDebugPayload }) {
       <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[10px]">
         <span><span className="opacity-60">原始:</span> {payload.original_query}</span>
         <span><span className="opacity-60">规范化:</span> {payload.normalized_query}</span>
+        {payload.semantic_query_text && (
+          <span><span className="opacity-60">语义查询:</span> {payload.semantic_query_text}</span>
+        )}
         {(payload.exact_terms?.length ?? 0) > 0 && (
           <span className="text-blue-700 dark:text-blue-300"><span className="opacity-60">精确词:</span> {payload.exact_terms!.join(", ")}</span>
         )}

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Optional
 
 from .types import EffectiveSearchSettings, SearchCandidate, VectorMatchScores
 
@@ -12,6 +13,8 @@ def rrf_merge(
     keyword_results: list[SearchCandidate],
     vector_scores: dict[int, VectorMatchScores],
     settings: EffectiveSearchSettings,
+    people_results: Optional[list[SearchCandidate]] = None,
+    people_weight: float = 1.20,
 ) -> list[SearchCandidate]:
     """Reciprocal Rank Fusion.
 
@@ -19,9 +22,9 @@ def rrf_merge(
     *keyword_weight*, *vector_weight* and *rrf_k* from *settings*.
     """
     logger.debug(
-        "[fusion] rrf_merge kw_results=%d vec_results=%d rrf_k=%d kw_weight=%.2f vec_weight=%.2f",
-        len(keyword_results), len(vector_scores),
-        settings.rrf_k, settings.keyword_weight, settings.vector_weight,
+        "[fusion] rrf_merge kw_results=%d vec_results=%d people_results=%d rrf_k=%d kw_weight=%.2f vec_weight=%.2f people_weight=%.2f",
+        len(keyword_results), len(vector_scores), len(people_results or []),
+        settings.rrf_k, settings.keyword_weight, settings.vector_weight, people_weight,
     )
     merged: dict[int, SearchCandidate] = {}
     rrf_k = settings.rrf_k
@@ -78,6 +81,20 @@ def rrf_merge(
         ):
             if score > 0 and source_name not in row.match_source:
                 row.match_source.append(source_name)
+
+    for rank, candidate in enumerate(people_results or [], start=1):
+        fused = people_weight / (rrf_k + rank)
+        row = merged.get(candidate.photo_id)
+        if row is None:
+            row = SearchCandidate(photo_id=candidate.photo_id)
+            merged[candidate.photo_id] = row
+        row.people_score = candidate.people_score
+        row.people_rank = rank
+        row.people_explain = dict(candidate.people_explain)
+        row.rrf_score += fused
+        row.final_score = row.rrf_score
+        if "people" not in row.match_source:
+            row.match_source.append("people")
 
     result = sorted(merged.values(), key=lambda item: item.final_score, reverse=True)
     logger.debug(

@@ -19,6 +19,7 @@ class SearchResultItem(BaseModel):
     score: float
     keyword_score: Optional[float] = None
     vector_score: Optional[float] = None
+    people_score: Optional[float] = None
     rrf_score: Optional[float] = None
     match_source: Optional[List[str]] = None
     field_scores: Optional[Dict[str, float]] = None
@@ -47,6 +48,7 @@ class SearchResultItem(BaseModel):
     city: Optional[str] = None
     district: Optional[str] = None
     formatted_address: Optional[str] = None
+    matched_people: Optional[List[Dict[str, Any]]] = None
 
 
 class SearchResponse(BaseModel):

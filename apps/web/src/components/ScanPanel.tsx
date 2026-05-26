@@ -125,16 +125,6 @@ export function ScanPanel({
         </div>
       )}
 
-      {/* Stats */}
-      {status.scanned > 0 && (
-        <div className="grid grid-cols-4 gap-3">
-          <Stat label="已扫描" value={status.scanned} />
-          <Stat label="新增" value={status.inserted} accent />
-          <Stat label="更新" value={status.updated} />
-          <Stat label="错误" value={status.errors} warn={status.errors > 0} />
-        </div>
-      )}
-
       {/* Current file */}
       {status.running && status.current_path && (
         <p className="text-caption-sm text-mute truncate">
@@ -162,32 +152,6 @@ export function ScanPanel({
           </div>
         </section>
       )}
-    </div>
-  );
-}
-
-function Stat({
-  label,
-  value,
-  accent,
-  warn,
-}: {
-  label: string;
-  value: number;
-  accent?: boolean;
-  warn?: boolean;
-}) {
-  return (
-    <div className="text-center">
-      <p
-        className={[
-          "text-heading-md font-semibold",
-          accent ? "text-primary" : warn ? "text-amber-600" : "text-ink",
-        ].join(" ")}
-      >
-        {value.toLocaleString()}
-      </p>
-      <p className="text-caption-sm text-mute mt-0.5">{label}</p>
     </div>
   );
 }

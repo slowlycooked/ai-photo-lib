@@ -124,6 +124,7 @@ class VectorRecallService:
         *,
         query: str,
         normalized_query: str,
+        semantic_query_text: str = "",
         is_ocr_query: bool,
         project_id: int,
         folder_photo_subquery: Optional[Select],
@@ -154,7 +155,7 @@ class VectorRecallService:
             embed_cfg = {}
             input_prefix_query = None
 
-        embed_input = normalized_query if normalized_query.strip() else query
+        embed_input = semantic_query_text.strip() or normalized_query.strip() or query
         if isinstance(input_prefix_query, str) and input_prefix_query.strip():
             embed_input = f"{input_prefix_query.strip()}\n{embed_input}"
 

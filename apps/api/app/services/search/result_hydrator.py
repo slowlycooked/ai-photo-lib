@@ -108,11 +108,13 @@ def build_result_items(
             "formatted_address": photo.formatted_address,
             # P2: evidence level always present (frontend uses for fold/filter UI)
             "evidence_level": candidate.evidence_level or "E",
+            "matched_people": list(candidate.people_explain.get("matched_people", [])),
         }
 
         if debug and should_include_search_debug_payload():
             item["keyword_score"] = round(float(candidate.keyword_score), 6)
             item["vector_score"] = round(float(candidate.vector_score), 6)
+            item["people_score"] = round(float(candidate.people_score), 6)
             item["rrf_score"] = round(float(candidate.rrf_score), 6)
             item["match_source"] = list(candidate.match_source)
             item["should_display"] = (candidate.evidence_level or "E") not in ("D", "E", "F")
@@ -144,6 +146,12 @@ def build_result_items(
                 explain["vector"] = {
                     "field_scores": candidate.vector_explain,
                     "rank": candidate.vector_rank,
+                }
+            if candidate.people_explain:
+                explain["people"] = {
+                    "matched_people": list(candidate.people_explain.get("matched_people", [])),
+                    "rank": candidate.people_rank,
+                    "people_filter_mode": candidate.people_explain.get("people_filter_mode"),
                 }
             if explain:
                 item["explain"] = explain

@@ -89,6 +89,61 @@ _GENERIC_NON_PLACE_TERMS: frozenset[str] = frozenset({
     "晴天", "雪天", "海边", "日落", "日出", "晚霞", "建筑", "街景", "自拍",
 })
 
+_ANIMAL_CATEGORY_TERMS: frozenset[str] = frozenset({
+    "动物", "宠物", "野生动物", "动物园", "小动物", "animal",
+})
+
+
+def _dedupe_terms(terms: list[str]) -> list[str]:
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for term in terms:
+        text = term.strip()
+        if not text:
+            continue
+        lowered = text.lower()
+        if lowered in seen:
+            continue
+        seen.add(lowered)
+        deduped.append(text)
+    return deduped
+
+
+def _build_semantic_query_text(
+    *,
+    original_query: str,
+    intent: str,
+    exact_terms: list[str],
+    expanded_terms: list[str],
+    broad_terms: list[str],
+) -> str:
+    all_terms = _dedupe_terms(exact_terms + expanded_terms + broad_terms)
+    if not all_terms:
+        return original_query
+
+    if intent == "animal_search":
+        entity_terms = [
+            term for term in _dedupe_terms(exact_terms + expanded_terms)
+            if term not in _ANIMAL_CATEGORY_TERMS and term != "野外"
+        ]
+        broad_semantics = [
+            term for term in _dedupe_terms(broad_terms)
+            if term not in {"动物园"}
+        ]
+
+        parts = ["查找包含动物主体的照片"]
+        if entity_terms:
+            parts.append(f"，包括{'、'.join(entity_terms)}")
+        if broad_semantics:
+            parts.append(f"，以及{'、'.join(broad_semantics)}")
+        parts.append("。重点匹配 object_tags、search_keywords、caption 中出现动物实体的照片。")
+        return "".join(parts)
+
+    return (
+        f"查找与以下内容相关的照片：{'、'.join(all_terms)}。"
+        "重点匹配 caption、tags、search_keywords 和 OCR 文本。"
+    )
+
 
 def _parse_metadata_filters(original_query: str) -> dict:
     """Parse EXIF / Photo table metadata filters from a raw user query.
@@ -353,6 +408,46 @@ _OUTDOOR_TERMS_TIERED: Dict[str, Any] = {
 }
 
 _PEOPLE_TERMS_TIERED: Dict[str, Any] = {
+    "爸爸": {
+        "expanded": ["父亲", "家庭", "亲子", "合影"],
+        "broad": ["人物", "生活"],
+        "facets": ["people"],
+    },
+    "父亲": {
+        "expanded": ["爸爸", "家庭", "亲子", "合影"],
+        "broad": ["人物", "生活"],
+        "facets": ["people"],
+    },
+    "妈妈": {
+        "expanded": ["母亲", "家庭", "亲子", "合影"],
+        "broad": ["人物", "生活"],
+        "facets": ["people"],
+    },
+    "母亲": {
+        "expanded": ["妈妈", "家庭", "亲子", "合影"],
+        "broad": ["人物", "生活"],
+        "facets": ["people"],
+    },
+    "女儿": {
+        "expanded": ["孩子", "儿童", "亲子", "家庭"],
+        "broad": ["人物", "生活"],
+        "facets": ["people"],
+    },
+    "儿子": {
+        "expanded": ["孩子", "儿童", "亲子", "家庭"],
+        "broad": ["人物", "生活"],
+        "facets": ["people"],
+    },
+    "亲子": {
+        "expanded": ["家庭", "父母", "孩子", "合影"],
+        "broad": ["人物", "生活"],
+        "facets": ["people"],
+    },
+    "一家人": {
+        "expanded": ["家庭", "亲子", "合影", "多人"],
+        "broad": ["人物", "生活"],
+        "facets": ["people"],
+    },
     "孩子": {
         "expanded": ["小孩", "儿童", "玩耍"],
         "broad": ["童年", "幼儿"],
@@ -759,6 +854,7 @@ class SearchQueryPlan:
 
     original_query: str
     normalized_query: str
+    semantic_query_text: str = ""
     # ── backward-compatible fields (kept as primary storage) ─────────────────
     exact_terms: list[str] = field(default_factory=list)     # == must_terms
     expanded_terms: list[str] = field(default_factory=list)  # == strong_terms
@@ -879,6 +975,12 @@ def understand_query(
             if key not in matched_keys_set:
                 matched_keys_set.append(key)
 
+            # For Chinese substring queries, the matched key itself often carries
+            # the real search intent even when the whole query has no spaces.
+            # Treat the key as a strong recall term unless it is already explicit.
+            if key.lower() not in exact_lower:
+                expanded_set.add(key)
+
             # The entry's explicit facets override the dict-level primary_facet
             entry_facets: list[str] = tiers.get("facets", [primary_facet])
 
@@ -953,6 +1055,13 @@ def understand_query(
             seen_n.add(t.lower())
             deduped.append(t)
     normalized_query = " ".join(deduped) if deduped else query
+    semantic_query_text = _build_semantic_query_text(
+        original_query=original_query,
+        intent=intent,
+        exact_terms=exact_terms,
+        expanded_terms=expanded_terms,
+        broad_terms=broad_terms,
+    )
 
     semantic_tags: list[str] = {
         "animal_search": ["动物", "宠物", "野生动物"],
@@ -979,6 +1088,7 @@ def understand_query(
     return SearchQueryPlan(
         original_query=original_query,
         normalized_query=normalized_query,
+        semantic_query_text=semantic_query_text,
         exact_terms=exact_terms,
         expanded_terms=expanded_terms,
         support_terms=support_terms,

@@ -34,6 +34,8 @@ from .types import (
 
 logger = logging.getLogger(__name__)
 
+_ANIMAL_SCORE_FLOOR = 0.65
+
 
 def _build_any_match_filter(terms: list[str]):
     """Build OR filter matching any term across all keyword fields."""
@@ -183,6 +185,12 @@ def _score_result(
     all_positive_terms = query_plan.all_terms  # includes support + weak
     max_possible = len(all_positive_terms) * sum(weights.values()) if all_positive_terms else 1.0
     score = round(min(raw / max_possible, 1.0), 4) if max_possible else 0.0
+
+    if query_plan.intent == "animal_search" and term_level_hits["strong"]:
+        strong_entity_fields = {"caption", "object_tags", "search_keywords"}
+        if any(field in field_explain for field in strong_entity_fields):
+            score = max(score, _ANIMAL_SCORE_FLOOR)
+
     return score, sorted(matched), field_explain, hit_tiers, term_level_hits
 
 

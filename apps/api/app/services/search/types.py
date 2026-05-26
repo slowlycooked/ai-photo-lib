@@ -132,6 +132,7 @@ class SearchCandidate:
     photo_id: int
     keyword_score: float = 0.0
     vector_score: float = 0.0
+    people_score: float = 0.0
     final_score: float = 0.0
     rrf_score: float = 0.0
     matched_tags: List[str] = field(default_factory=list)
@@ -140,8 +141,10 @@ class SearchCandidate:
     # Extended for debug explain
     keyword_rank: Optional[int] = None
     vector_rank: Optional[int] = None
+    people_rank: Optional[int] = None
     keyword_explain: Dict = field(default_factory=dict)
     vector_explain: Dict = field(default_factory=dict)
+    people_explain: Dict = field(default_factory=dict)
     # Tier-level evidence tracking
     # hit_tiers: set of tiers that produced keyword hits
     #   {"exact", "strong", "support", "weak", "negative"}

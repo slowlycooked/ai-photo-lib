@@ -18,6 +18,7 @@ _TAG_ALIAS_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("大海", ("sea", "ocean")),
     ("山", ("mountain", "hill")),
     ("森林", ("forest", "woods")),
+    ("动物园", ("zoo", "animal park", "wildlife park")),
     ("船", ("boat", "ship")),
     ("划船", ("boating", "rowing", "boat ride")),
     ("开船", ("sailing",)),
@@ -39,6 +40,11 @@ _TAG_ALIAS_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("餐厅", ("restaurant", "dining")),
     ("日出", ("sunrise",)),
     ("日落", ("sunset",)),
+    ("爸爸", ("father", "dad", "daddy")),
+    ("妈妈", ("mother", "mom", "mum")),
+    ("女儿", ("daughter",)),
+    ("儿子", ("son",)),
+    ("亲子", ("parent child", "parent-child", "parent and child")),
 )
 
 _WS_RE = re.compile(r"\s+")

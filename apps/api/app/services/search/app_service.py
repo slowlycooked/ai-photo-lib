@@ -32,6 +32,8 @@ from .debug import build_debug_payload
 from .fusion import rrf_merge
 from .keyword_recall import KeywordRecallService
 from .metadata_recall import MetadataRecallService
+from .people_query_resolver import PeopleQueryResolution, resolve_people_query
+from .people_recall import PeopleRecallService
 from .result_hydrator import build_result_items
 from .settings_resolver import SearchSettingsResolver
 from .types import (
@@ -45,6 +47,8 @@ from .types import (
 from .vector_recall import VectorRecallService
 
 logger = logging.getLogger(__name__)
+
+_PEOPLE_RRF_WEIGHT = 1.20
 
 # ── Evidence level constants ──────────────────────────────────────────────────
 
@@ -96,6 +100,16 @@ _INDOOR_WEAK_ONLY_FIELDS: tuple[str, ...] = (
     "location_clues",
 )
 
+_ANIMAL_ENTITY_HINTS: frozenset[str] = frozenset({
+    "猫", "小猫", "猫咪", "狗", "小狗", "狗狗", "鸟", "小鸟", "飞鸟", "禽鸟",
+    "马", "骏马", "鹿", "梅花鹿", "野鹿", "兔", "兔子", "小兔", "鱼", "水族",
+    "蝴蝶", "昆虫",
+})
+
+_ANIMAL_GENERIC_TERMS: frozenset[str] = frozenset({
+    "动物", "宠物", "野生动物", "动物园", "小动物", "animal", "野外",
+})
+
 
 def _is_explicit_indoor_query(query_plan: "SearchQueryPlan") -> bool:
     exact_lower = {t.lower() for t in query_plan.exact_terms}
@@ -105,6 +119,66 @@ def _is_explicit_indoor_query(query_plan: "SearchQueryPlan") -> bool:
         and "scene" in query_plan.core_facets
         and bool({"室内", "indoor", "indoors"} & (exact_lower | matched_lower))
     )
+
+
+def _animal_core_facet_passes(
+    candidate: SearchCandidate,
+    ai_analysis: Optional["PhotoAIAnalysis"],
+    query_plan: "SearchQueryPlan",
+    settings: EffectiveSearchSettings,
+) -> tuple[bool, str]:
+    if ai_analysis is None:
+        if (
+            settings.allow_vector_only_for_facet_query
+            and candidate.vector_score >= settings.vector_strict_score
+        ):
+            return True, "animal_vector_only_high_confidence"
+        return False, "animal_no_ai_analysis"
+
+    rich_parts: list[str] = []
+    weak_parts: list[str] = []
+
+    for field_name in ("caption", "object_tags", "search_keywords"):
+        value = getattr(ai_analysis, field_name, None)
+        if isinstance(value, str) and value:
+            rich_parts.append(value.lower())
+        elif value:
+            rich_parts.extend(str(item).lower() for item in value)
+
+    for field_name in ("scene_tags", "location_clues"):
+        value = getattr(ai_analysis, field_name, None)
+        if value:
+            weak_parts.extend(str(item).lower() for item in value)
+
+    raw_result = getattr(ai_analysis, "raw_result", None)
+    if isinstance(raw_result, dict):
+        animals = raw_result.get("animals") or []
+        rich_parts.extend(str(item).lower() for item in animals if str(item).strip())
+
+    rich_text = " ".join(rich_parts)
+    weak_text = " ".join(weak_parts)
+
+    entity_terms = [
+        term.lower()
+        for term in (query_plan.exact_terms + query_plan.expanded_terms)
+        if term.lower() not in _ANIMAL_GENERIC_TERMS
+    ]
+    positive_terms = entity_terms or list(_ANIMAL_ENTITY_HINTS)
+
+    has_positive = any(term in rich_text for term in positive_terms)
+    weak_scene_only = any(term in weak_text for term in ("动物园", "宠物店")) and not has_positive
+
+    if (
+        settings.allow_vector_only_for_facet_query
+        and candidate.vector_score >= settings.vector_strict_score
+    ):
+        return True, "animal_vector_high_confidence"
+
+    if has_positive:
+        return True, "animal_entity_evidence"
+    if weak_scene_only:
+        return False, "animal_scene_without_entity"
+    return False, "animal_no_entity_evidence"
 
 
 def _indoor_core_facet_passes(
@@ -184,6 +258,9 @@ def _core_facet_passes(
     """
     if _is_explicit_indoor_query(query_plan):
         return _indoor_core_facet_passes(candidate, ai_analysis, query_plan, settings)
+
+    if query_plan.intent == "animal_search":
+        return _animal_core_facet_passes(candidate, ai_analysis, query_plan, settings)
 
     # Only apply when the query has time/lighting core facets
     core_facets = query_plan.core_facets
@@ -406,6 +483,26 @@ def _resolve_folder_photo_subquery(
     return build_folder_photo_ids_subquery(db, project_id, folder_id, folder_scope)
 
 
+def _attach_people_explain(
+    candidates: list[SearchCandidate],
+    people_results: list[SearchCandidate],
+) -> list[SearchCandidate]:
+    """Attach people explain payload to existing candidate rows by photo_id."""
+    if not candidates or not people_results:
+        return candidates
+    by_photo = {c.photo_id: c for c in people_results}
+    for candidate in candidates:
+        people_hit = by_photo.get(candidate.photo_id)
+        if not people_hit:
+            continue
+        candidate.people_score = people_hit.people_score
+        candidate.people_rank = people_hit.people_rank
+        candidate.people_explain = dict(people_hit.people_explain)
+        if "people" not in candidate.match_source:
+            candidate.match_source.append("people")
+    return candidates
+
+
 def search_photos(
     db: Session,
     query: str,
@@ -497,6 +594,7 @@ def search_photos(
         "stage": "query_plan",
         "intent": query_plan.intent,
         "normalized_query": query_plan.normalized_query,
+        "semantic_query_text": query_plan.semantic_query_text,
         "exact_terms": query_plan.exact_terms,
         "expanded_terms": query_plan.expanded_terms,
         "broad_terms": query_plan.broad_terms,
@@ -515,10 +613,95 @@ def search_photos(
         query_plan.normalized_query,
     )
 
+    if project_id is not None:
+        people_resolution = resolve_people_query(
+            db,
+            project_id=project_id,
+            query=query,
+            query_plan=query_plan,
+        )
+    else:
+        people_resolution = PeopleQueryResolution(
+            query=query,
+            residual_query=query,
+            people_filter_mode="none",
+            matched_people=[],
+        )
+
+    people_query_plan: dict = {
+        "query": query,
+        "residual_query": people_resolution.residual_query,
+        "is_people_only": people_resolution.is_people_only,
+        "matched_people": [
+            {
+                "person_id": p.person_id,
+                "display_name": p.display_name,
+                "normalized_name": p.normalized_name,
+                "matched_term": p.matched_term,
+            }
+            for p in people_resolution.matched_people
+        ],
+    }
+    trace.append(
+        {
+            "stage": "people_query",
+            "has_people": people_resolution.has_people,
+            "people_filter_mode": people_resolution.people_filter_mode,
+            "matched_person_ids": people_resolution.matched_person_ids,
+            "residual_query": people_resolution.residual_query,
+            "is_people_only": people_resolution.is_people_only,
+        }
+    )
+    logger.debug(
+        "[search] people_query has_people=%s mode=%s matched_person_ids=%s residual=%r",
+        people_resolution.has_people,
+        people_resolution.people_filter_mode,
+        people_resolution.matched_person_ids,
+        people_resolution.residual_query,
+    )
+
+    search_query_plan = query_plan
+    if people_resolution.has_people and people_resolution.residual_query.strip():
+        if effective_settings.enable_query_understanding:
+            search_query_plan = understand_query(
+                people_resolution.residual_query,
+                project_id=project_id,
+            )
+        else:
+            from ...services.query_understanding_service import SearchQueryPlan as _Plan
+            search_query_plan = _Plan(
+                original_query=people_resolution.residual_query,
+                normalized_query=people_resolution.residual_query,
+                exact_terms=[w for w in people_resolution.residual_query.split() if w],
+                intent="semantic_photo_search",
+            )
+
+        trace.append(
+            {
+                "stage": "query_plan_effective",
+                "query": search_query_plan.original_query,
+                "normalized_query": search_query_plan.normalized_query,
+                "semantic_query_text": search_query_plan.semantic_query_text,
+                "intent": search_query_plan.intent,
+                "exact_terms": search_query_plan.exact_terms,
+                "expanded_terms": search_query_plan.expanded_terms,
+            }
+        )
+        people_query_plan["semantic_query"] = people_resolution.residual_query
+        people_query_plan["semantic_query_plan"] = {
+            "intent": search_query_plan.intent,
+            "normalized_query": search_query_plan.normalized_query,
+            "semantic_query_text": search_query_plan.semantic_query_text,
+            "exact_terms": search_query_plan.exact_terms,
+            "expanded_terms": search_query_plan.expanded_terms,
+            "broad_terms": search_query_plan.broad_terms,
+            "support_terms": search_query_plan.support_terms,
+        }
+
     # ── Resolve effective search mode ─────────────────────────────────────────
     # mode=auto → defer to project settings (OCR queries always keyword)
     if mode == "auto":
-        if query_plan.intent == "ocr_text_search":
+        if search_query_plan.intent == "ocr_text_search":
             effective_mode: SearchMode = "keyword"
         else:
             effective_mode = effective_settings.default_mode
@@ -527,7 +710,7 @@ def search_photos(
 
     logger.debug(
         "[search] resolved mode=%s project_id=%s query=%r intent=%s",
-        effective_mode, project_id, query, query_plan.intent,
+        effective_mode, project_id, query, search_query_plan.intent,
     )
 
     folder_photo_subquery = (
@@ -542,6 +725,9 @@ def search_photos(
     )
 
     constrained_photo_ids: Optional[set[int]] = None
+    people_results: list[SearchCandidate] = []
+    people_candidates_debug: list[dict] = []
+    matched_person_ids: list[int] = []
 
     if folder_id is not None:
         folder_count = (
@@ -566,7 +752,9 @@ def search_photos(
         )
 
     # ── Metadata filter (EXIF / Photo fields) ──────────────────────────────
-    metadata_filters = query_plan.metadata_filters
+    metadata_filters = search_query_plan.metadata_filters
+    if people_resolution.is_people_only:
+        metadata_filters = {}
     _mf_active = bool(
         metadata_filters.get("year")
         or metadata_filters.get("month")
@@ -582,7 +770,7 @@ def search_photos(
 
     if _mf_active and project_id is not None:
         _meta_svc = MetadataRecallService(db, project_id)
-        if metadata_filters.get("metadata_only"):
+        if metadata_filters.get("metadata_only") and not people_resolution.has_people:
             # ── Metadata-only query: bypass keyword/vector recall entirely ────
             logger.debug("[search] path=metadata-only filters=%s", metadata_filters)
             meta_results = _meta_svc.search(
@@ -614,7 +802,7 @@ def search_photos(
             debug_payload: Optional[dict] = None
             if debug:
                 debug_payload = build_debug_payload(
-                    query_plan=query_plan,
+                    query_plan=search_query_plan,
                     mode="metadata",
                     embedding_model="",
                     embedding_dimension=global_settings.embedding_dimension,
@@ -627,6 +815,10 @@ def search_photos(
                     metadata_filters=metadata_filters,
                     metadata_candidates=len(meta_results),
                     metadata_only=True,
+                    people_query_plan=people_query_plan,
+                    people_candidates=people_candidates_debug,
+                    people_filter_mode=people_resolution.people_filter_mode,
+                    matched_person_ids=matched_person_ids,
                 )
             logger.debug(
                 "[search] ── DONE ── path=metadata-only total=%d items=%d page=%d",
@@ -650,9 +842,100 @@ def search_photos(
             })
             constrained_photo_ids = _meta_ids
 
+    # ── People recall branch ───────────────────────────────────────────────
+    if project_id is not None and people_resolution.has_people:
+        if constrained_photo_ids is None and folder_photo_subquery is not None:
+            folder_subq = folder_photo_subquery.subquery()
+            folder_rows = db.query(folder_subq.c.id).all()
+            constrained_photo_ids = {int(row[0]) for row in folder_rows}
+
+        people_recall = PeopleRecallService(db, project_id).recall(
+            resolution=people_resolution,
+            constrained_photo_ids=constrained_photo_ids,
+        )
+        people_results = people_recall.candidates
+        matched_person_ids = people_recall.matched_person_ids
+
+        people_photo_ids = people_recall.photo_ids
+        if constrained_photo_ids is None:
+            constrained_photo_ids = set(people_photo_ids)
+        else:
+            constrained_photo_ids = constrained_photo_ids & set(people_photo_ids)
+
+        people_candidates_debug = [
+            {
+                "photo_id": c.photo_id,
+                "people_score": round(c.people_score, 6),
+                "people_rank": c.people_rank,
+                "matched_people": list(c.people_explain.get("matched_people", [])),
+            }
+            for c in people_results[:20]
+        ]
+        trace.append(
+            {
+                "stage": "people_recall",
+                "people_filter_mode": people_resolution.people_filter_mode,
+                "matched_person_ids": matched_person_ids,
+                "people_candidates": len(people_results),
+                "constrained_photo_ids": len(constrained_photo_ids or set()),
+            }
+        )
+        logger.debug(
+            "[search] people_recall mode=%s matched_person_ids=%s candidates=%d constrained=%d",
+            people_resolution.people_filter_mode,
+            matched_person_ids,
+            len(people_results),
+            len(constrained_photo_ids or set()),
+        )
+
+        if people_resolution.is_people_only:
+            total, items = build_result_items(
+                db,
+                people_results,
+                project_id=project_id,
+                mode="hybrid",
+                page=page,
+                page_size=page_size,
+                debug=debug,
+            )
+            trace.append(
+                {
+                    "stage": "result",
+                    "path": "people-only",
+                    "total": total,
+                    "items_in_page": len(items),
+                    "page": page,
+                }
+            )
+            debug_payload: Optional[dict] = None
+            if debug:
+                debug_payload = build_debug_payload(
+                    query_plan=search_query_plan,
+                    mode="people",
+                    embedding_model="",
+                    embedding_dimension=global_settings.embedding_dimension,
+                    keyword_candidates=0,
+                    vector_candidates=0,
+                    merged_candidates=len(people_results),
+                    fallback_reason="",
+                    settings=effective_settings,
+                    trace=trace,
+                    people_query_plan=people_query_plan,
+                    people_candidates=people_candidates_debug,
+                    people_filter_mode=people_resolution.people_filter_mode,
+                    matched_person_ids=matched_person_ids,
+                )
+            logger.debug(
+                "[search] ── DONE ── path=people-only total=%d items=%d page=%d",
+                total,
+                len(items),
+                page,
+            )
+            return total, items, debug_payload
+
     kw_service = KeywordRecallService(db, effective_settings)
     keyword_results = kw_service.search(
-        query_plan,
+        search_query_plan,
         project_id=project_id or 0,
         folder_photo_subquery=folder_photo_subquery,
         constrained_photo_ids=constrained_photo_ids,
@@ -672,6 +955,7 @@ def search_photos(
     # ── Keyword-only mode ─────────────────────────────────────────────────────
     if effective_mode == "keyword" or project_id is None:
         logger.debug("[search] path=keyword-only")
+        keyword_results = _attach_people_explain(keyword_results, people_results)
         total, items = build_result_items(
             db,
             keyword_results,
@@ -685,7 +969,7 @@ def search_photos(
         debug_payload: Optional[dict] = None
         if debug:
             debug_payload = build_debug_payload(
-                query_plan=query_plan,
+                query_plan=search_query_plan,
                 mode="keyword",
                 embedding_model="",
                 embedding_dimension=global_settings.embedding_dimension,
@@ -695,6 +979,10 @@ def search_photos(
                 fallback_reason="",
                 settings=effective_settings,
                 trace=trace,
+                people_query_plan=people_query_plan,
+                people_candidates=people_candidates_debug,
+                people_filter_mode=people_resolution.people_filter_mode,
+                matched_person_ids=matched_person_ids,
             )
         logger.debug(
             "[search] ── DONE ── path=keyword-only total=%d items=%d page=%d",
@@ -708,7 +996,7 @@ def search_photos(
     fallback_reason = ""
     stale_embedding_filtered = 0
 
-    is_ocr_query = query_plan.intent == "ocr_text_search"
+    is_ocr_query = search_query_plan.intent == "ocr_text_search"
     vec_service = VectorRecallService(db, effective_settings)
 
     logger.debug(
@@ -717,8 +1005,9 @@ def search_photos(
     )
     try:
         vector_scores, embedding_model, fallback_reason, stale_embedding_filtered = vec_service.search(
-            query=query,
-            normalized_query=query_plan.normalized_query,
+            query=search_query_plan.original_query,
+            normalized_query=search_query_plan.normalized_query,
+            semantic_query_text=search_query_plan.semantic_query_text,
             is_ocr_query=is_ocr_query,
             project_id=project_id,  # type: ignore[arg-type]
             folder_photo_subquery=folder_photo_subquery,
@@ -758,7 +1047,7 @@ def search_photos(
             debug_payload = None
             if debug:
                 debug_payload = build_debug_payload(
-                    query_plan=query_plan,
+                    query_plan=search_query_plan,
                     mode="vector",
                     embedding_model=embedding_model,
                     embedding_dimension=global_settings.embedding_dimension,
@@ -768,9 +1057,14 @@ def search_photos(
                     fallback_reason=fallback_reason,
                     settings=effective_settings,
                     trace=trace,
+                    people_query_plan=people_query_plan,
+                    people_candidates=people_candidates_debug,
+                    people_filter_mode=people_resolution.people_filter_mode,
+                    matched_person_ids=matched_person_ids,
                 )
             return 0, [], debug_payload
         # hybrid falls back to keyword-only
+        keyword_results = _attach_people_explain(keyword_results, people_results)
         total, items = build_result_items(
             db,
             keyword_results,
@@ -784,7 +1078,7 @@ def search_photos(
         debug_payload = None
         if debug:
             debug_payload = build_debug_payload(
-                query_plan=query_plan,
+                query_plan=search_query_plan,
                 mode="hybrid",
                 embedding_model=embedding_model,
                 embedding_dimension=global_settings.embedding_dimension,
@@ -794,6 +1088,10 @@ def search_photos(
                 fallback_reason=fallback_reason,
                 settings=effective_settings,
                 trace=trace,
+                people_query_plan=people_query_plan,
+                people_candidates=people_candidates_debug,
+                people_filter_mode=people_resolution.people_filter_mode,
+                matched_person_ids=matched_person_ids,
             )
         return total, items, debug_payload
 
@@ -832,6 +1130,7 @@ def search_photos(
                 vector_scores.items(), key=lambda x: x[1].total_score, reverse=True
             )
         ]
+        vector_only = _attach_people_explain(vector_only, people_results)
         total, items = build_result_items(
             db,
             vector_only,
@@ -851,7 +1150,7 @@ def search_photos(
         debug_payload = None
         if debug:
             debug_payload = build_debug_payload(
-                query_plan=query_plan,
+                query_plan=search_query_plan,
                 mode="vector",
                 embedding_model=embedding_model,
                 embedding_dimension=global_settings.embedding_dimension,
@@ -861,15 +1160,25 @@ def search_photos(
                 fallback_reason="",
                 settings=effective_settings,
                 trace=trace,
+                people_query_plan=people_query_plan,
+                people_candidates=people_candidates_debug,
+                people_filter_mode=people_resolution.people_filter_mode,
+                matched_person_ids=matched_person_ids,
             )
         return total, items, debug_payload
 
     # ── Hybrid: RRF merge ─────────────────────────────────────────────────────
     logger.debug(
-        "[search] path=hybrid rrf_merge kw_candidates=%d vec_candidates=%d",
-        len(keyword_results), len(vector_scores),
+        "[search] path=hybrid rrf_merge kw_candidates=%d vec_candidates=%d people_candidates=%d",
+        len(keyword_results), len(vector_scores), len(people_results),
     )
-    merged = rrf_merge(keyword_results, vector_scores, effective_settings)
+    merged = rrf_merge(
+        keyword_results,
+        vector_scores,
+        effective_settings,
+        people_results=people_results,
+        people_weight=_PEOPLE_RRF_WEIGHT,
+    )
     logger.debug(
         "[search] rrf_merge done merged=%d top_final_scores=%s",
         len(merged),
@@ -879,11 +1188,13 @@ def search_photos(
         "stage": "rrf_merge",
         "kw_candidates": len(keyword_results),
         "vec_candidates": len(vector_scores),
+        "people_candidates": len(people_results),
         "merged": len(merged),
         "top_final_scores": [round(c.final_score, 6) for c in merged[:5]],
         "rrf_k": effective_settings.rrf_k,
         "kw_weight": effective_settings.keyword_weight,
         "vec_weight": effective_settings.vector_weight,
+        "people_weight": _PEOPLE_RRF_WEIGHT,
     })
 
     # ── Evidence level computation, scoring adjustment, and filtering ─────────
@@ -933,7 +1244,7 @@ def search_photos(
     # For queries with strong intent facets (time/lighting/weather/animal),
     # require supporting evidence in AI tags or high-confidence vector score.
     core_facet_filtered = 0
-    if merged and query_plan.core_facets and project_id is not None:
+    if merged and search_query_plan.core_facets and project_id is not None:
         photo_ids_for_facet = [c.photo_id for c in merged]
         ai_rows_for_facet = (
             db.query(PhotoAIAnalysis)
@@ -949,7 +1260,7 @@ def search_photos(
         kept_facet: list[SearchCandidate] = []
         for c in merged:
             ai_obj = ai_by_id_facet.get(c.photo_id)
-            passes, reason = _core_facet_passes(c, ai_obj, query_plan, effective_settings)
+            passes, reason = _core_facet_passes(c, ai_obj, search_query_plan, effective_settings)
             if passes:
                 kept_facet.append(c)
             else:
@@ -964,8 +1275,8 @@ def search_photos(
             merged = kept_facet
         trace.append({
             "stage": "core_facet_filter",
-            "core_facets": query_plan.core_facets,
-            "matched_keys": query_plan.matched_keys,
+            "core_facets": search_query_plan.core_facets,
+            "matched_keys": search_query_plan.matched_keys,
             "filtered": core_facet_filtered,
             "remaining": len(merged),
         })
@@ -974,16 +1285,16 @@ def search_photos(
 
     # ── P3: Semantic tag boost (if enabled for project) ───────────────────────
     if effective_settings.enable_semantic_tag_boost and merged and project_id is not None:
-        merged = _apply_semantic_tag_boost(db, merged, query_plan, project_id)
+        merged = _apply_semantic_tag_boost(db, merged, search_query_plan, project_id)
         trace.append({
             "stage": "semantic_tag_boost",
             "candidates": len(merged),
             "top_final_scores": [round(c.final_score, 6) for c in merged[:5]],
-            "penalize_tags": query_plan.penalize_tags,
+            "penalize_tags": search_query_plan.penalize_tags,
         })
         logger.debug(
             "[search] semantic_tag_boost applied penalize_tags=%s",
-            query_plan.penalize_tags,
+            search_query_plan.penalize_tags,
         )
 
     total, items = build_result_items(
@@ -1010,7 +1321,7 @@ def search_photos(
             for c in filtered_out[:10]
         ]
         debug_payload = build_debug_payload(
-            query_plan=query_plan,
+            query_plan=search_query_plan,
             mode="hybrid",
             embedding_model=embedding_model,
             embedding_dimension=global_settings.embedding_dimension,
@@ -1024,6 +1335,10 @@ def search_photos(
             filtered_candidates=filtered_count,
             filtered_out_samples=_filtered_samples,
             stale_embedding_filtered=stale_embedding_filtered,
+            people_query_plan=people_query_plan,
+            people_candidates=people_candidates_debug,
+            people_filter_mode=people_resolution.people_filter_mode,
+            matched_person_ids=matched_person_ids,
         )
     logger.debug(
         "[search] ── DONE ── path=hybrid total=%d items=%d page=%d",

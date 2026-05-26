@@ -19,7 +19,7 @@ ANIMAL_TERMS_TIERED = {
         "facets": ["object"],
     },
     "动物": {
-        "expanded": ["猫", "狗", "鸟", "马", "鹿"],
+        "expanded": ["猫", "狗", "鸟", "马", "鹿", "兔子", "鱼"],
         "broad": ["宠物", "野生动物", "动物园"],
         "facets": ["object"],
     },
@@ -29,8 +29,13 @@ ANIMAL_TERMS_TIERED = {
         "facets": ["object"],
     },
     "宠物": {
-        "expanded": ["猫", "狗"],
+        "expanded": ["猫", "狗", "兔子"],
         "broad": ["动物"],
+        "facets": ["object"],
+    },
+    "小动物": {
+        "expanded": ["猫", "狗", "兔子", "鸟"],
+        "broad": ["宠物", "动物"],
         "facets": ["object"],
     },
     "野生动物": {

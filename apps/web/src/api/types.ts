@@ -272,6 +272,7 @@ export interface SearchTraceStep {
 export interface SearchDebugPayload {
   original_query: string;
   normalized_query: string;
+  semantic_query_text?: string;
   exact_terms: string[];
   expanded_terms: string[];
   broad_terms: string[];

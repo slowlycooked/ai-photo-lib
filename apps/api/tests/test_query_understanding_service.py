@@ -25,6 +25,22 @@ class TestUnderstandQuery:
         all_t = plan.all_terms
         assert any("狗" in t or "宠物" in t or "动物" in t for t in all_t)
 
+    def test_category_animal_query_builds_semantic_query_text(self):
+        plan = understand_query("动物")
+
+        assert plan.intent == "animal_search"
+        assert "查找包含动物主体的照片" in plan.semantic_query_text
+        assert "猫" in plan.semantic_query_text
+        assert "狗" in plan.semantic_query_text
+
+    def test_small_animal_query_expands_rabbit(self):
+        plan = understand_query("小动物")
+        expanded_lower = {t.lower() for t in plan.expanded_terms}
+
+        assert plan.intent == "animal_search"
+        assert "兔子" in expanded_lower
+        assert "猫" in expanded_lower
+
     def test_animal_intent_detected(self):
         plan = understand_query("cat playing")
         assert plan.intent == "animal_search"
@@ -73,6 +89,27 @@ class TestUnderstandQuery:
     def test_food_query_expands(self):
         plan = understand_query("美食拍摄")
         assert any("食物" in t or "料理" in t or "美食" in t for t in plan.all_terms)
+
+    def test_family_animal_scene_query_expands_people_and_scene_terms(self):
+        plan = understand_query("爸爸和动物的合影")
+        expanded_lower = {t.lower() for t in plan.expanded_terms}
+
+        assert plan.intent == "animal_search"
+        assert "爸爸" in plan.matched_keys
+        assert "动物" in plan.matched_keys
+        assert "合影" in plan.matched_keys
+        assert any(term in expanded_lower for term in ("父亲", "家庭", "亲子"))
+        assert any(term in expanded_lower for term in ("动物", "野生动物"))
+
+    def test_daughter_zoo_query_expands_family_and_zoo_terms(self):
+        plan = understand_query("女儿在动物园")
+        expanded_lower = {t.lower() for t in plan.expanded_terms}
+
+        assert plan.intent == "animal_search"
+        assert "女儿" in plan.matched_keys
+        assert "动物园" in plan.matched_keys
+        assert any(term in expanded_lower for term in ("孩子", "儿童", "亲子", "家庭"))
+        assert any(term in expanded_lower for term in ("动物", "野生动物"))
 
     def test_expanded_terms_are_list_of_strings(self):
         plan = understand_query("travel adventure")

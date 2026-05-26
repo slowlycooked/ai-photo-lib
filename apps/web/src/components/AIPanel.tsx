@@ -97,49 +97,10 @@ export function AIPanel({ projectId }: { projectId: number }) {
         </div>
       </div>
 
-      {/* Stats */}
-      {status && (
-        <div className="grid grid-cols-4 gap-3">
-          <AIStat label="排队中" value={status.queued} />
-          <AIStat label="进行中" value={status.running} accent={status.running > 0} />
-          <AIStat label="已完成" value={status.success} success />
-          <AIStat label="失败" value={status.failed} warn={status.failed > 0} />
-        </div>
-      )}
-
       {/* Feedback message */}
       {message && (
         <p className="text-caption-sm text-mute">{message}</p>
       )}
-    </div>
-  );
-}
-
-function AIStat({
-  label,
-  value,
-  accent,
-  success,
-  warn,
-}: {
-  label: string;
-  value: number;
-  accent?: boolean;
-  success?: boolean;
-  warn?: boolean;
-}) {
-  const color = warn
-    ? "text-amber-600"
-    : success
-    ? "text-green-700"
-    : accent
-    ? "text-primary"
-    : "text-ink";
-
-  return (
-    <div className="bg-secondary-bg rounded-md px-3 py-2 text-center">
-      <p className={`text-heading-sm font-bold tabular-nums ${color}`}>{value}</p>
-      <p className="text-caption-sm text-mute mt-0.5">{label}</p>
     </div>
   );
 }

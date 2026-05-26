@@ -27,11 +27,16 @@ def build_debug_payload(
     metadata_filters: Optional[dict] = None,
     metadata_candidates: int = 0,
     metadata_only: bool = False,
+    people_query_plan: Optional[dict] = None,
+    people_candidates: Optional[list] = None,
+    people_filter_mode: Optional[str] = None,
+    matched_person_ids: Optional[list[int]] = None,
 ) -> dict:
     """Build the debug payload that accompanies a search response."""
     payload: dict = {
         "original_query": query_plan.original_query,
         "normalized_query": query_plan.normalized_query,
+        "semantic_query_text": query_plan.semantic_query_text,
         "query_profile": query_plan.intent,
         # Five-tier term breakdown
         "term_groups": {
@@ -111,4 +116,12 @@ def build_debug_payload(
         payload["metadata_candidates"] = metadata_candidates
         payload["metadata_only"] = metadata_only
         payload["matched_metadata_terms"] = metadata_filters.get("matched_metadata_terms", [])
+    if people_query_plan is not None:
+        payload["people_query_plan"] = people_query_plan
+    if people_candidates is not None:
+        payload["people_candidates"] = people_candidates
+    if people_filter_mode is not None:
+        payload["people_filter_mode"] = people_filter_mode
+    if matched_person_ids is not None:
+        payload["matched_person_ids"] = matched_person_ids
     return payload

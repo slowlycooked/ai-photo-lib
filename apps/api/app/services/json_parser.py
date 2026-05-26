@@ -44,6 +44,17 @@ _SCHEMA_ALIASES: dict[str, tuple[str, ...]] = {
     "quality_tags": ("quality_tags", "lighting_features", "mood_tags"),
 }
 
+_SEARCH_KEYWORD_TAXONOMY: dict[str, tuple[str, ...]] = {
+    "猫": ("动物", "宠物", "猫科动物"),
+    "狗": ("动物", "宠物", "犬类"),
+    "鸟": ("动物", "鸟类"),
+    "马": ("动物",),
+    "鹿": ("动物", "野生动物"),
+    "兔子": ("动物", "宠物", "小动物"),
+    "兔": ("动物", "宠物", "小动物"),
+    "鱼": ("动物", "水生动物"),
+}
+
 _CN_KEYWORD_TAGS: dict[str, tuple[str, str]] = {
     "夜": ("scene_tags", "夜晚"),
     "夜晚": ("scene_tags", "夜晚"),
@@ -203,11 +214,39 @@ def _to_schema_payload(data: dict) -> dict:
     return payload
 
 
+def _enrich_search_keywords(payload: dict[str, Any]) -> dict[str, Any]:
+    enriched = dict(payload)
+    merged_search_keywords: list[str] = []
+
+    _append_unique(merged_search_keywords, _ensure_list(enriched.get("search_keywords")))
+    for field in (
+        "scene_tags",
+        "object_tags",
+        "activity_tags",
+        "quality_tags",
+        "location_clues",
+    ):
+        _append_unique(merged_search_keywords, _ensure_list(enriched.get(field)))
+
+    semantic_terms: list[str] = []
+    for tag in _ensure_list(enriched.get("object_tags")):
+        for key, parents in _SEARCH_KEYWORD_TAXONOMY.items():
+            if key in tag:
+                _append_unique(semantic_terms, [tag])
+                _append_unique(semantic_terms, list(parents))
+
+    _append_unique(merged_search_keywords, semantic_terms)
+
+    if merged_search_keywords:
+        enriched["search_keywords"] = merged_search_keywords
+    return enriched
+
+
 def validate_image_analysis_result(data: dict) -> dict:
     """Validate/normalize parsed image-analysis payload into required schema."""
     if not isinstance(data, dict):
         raise ValueError("Model output root must be a JSON object")
-    return _normalize(_localize_payload(_to_schema_payload(data)))
+    return _normalize(_enrich_search_keywords(_localize_payload(_to_schema_payload(data))))
 
 
 def _first_nonempty_line(text: str) -> str:
