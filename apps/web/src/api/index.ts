@@ -87,6 +87,7 @@ export type {
   TimelineItem,
   TimelineResponse,
 } from "./types";
+export type { AuthSession } from "./auth";
 export {
   DEFAULT_DEBUG_PRESETS,
   normaliseDebugMode,
@@ -99,6 +100,7 @@ export { foldersApi } from "./folders";
 export { projectsApi } from "./projects";
 export { settingsApi } from "./settings";
 
+import * as authApi from "./auth";
 import { foldersApi } from "./folders";
 import { projectsApi } from "./projects";
 import { settingsApi } from "./settings";
@@ -112,7 +114,10 @@ import { settingsApi } from "./settings";
  * api.settings.getDebug()
  */
 export const api = {
+  auth: authApi,
   projects: projectsApi,
   folders: foldersApi,
   settings: settingsApi,
 } as const;
+
+export { authApi };

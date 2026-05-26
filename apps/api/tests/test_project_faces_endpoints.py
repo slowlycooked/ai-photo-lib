@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from collections.abc import Generator
 from pathlib import Path
+from unittest.mock import patch
 
 import sqlalchemy as sa
 from fastapi.testclient import TestClient
@@ -20,6 +21,8 @@ os.environ.setdefault("OPENAI_VISION_MODEL", "test-model")
 
 from app.database import get_db  # noqa: E402
 from app.main import app  # noqa: E402
+from app.services.face_scan_service import FaceScanResult  # noqa: E402
+from app.services.unknown_face_clustering_service import UnknownFaceClusteringResult  # noqa: E402
 
 
 SCHEMA_SQL = """
@@ -300,6 +303,145 @@ class ProjectFacesEndpointsTest(unittest.TestCase):
     self.assertEqual(body["id"], 301)
     self.assertEqual(body["project_id"], 1)
     self.assertEqual(len(body["embeddings"]), 1)
+
+  def test_manual_face_scan_creates_face_scan_job_record(self) -> None:
+    with patch("app.routers.project_faces.FaceScanService.scan_photo") as mock_scan, patch(
+      "app.routers.project_faces.cluster_unknown_faces"
+    ) as mock_cluster:
+      mock_scan.return_value = FaceScanResult(
+        project_id=1,
+        photo_id=101,
+        provider="opencv",
+        detector_model="yunet",
+        embedding_model="fake-sface",
+        faces_detected=2,
+        detections_created=1,
+        detections_updated=1,
+        embeddings_created=1,
+        embeddings_updated=1,
+        auto_assigned=1,
+        review_pending=0,
+        failures=0,
+        message="Face scan completed",
+        scan_source="face_work_image",
+        scan_quality_degraded=False,
+      )
+      mock_cluster.return_value = UnknownFaceClusteringResult(
+        project_id=1,
+        clusters_created=1,
+        persons_created=1,
+        faces_clustered=2,
+        assignments_created=2,
+      )
+
+      res = self.client.post("/projects/1/photos/101/face-scan")
+
+    self.assertEqual(res.status_code, 200)
+    payload = res.json()
+    self.assertEqual(payload["photo_id"], 101)
+    self.assertEqual(payload["faces_detected"], 2)
+    self.assertEqual(payload["review_pending"], 2)
+
+    with self._engine.begin() as conn:
+      row = conn.execute(
+        sa.text(
+          """
+          SELECT status, job_type, photo_id, project_id, raw_model_output
+          FROM ai_jobs
+          WHERE project_id = 1 AND photo_id = 101 AND job_type = 'face_scan'
+          ORDER BY id DESC
+          LIMIT 1
+          """
+        )
+      ).fetchone()
+
+    self.assertIsNotNone(row)
+    assert row is not None
+    self.assertEqual(row[0], "success")
+    self.assertEqual(row[1], "face_scan")
+    self.assertEqual(row[2], 101)
+    self.assertEqual(row[3], 1)
+    self.assertIn('"faces_detected": 2', row[4])
+    self.assertIn('"review_pending": 2', row[4])
+
+  def test_manual_face_scan_triggers_unknown_clustering_for_current_photo(self) -> None:
+    with patch("app.routers.project_faces.FaceScanService.scan_photo") as mock_scan, patch(
+      "app.routers.project_faces.cluster_unknown_faces"
+    ) as mock_cluster:
+      mock_scan.return_value = FaceScanResult(
+        project_id=1,
+        photo_id=101,
+        provider="opencv",
+        detector_model="yunet",
+        embedding_model="fake-sface",
+        faces_detected=2,
+        detections_created=1,
+        detections_updated=1,
+        embeddings_created=1,
+        embeddings_updated=1,
+        auto_assigned=0,
+        review_pending=0,
+        failures=0,
+        message="Face scan completed",
+        scan_source="face_work_image",
+        scan_quality_degraded=False,
+      )
+      mock_cluster.return_value = UnknownFaceClusteringResult(
+        project_id=1,
+        clusters_created=1,
+        persons_created=1,
+        faces_clustered=2,
+        assignments_created=2,
+      )
+
+      res = self.client.post("/projects/1/photos/101/face-scan")
+
+    self.assertEqual(res.status_code, 200)
+    mock_cluster.assert_called_once_with(
+      unittest.mock.ANY,
+      project_id=1,
+      max_faces=2,
+      photo_ids=[101],
+    )
+
+  def test_manual_face_scan_reports_reason_when_review_tables_missing(self) -> None:
+    with patch("app.routers.project_faces.FaceScanService.scan_photo") as mock_scan, patch(
+      "app.routers.project_faces.cluster_unknown_faces"
+    ) as mock_cluster:
+      mock_scan.return_value = FaceScanResult(
+        project_id=1,
+        photo_id=101,
+        provider="opencv",
+        detector_model="yunet",
+        embedding_model="fake-sface",
+        faces_detected=5,
+        detections_created=5,
+        detections_updated=0,
+        embeddings_created=5,
+        embeddings_updated=0,
+        auto_assigned=0,
+        review_pending=0,
+        failures=0,
+        message="Face scan completed",
+        scan_source="face_work_image",
+        scan_quality_degraded=False,
+      )
+      mock_cluster.return_value = UnknownFaceClusteringResult(
+        project_id=1,
+        clusters_created=0,
+        persons_created=0,
+        faces_clustered=0,
+        assignments_created=0,
+        skipped_reason="missing_people_tables",
+      )
+
+      res = self.client.post("/projects/1/photos/101/face-scan")
+
+    self.assertEqual(res.status_code, 200)
+    payload = res.json()
+    self.assertEqual(payload["review_pending"], 0)
+    self.assertIn("persons/person_face_assignments", payload["message"])
+    self.assertIn("alembic upgrade head", payload["message"])
 
   def test_project_face_crop_missing_file_returns_404(self) -> None:
     with self._engine.begin() as conn:

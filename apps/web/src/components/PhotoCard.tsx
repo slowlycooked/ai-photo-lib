@@ -64,9 +64,19 @@ function DetailModal({ photo, onClose }: DetailModalProps) {
   const faceScanMutation = useMutation({
     mutationFn: () => api.projects.scanPhotoFaces(projectId, photo.id),
     onSuccess: (result) => {
-      setFaceMessage(`已扫描 ${result.faces_detected} 张脸`);
+      let detail = "";
+      if (result.message && result.message !== "Face scan completed") {
+        detail = `；${result.message}`;
+      } else if (result.review_pending === 0 && result.auto_assigned === 0 && result.faces_detected > 0) {
+        detail = "；未产生待审核，可能是后端未重启到最新版本，或缺少 persons/person_face_assignments 表（请执行 alembic upgrade head）";
+      }
+      setFaceMessage(
+        `已扫描 ${result.faces_detected} 张脸，新增待审核 ${result.review_pending} 条，自动归入 ${result.auto_assigned} 条${detail}`
+      );
       queryClient.invalidateQueries({ queryKey: queryKeys.projectFaces(projectId, photo.id) });
       queryClient.invalidateQueries({ queryKey: queryKeys.projectPhotoDetail(projectId, photo.id) });
+      queryClient.invalidateQueries({ queryKey: ["project-review-page", projectId] });
+      queryClient.invalidateQueries({ queryKey: ["project-people", projectId] });
     },
     onError: (error: Error) => {
       setFaceMessage(error.message);

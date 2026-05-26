@@ -90,7 +90,8 @@ class ProjectTaskAppService:
                 raise RuntimeError(f"Unsupported project task type: {task.task_type}")
 
             self._db.refresh(task)
-            task.status = "success"
+            final_errors = int(final_state.get("errors") or 0)
+            task.status = "completed_with_errors" if final_errors > 0 else "success"
             task.error_message = None
             task.progress_payload = dict(final_state)
             task.result_payload = dict(final_state)

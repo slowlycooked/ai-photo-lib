@@ -3,7 +3,9 @@ from __future__ import annotations
 import logging
 import re
 import uuid
+from contextlib import asynccontextmanager
 from time import perf_counter
+from typing import AsyncIterator
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -21,6 +23,7 @@ from .logging_config import (
     should_log_request_debug_middleware,
 )
 from .routers import (
+    auth,
     health,
     settings as settings_router,
     projects,
@@ -40,35 +43,31 @@ from .routers import (
     project_people,
 )
 from .schemas.debug_config import build_default_debug_config
+from .services.auth_service import (
+    SESSION_COOKIE_NAME,
+    auth_password_configured,
+    create_session_cookie,
+    verify_session_cookie,
+)
 from .services.runtime_settings_service import (
     RuntimeSettingsService,
     RuntimeSettingsStorageUnavailableError,
 )
-from .services.startup_schema_service import StartupSchemaCheckError, validate_required_tables
+from .services.startup_schema_service import (
+    StartupSchemaCheckError,
+    validate_required_columns,
+    validate_required_tables,
+)
 
 logger = logging.getLogger(__name__)
 
 setup_logging(build_default_debug_config())
 
-app = FastAPI(
-    title="AI Photo Library API",
-    version=APP_VERSION,
-    description="Private AI-powered photo library for local native deployment",
-)
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[o.strip() for o in settings.cors_allow_origins.split(",") if o.strip()],
-    allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE"],
-    allow_headers=["*"],
-)
-
-
-@app.on_event("startup")
 def load_runtime_debug_config() -> None:
     try:
         validate_required_tables(engine)
+        validate_required_columns(engine)
     except StartupSchemaCheckError:
         logger.exception("Startup schema self-check failed")
         raise
@@ -86,7 +85,62 @@ def load_runtime_debug_config() -> None:
         db.close()
 
 
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    load_runtime_debug_config()
+    yield
+
+
+app = FastAPI(
+    title="AI Photo Library API",
+    version=APP_VERSION,
+    description="Private AI-powered photo library for local native deployment",
+    lifespan=lifespan,
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[o.strip() for o in settings.cors_allow_origins.split(",") if o.strip()],
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "DELETE"],
+    allow_headers=["*"],
+)
+
+
 _PROJECT_ID_RE = re.compile(r"^/projects/(\d+)")
+_AUTH_EXEMPT_PATHS = ("/health", "/auth/login", "/auth/logout")
+
+
+@app.middleware("http")
+async def auth_middleware(request: Request, call_next):
+    if not settings.auth_enabled:
+        return await call_next(request)
+
+    path = request.url.path
+    if request.method == "OPTIONS" or path in _AUTH_EXEMPT_PATHS:
+        return await call_next(request)
+
+    if not auth_password_configured():
+        return JSONResponse(
+            status_code=503,
+            content={"detail": "AUTH_PASSWORD is not configured"},
+        )
+
+    session = verify_session_cookie(request.cookies.get(SESSION_COOKIE_NAME))
+    if session is None:
+        return JSONResponse(status_code=401, content={"detail": "Authentication required"})
+
+    response = await call_next(request)
+    response.set_cookie(
+        SESSION_COOKIE_NAME,
+        create_session_cookie(str(session["sub"])),
+        httponly=True,
+        secure=settings.auth_cookie_secure,
+        samesite="lax",
+        max_age=settings.auth_session_timeout_minutes * 60,
+        path="/",
+    )
+    return response
 
 
 @app.middleware("http")
@@ -166,6 +220,7 @@ async def db_unavailable_handler(request: Request, exc: OperationalError) -> JSO
 
 
 app.include_router(health.router)
+app.include_router(auth.router)
 app.include_router(projects.router)
 app.include_router(folders.router)
 app.include_router(settings_router.router)

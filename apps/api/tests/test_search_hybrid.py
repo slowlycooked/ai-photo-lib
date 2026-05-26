@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import unittest
 from collections import namedtuple
+from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -353,6 +354,89 @@ class SearchPhotosTest(unittest.TestCase):
         self.assertEqual(total, 1)
         self.assertIn("keyword_score", items[0])
         self.assertIn("match_source", items[0])
+        assert debug_payload is not None
+        self.assertIn("query_plan", debug_payload)
+        self.assertIn("keyword_candidates", debug_payload)
+        self.assertIn("vector_candidates", debug_payload)
+        self.assertIn("merged_candidates", debug_payload)
+        self.assertIn("filtered_candidates", debug_payload)
+        self.assertIn("filtered_out_samples", debug_payload)
+        self.assertIn("stale_embedding_filtered", debug_payload)
+        self.assertIn("metadata_filter_active", debug_payload)
+        self.assertIn("metadata_filter_skipped_reason", debug_payload)
+        self.assertIn("metadata_only_allowed", debug_payload)
+        self.assertIn("concept_terms", debug_payload)
+        self.assertIn("concept_entity_terms", debug_payload)
+        self.assertIn("concept_debug", debug_payload)
+
+    def test_keyword_mode_includes_concept_recall_candidates(self) -> None:
+        concept_candidate = SearchCandidate(
+            photo_id=9,
+            keyword_score=0.85,
+            final_score=0.85,
+            match_source=["concept"],
+            keyword_explain={"semantic_concepts": ["动物"]},
+            hit_tiers={"strong"},
+            term_level_hits={
+                "exact": [],
+                "strong": ["动物"],
+                "support": [],
+                "weak": [],
+                "negative": [],
+            },
+        )
+
+        with (
+            patch(
+                "app.services.search.app_service.SearchSettingsResolver.resolve",
+                return_value=_default_settings(),
+            ),
+            patch(
+                "app.services.search.app_service.understand_query",
+                return_value=SearchQueryPlan(
+                    original_query="动物",
+                    normalized_query="动物 猫 狗",
+                    exact_terms=["动物"],
+                    expanded_terms=["猫", "狗"],
+                    concept_terms=["动物"],
+                    metadata_filters={},
+                ),
+            ),
+            patch(
+                "app.services.search.app_service.build_folder_photo_ids_subquery",
+                return_value=None,
+            ),
+            patch(
+                "app.services.search.app_service.KeywordRecallService.search",
+                return_value=[],
+            ),
+            patch(
+                "app.services.search.app_service.ConceptRecallService.search",
+                return_value=[concept_candidate],
+            ),
+            patch(
+                "app.services.search.app_service.build_result_items",
+                return_value=(1, [{"photo_id": 9, "score": 0.85, "match_source": ["concept"]}]),
+            ) as build_items,
+        ):
+            total, items, debug_payload = search_photos(
+                db=MagicMock(),
+                query="动物",
+                project_id=1,
+                mode="keyword",
+                debug=True,
+            )
+
+        self.assertEqual(total, 1)
+        self.assertEqual(items[0]["photo_id"], 9)
+        passed_candidates = build_items.call_args.args[1]
+        self.assertEqual(len(passed_candidates), 1)
+        self.assertEqual(passed_candidates[0].photo_id, 9)
+        assert debug_payload is not None
+        self.assertEqual(debug_payload.get("concept_candidates"), 1)
+        self.assertIn("concept_terms", debug_payload)
+        self.assertIn("concept_entity_terms", debug_payload)
+        self.assertIn("concept_debug", debug_payload)
 
     def test_hybrid_people_query_constrains_semantic_and_includes_people_debug(self) -> None:
         people_candidate = SearchCandidate(
@@ -458,6 +542,120 @@ class SearchPhotosTest(unittest.TestCase):
         self.assertIn("people_candidates", debug_payload)
         self.assertIn("people_filter_mode", debug_payload)
         self.assertEqual(debug_payload.get("matched_person_ids"), [101])
+
+    def test_structured_filters_disabled_skips_metadata_filter_path(self) -> None:
+        candidate = self._make_candidate(photo_id=9, score=0.7)
+        query_plan = SearchQueryPlan(
+            original_query="动物",
+            normalized_query="动物 猫 狗",
+            exact_terms=["动物"],
+            expanded_terms=["猫", "狗"],
+            intent="animal_search",
+            metadata_filters={
+                "place_terms": ["动物"],
+                "metadata_only": True,
+                "matched_metadata_terms": ["动物"],
+            },
+        )
+
+        with (
+            patch(
+                "app.services.search.app_service.SearchSettingsResolver.resolve",
+                return_value=replace(_default_settings(), enable_structured_filters=False),
+            ),
+            patch(
+                "app.services.search.app_service.understand_query",
+                return_value=query_plan,
+            ),
+            patch(
+                "app.services.search.app_service.build_folder_photo_ids_subquery",
+                return_value=None,
+            ),
+            patch(
+                "app.services.search.app_service.MetadataRecallService",
+            ) as metadata_service_cls,
+            patch(
+                "app.services.search.app_service.KeywordRecallService.search",
+                return_value=[candidate],
+            ) as keyword_search_mock,
+            patch(
+                "app.services.search.app_service.build_result_items",
+                return_value=(1, [{"photo_id": 9, "score": 0.7}]),
+            ),
+        ):
+            total, items, _debug = search_photos(
+                db=MagicMock(),
+                query="动物",
+                page=1,
+                page_size=20,
+                project_id=1,
+                mode="keyword",
+            )
+
+        self.assertEqual(total, 1)
+        self.assertEqual(items[0]["photo_id"], 9)
+        metadata_service_cls.assert_not_called()
+        self.assertIsNone(keyword_search_mock.call_args.kwargs.get("constrained_photo_ids"))
+
+    def test_metadata_only_is_blocked_for_animal_intent(self) -> None:
+        candidate = self._make_candidate(photo_id=9, score=0.7)
+        query_plan = SearchQueryPlan(
+            original_query="动物",
+            normalized_query="动物 猫 狗",
+            exact_terms=["动物"],
+            expanded_terms=["猫", "狗"],
+            intent="animal_search",
+            metadata_filters={
+                "place_terms": ["动物"],
+                "metadata_only": True,
+                "matched_metadata_terms": ["动物"],
+            },
+        )
+
+        with (
+            patch(
+                "app.services.search.app_service.SearchSettingsResolver.resolve",
+                return_value=replace(_default_settings(), enable_structured_filters=True),
+            ),
+            patch(
+                "app.services.search.app_service.understand_query",
+                return_value=query_plan,
+            ),
+            patch(
+                "app.services.search.app_service.build_folder_photo_ids_subquery",
+                return_value=None,
+            ),
+            patch(
+                "app.services.search.app_service.MetadataRecallService.search",
+                return_value=[],
+            ) as metadata_only_search_mock,
+            patch(
+                "app.services.search.app_service.MetadataRecallService.resolve_photo_ids",
+                return_value={9},
+            ) as metadata_resolve_ids_mock,
+            patch(
+                "app.services.search.app_service.KeywordRecallService.search",
+                return_value=[candidate],
+            ) as keyword_search_mock,
+            patch(
+                "app.services.search.app_service.build_result_items",
+                return_value=(1, [{"photo_id": 9, "score": 0.7}]),
+            ),
+        ):
+            total, items, _debug = search_photos(
+                db=MagicMock(),
+                query="动物",
+                page=1,
+                page_size=20,
+                project_id=1,
+                mode="keyword",
+            )
+
+        self.assertEqual(total, 1)
+        self.assertEqual(items[0]["photo_id"], 9)
+        metadata_only_search_mock.assert_not_called()
+        metadata_resolve_ids_mock.assert_called_once()
+        self.assertEqual(keyword_search_mock.call_args.kwargs.get("constrained_photo_ids"), {9})
 
 
 class CoreFacetIndoorTest(unittest.TestCase):

@@ -134,7 +134,13 @@ API_HOST=127.0.0.1
 API_RELOAD=0
 WEB_HOST=127.0.0.1
 WEB_MODE=dev
+AUTH_USERNAME=admin
+AUTH_PASSWORD=换成你自己的强密码
+AUTH_SESSION_SECRET=换成一段随机长字符串
+AUTH_SESSION_TIMEOUT_MINUTES=30
 ```
+
+`AUTH_ENABLED=1` 时，除 `/health` 和 `/auth/*` 外的 API 都需要登录 session。Session 通过 HttpOnly cookie 保存，超过 `AUTH_SESSION_TIMEOUT_MINUTES` 没有有效请求后会过期并回到登录页。
 
 ### 初始化
 

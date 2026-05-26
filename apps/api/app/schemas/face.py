@@ -3,10 +3,12 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ProjectFaceSettingsResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     project_id: int
     face_recognition_enabled: bool
@@ -29,9 +31,6 @@ class ProjectFaceSettingsResponse(BaseModel):
     enable_person_cannot_links: bool
     created_at: datetime
     updated_at: datetime
-
-    class Config:
-        from_attributes = True
 
 
 class ProjectFaceSettingsUpdate(BaseModel):
@@ -56,6 +55,8 @@ class ProjectFaceSettingsUpdate(BaseModel):
 
 
 class FaceEmbeddingResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     project_id: int
     face_detection_id: int
@@ -68,11 +69,10 @@ class FaceEmbeddingResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
-
 
 class FaceDetectionResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     project_id: int
     photo_id: int
@@ -90,9 +90,6 @@ class FaceDetectionResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
-
 
 class FaceDetectionDetailResponse(FaceDetectionResponse):
     embeddings: list[FaceEmbeddingResponse] = Field(default_factory=list)
@@ -106,6 +103,8 @@ class FaceDetectionListResponse(BaseModel):
 
 
 class FaceScanResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     project_id: int
     photo_id: int
     provider: str
@@ -122,9 +121,6 @@ class FaceScanResponse(BaseModel):
     message: str
     scan_source: str = "face_work_image"
     scan_quality_degraded: bool = False
-
-    class Config:
-        from_attributes = True
 
 
 class FaceScanProjectStartRequest(BaseModel):
@@ -182,6 +178,8 @@ class FaceClusterUnknownResponse(BaseModel):
 
 
 class PersonSummaryResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     project_id: int
     display_name: str
@@ -196,9 +194,6 @@ class PersonSummaryResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
-
 
 class PersonListResponse(BaseModel):
     total: int
@@ -206,6 +201,8 @@ class PersonListResponse(BaseModel):
 
 
 class PersonFaceAssignmentResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     project_id: int
     person_id: int
@@ -219,9 +216,6 @@ class PersonFaceAssignmentResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     face_detection: FaceDetectionResponse
-
-    class Config:
-        from_attributes = True
 
 
 class PersonDetailResponse(PersonSummaryResponse):

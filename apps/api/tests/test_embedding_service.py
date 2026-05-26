@@ -262,6 +262,7 @@ class EmbeddingServiceTest(unittest.TestCase):
             quality_tags=[],
             location_clues=[],
             search_keywords=["hike"],
+            semantic_concepts=["户外", "自然"],
             people_count=0,
             confidence=1.0,
         )
@@ -269,6 +270,7 @@ class EmbeddingServiceTest(unittest.TestCase):
         self.assertIsInstance(doc, str)
         self.assertIn("mountain view", doc)
         self.assertIn("hiking", doc)
+        self.assertIn("语义概念", doc)
 
     def test_build_photo_embedding_document_accepts_photo(self) -> None:
         ai = SimpleNamespace(

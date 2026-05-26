@@ -4,10 +4,12 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Dict, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ProjectSearchSettingsResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     project_id: int
     default_mode: str
@@ -28,9 +30,6 @@ class ProjectSearchSettingsResponse(BaseModel):
     search_quality_settings: Optional[Dict] = None
     created_at: datetime
     updated_at: datetime
-
-    class Config:
-        from_attributes = True
 
 
 class ProjectSearchSettingsUpdate(BaseModel):

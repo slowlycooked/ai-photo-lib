@@ -50,12 +50,16 @@ export function ScanPanel({
       ? status.message
       : null;
 
+  const recentErrors = status.recent_errors ?? [];
+  const recentFiles = status.recent_files ?? [];
+  const hasScanErrors = status.errors > 0 || recentErrors.length > 0;
   const displayLabel = status.running
     ? LABEL.scanning
-    : LABEL[status.message] ?? status.message;
+    : hasScanErrors && status.message === "done"
+      ? LABEL.done_with_errors
+      : LABEL[status.message] ?? status.message;
 
   const showError = mutationError ?? statusError;
-  const recentErrors = status.recent_errors ?? [];
 
   return (
     <div className="bg-canvas border border-hairline rounded-md p-4 space-y-3">
@@ -64,9 +68,9 @@ export function ScanPanel({
         <div className="flex items-center gap-2">
           {status.running ? (
             <Loader2 className="w-4 h-4 animate-spin text-primary" />
-          ) : status.message === "done" ? (
+          ) : status.message === "done" && !hasScanErrors ? (
             <CheckCircle2 className="w-4 h-4 text-green-600" />
-          ) : showError || status.errors > 0 ? (
+          ) : showError || hasScanErrors ? (
             <AlertCircle className="w-4 h-4 text-amber-500" />
           ) : (
             <FolderSearch className="w-4 h-4 text-mute" />
@@ -130,6 +134,48 @@ export function ScanPanel({
         <p className="text-caption-sm text-mute truncate">
           {status.current_path.split("/").pop()}
         </p>
+      )}
+
+      {recentFiles.length > 0 && (
+        <section className="space-y-2 pt-1 border-t border-hairline">
+          <div className="flex items-center gap-2">
+            <FolderSearch className="w-4 h-4 text-primary" />
+            <h3 className="text-body-sm font-semibold text-ink">最近文件进度</h3>
+            <span className="text-caption-sm text-mute">{recentFiles.length} 条</span>
+          </div>
+          <div className="space-y-1.5 max-h-64 overflow-auto pr-1">
+            {[...recentFiles].reverse().map((entry, index) => {
+              const isFailed = entry.status === "failed";
+              const fileName = entry.path.split("/").pop() || entry.path;
+              return (
+                <div
+                  key={`${entry.timestamp}-${entry.path}-${index}`}
+                  className="bg-canvas border border-hairline rounded-md px-4 py-2.5 space-y-0.5"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-body-sm text-ink truncate" title={entry.path}>
+                      {fileName}
+                    </p>
+                    <span
+                      className={[
+                        "text-caption-sm font-medium whitespace-nowrap",
+                        isFailed ? "text-danger" : "text-green-700",
+                      ].join(" ")}
+                    >
+                      {isFailed ? "失败" : "成功"}
+                    </span>
+                  </div>
+                  <p className="text-caption-sm text-mute break-all">{entry.path}</p>
+                  {entry.message && (
+                    <p className="text-caption-sm text-danger whitespace-pre-wrap break-all">
+                      {entry.message}
+                    </p>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </section>
       )}
 
       {recentErrors.length > 0 && (

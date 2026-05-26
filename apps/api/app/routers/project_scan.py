@@ -27,20 +27,16 @@ def start_project_scan(
 ):
     """Queue a project library scan for the worker to execute."""
     project_id = project.id
-    active_task = get_active_scan_task(db, project_id)
-    if active_task is not None:
-        return {
-            "message": "Scan already in progress",
-            "status": build_scan_status(active_task),
-        }
-
-    task = enqueue_scan_task(
+    result = enqueue_scan_task(
         db,
         project_id=project_id,
         task_type=TASK_TYPE_LIBRARY_SCAN,
         request_params={},
     )
-    return {"message": "Scan queued", "status": build_scan_status(task)}
+    return {
+        "message": "Scan queued" if result.created else "Scan already in progress",
+        "status": build_scan_status(result.task),
+    }
 
 
 @router.get("/{project_id}/scan/status", response_model=ScanStatus)
@@ -69,17 +65,13 @@ def start_project_reindex(
 ):
     """Queue a metadata reindex task for the worker to execute."""
     project_id = project.id
-    active_task = get_active_scan_task(db, project_id)
-    if active_task is not None:
-        return {
-            "message": "Scan/reindex already in progress",
-            "status": build_scan_status(active_task),
-        }
-
-    task = enqueue_scan_task(
+    result = enqueue_scan_task(
         db,
         project_id=project_id,
         task_type=TASK_TYPE_LIBRARY_REINDEX,
         request_params={"scope": scope.value},
     )
-    return {"message": "Reindex queued", "status": build_scan_status(task)}
+    return {
+        "message": "Reindex queued" if result.created else "Scan/reindex already in progress",
+        "status": build_scan_status(result.task),
+    }

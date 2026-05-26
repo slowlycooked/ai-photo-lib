@@ -23,6 +23,7 @@ class AIAnalysisResponse(BaseModel):
     quality_tags: Optional[List[str]] = None
     location_clues: Optional[List[str]] = None
     search_keywords: Optional[List[str]] = None
+    semantic_concepts: Optional[List[str]] = None
     people_count: Optional[int] = None
     confidence: Optional[float] = None
     created_at: datetime

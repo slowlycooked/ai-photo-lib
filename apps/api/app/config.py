@@ -49,6 +49,14 @@ class Settings(BaseSettings):
     # Override in .env when deploying behind a reverse proxy or custom domain.
     cors_allow_origins: str = "http://localhost:5173,http://localhost:8088"
 
+    # ── Local admin login / session ───────────────────────────────────────
+    auth_enabled: bool = True
+    auth_username: str = "admin"
+    auth_password: str = ""
+    auth_session_secret: str = ""
+    auth_session_timeout_minutes: int = 30
+    auth_cookie_secure: bool = False
+
     # ── Embedding / hybrid search config ─────────────────────────────────────
     embedding_base_url: str = ""
     embedding_api_key: str = ""

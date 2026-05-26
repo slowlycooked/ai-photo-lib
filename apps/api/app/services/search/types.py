@@ -114,6 +114,8 @@ class EffectiveSearchSettings:
     require_core_facet_match: bool = False
     # Allow high-confidence vector-only matches to pass core facet gate
     allow_vector_only_for_facet_query: bool = True
+    # Project-level concept taxonomy used by query understanding / concept recall.
+    concept_taxonomy: List[Dict] = field(default_factory=list)
 
 
 # ── Candidate / score dataclasses ─────────────────────────────────────────────

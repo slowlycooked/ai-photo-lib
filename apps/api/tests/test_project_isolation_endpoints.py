@@ -105,6 +105,7 @@ CREATE TABLE photo_ai_analysis (
   quality_tags TEXT,
   location_clues TEXT,
   search_keywords TEXT,
+    semantic_concepts TEXT,
   people_count INTEGER,
   confidence REAL,
   raw_result TEXT,

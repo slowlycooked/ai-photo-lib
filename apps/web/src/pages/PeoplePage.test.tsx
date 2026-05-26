@@ -401,4 +401,18 @@ describe("PeoplePage", () => {
       expect(confirmPersonFaceMock).toHaveBeenCalledWith(1, 101, 301);
     });
   });
+
+  it("falls back to a valid merge target when the URL target is missing or invalid", async () => {
+    const user = userEvent.setup();
+    renderPage("/projects/1/people?person_id=101&merge_target_id=0");
+
+    await screen.findByText("爸爸");
+    await user.click(screen.getByRole("button", { name: "合并当前人物" }));
+
+    await waitFor(() => {
+      expect(mergePersonMock).toHaveBeenCalledWith(1, 101, {
+        target_person_id: 102,
+      });
+    });
+  });
 });

@@ -15,6 +15,7 @@ top-level function via ``apps/api/app/services/search_service.py``.
 """
 from __future__ import annotations
 
+import json
 import logging
 from typing import Optional
 
@@ -28,11 +29,13 @@ from ...models.ai import PhotoAIAnalysis
 from ...services.embedding_client import EmbeddingRequestError
 from ...services.folder_service import build_folder_photo_ids_subquery
 from ...services.query_understanding_service import SearchQueryPlan, understand_query
+from .concept_recall import ConceptRecallService, derive_concept_query_context
 from .debug import build_debug_payload
 from .fusion import rrf_merge
 from .keyword_recall import KeywordRecallService
 from .metadata_recall import MetadataRecallService
 from .people_query_resolver import PeopleQueryResolution, resolve_people_query
+from .people_visual_recall import PeopleVisualRecallService
 from .people_recall import PeopleRecallService
 from .result_hydrator import build_result_items
 from .settings_resolver import SearchSettingsResolver
@@ -110,6 +113,34 @@ _ANIMAL_GENERIC_TERMS: frozenset[str] = frozenset({
     "动物", "宠物", "野生动物", "动物园", "小动物", "animal", "野外",
 })
 
+_METADATA_ONLY_BLOCKED_INTENTS: frozenset[str] = frozenset({
+    "animal_search",
+    "people_search",
+    "group_photo_search",
+    "food_search",
+    "weather_search",
+    "activity_search",
+    "semantic_photo_search",
+})
+
+
+def _log_search_debug_payload(debug_payload: dict) -> None:
+    """Emit a compact summary and the full debug payload for diagnostics."""
+    try:
+        logger.info(
+            "[search][debug] intent=%s keyword_candidates=%s concept_candidates=%s vector_candidates=%s merged_candidates=%s filtered_candidates=%s stale_embedding_filtered=%s",
+            debug_payload.get("intent"),
+            debug_payload.get("keyword_candidates", 0),
+            debug_payload.get("concept_candidates", 0),
+            debug_payload.get("vector_candidates", 0),
+            debug_payload.get("merged_candidates", 0),
+            debug_payload.get("filtered_candidates", 0),
+            debug_payload.get("stale_embedding_filtered", 0),
+        )
+        logger.debug("[search][debug] payload=%s", json.dumps(debug_payload, ensure_ascii=False, default=str))
+    except Exception:
+        logger.exception("[search][debug] failed to emit payload")
+
 
 def _is_explicit_indoor_query(query_plan: "SearchQueryPlan") -> bool:
     exact_lower = {t.lower() for t in query_plan.exact_terms}
@@ -138,7 +169,7 @@ def _animal_core_facet_passes(
     rich_parts: list[str] = []
     weak_parts: list[str] = []
 
-    for field_name in ("caption", "object_tags", "search_keywords"):
+    for field_name in ("caption", "object_tags", "search_keywords", "semantic_concepts"):
         value = getattr(ai_analysis, field_name, None)
         if isinstance(value, str) and value:
             rich_parts.append(value.lower())
@@ -503,6 +534,46 @@ def _attach_people_explain(
     return candidates
 
 
+def _merge_keyword_with_aux_candidates(
+    keyword_results: list[SearchCandidate],
+    aux_results: list[SearchCandidate],
+    *,
+    aux_source: str,
+) -> list[SearchCandidate]:
+    if not aux_results:
+        return keyword_results
+
+    merged_by_photo: dict[int, SearchCandidate] = {c.photo_id: c for c in keyword_results}
+
+    for aux in aux_results:
+        existing = merged_by_photo.get(aux.photo_id)
+        if existing is None:
+            merged_by_photo[aux.photo_id] = aux
+            continue
+
+        existing.keyword_score = max(existing.keyword_score, aux.keyword_score)
+        existing.matched_tags = sorted(set(existing.matched_tags) | set(aux.matched_tags))
+        existing.hit_tiers = existing.hit_tiers | aux.hit_tiers
+
+        if aux_source not in existing.match_source:
+            existing.match_source.append(aux_source)
+
+        for field_name, values in aux.keyword_explain.items():
+            current = existing.keyword_explain.setdefault(field_name, [])
+            for value in values:
+                if value not in current:
+                    current.append(value)
+
+        for tier, terms in aux.term_level_hits.items():
+            current = existing.term_level_hits.setdefault(tier, [])
+            for term in terms:
+                if term not in current:
+                    current.append(term)
+
+    merged = sorted(merged_by_photo.values(), key=lambda c: c.keyword_score, reverse=True)
+    return merged
+
+
 def search_photos(
     db: Session,
     query: str,
@@ -579,7 +650,11 @@ def search_photos(
 
     # ── Query understanding (gated by per-project enable_query_understanding) ─
     if effective_settings.enable_query_understanding:
-        query_plan = understand_query(query, project_id=project_id)
+        query_plan = understand_query(
+            query,
+            project_id=project_id,
+            concept_taxonomy=effective_settings.concept_taxonomy,
+        )
     else:
         # Plain query plan: treat the whole query as exact_terms only
         from ...services.query_understanding_service import SearchQueryPlan as _Plan
@@ -666,6 +741,7 @@ def search_photos(
             search_query_plan = understand_query(
                 people_resolution.residual_query,
                 project_id=project_id,
+                concept_taxonomy=effective_settings.concept_taxonomy,
             )
         else:
             from ...services.query_understanding_service import SearchQueryPlan as _Plan
@@ -753,8 +829,26 @@ def search_photos(
 
     # ── Metadata filter (EXIF / Photo fields) ──────────────────────────────
     metadata_filters = search_query_plan.metadata_filters
-    if people_resolution.is_people_only:
+    if (not effective_settings.enable_structured_filters) or people_resolution.is_people_only:
         metadata_filters = {}
+
+    metadata_only_requested = bool(metadata_filters.get("metadata_only"))
+    metadata_only_allowed = search_query_plan.intent not in _METADATA_ONLY_BLOCKED_INTENTS
+    metadata_filter_skipped_reason = "not_skipped"
+    if not effective_settings.enable_structured_filters:
+        metadata_filter_skipped_reason = "structured_filters_disabled"
+    elif search_query_plan.intent in _METADATA_ONLY_BLOCKED_INTENTS:
+        metadata_filter_skipped_reason = "strong_semantic_intent"
+    elif not metadata_filters:
+        metadata_filter_skipped_reason = "no_metadata_filters"
+
+    if metadata_only_requested and not metadata_only_allowed:
+        logger.debug(
+            "[search] metadata_only ignored due to semantic intent=%s",
+            search_query_plan.intent,
+        )
+        metadata_filters = dict(metadata_filters)
+        metadata_filters["metadata_only"] = False
     _mf_active = bool(
         metadata_filters.get("year")
         or metadata_filters.get("month")
@@ -768,9 +862,28 @@ def search_photos(
         or metadata_filters.get("place_terms")
     )
 
+    (
+        concept_terms_for_debug,
+        concept_entity_terms_for_debug,
+        concept_facets_for_debug,
+    ) = derive_concept_query_context(
+        search_query_plan
+    )
+    concept_candidates_count = 0
+    people_visual_candidates_count = 0
+    concept_debug_info: dict = {
+        "enabled": project_id is not None,
+        "reason": "service_not_connected_to_rrf_yet" if project_id is None else "connected",
+        "concept_terms": concept_terms_for_debug,
+        "concept_facets": concept_facets_for_debug,
+        "entity_terms": concept_entity_terms_for_debug,
+        "candidates": concept_candidates_count,
+        "top_scores": [],
+    }
+
     if _mf_active and project_id is not None:
         _meta_svc = MetadataRecallService(db, project_id)
-        if metadata_filters.get("metadata_only") and not people_resolution.has_people:
+        if metadata_only_requested and metadata_only_allowed and not people_resolution.has_people:
             # ── Metadata-only query: bypass keyword/vector recall entirely ────
             logger.debug("[search] path=metadata-only filters=%s", metadata_filters)
             meta_results = _meta_svc.search(
@@ -819,7 +932,14 @@ def search_photos(
                     people_candidates=people_candidates_debug,
                     people_filter_mode=people_resolution.people_filter_mode,
                     matched_person_ids=matched_person_ids,
+                    metadata_filter_active=_mf_active,
+                    metadata_filter_skipped_reason=metadata_filter_skipped_reason,
+                    metadata_only_allowed=metadata_only_allowed,
+                    concept_terms=concept_terms_for_debug,
+                    concept_entity_terms=concept_entity_terms_for_debug,
+                    concept_debug=concept_debug_info,
                 )
+                _log_search_debug_payload(debug_payload)
             logger.debug(
                 "[search] ── DONE ── path=metadata-only total=%d items=%d page=%d",
                 total, len(items), page,
@@ -924,7 +1044,14 @@ def search_photos(
                     people_candidates=people_candidates_debug,
                     people_filter_mode=people_resolution.people_filter_mode,
                     matched_person_ids=matched_person_ids,
+                    metadata_filter_active=_mf_active,
+                    metadata_filter_skipped_reason=metadata_filter_skipped_reason,
+                    metadata_only_allowed=metadata_only_allowed,
+                    concept_terms=concept_terms_for_debug,
+                    concept_entity_terms=concept_entity_terms_for_debug,
+                    concept_debug=concept_debug_info,
                 )
+                _log_search_debug_payload(debug_payload)
             logger.debug(
                 "[search] ── DONE ── path=people-only total=%d items=%d page=%d",
                 total,
@@ -941,10 +1068,60 @@ def search_photos(
         constrained_photo_ids=constrained_photo_ids,
     )
 
+    concept_results: list[SearchCandidate] = []
+    people_visual_results: list[SearchCandidate] = []
+    if project_id is not None:
+        concept_results = ConceptRecallService(db, effective_settings).search(
+            search_query_plan,
+            project_id=project_id,
+            folder_photo_subquery=folder_photo_subquery,
+            constrained_photo_ids=constrained_photo_ids,
+        )
+        people_visual_results = PeopleVisualRecallService(db, effective_settings).search(
+            search_query_plan,
+            project_id=project_id,
+            folder_photo_subquery=folder_photo_subquery,
+            constrained_photo_ids=constrained_photo_ids,
+        )
+    concept_candidates_count = len(concept_results)
+    people_visual_candidates_count = len(people_visual_results)
+    concept_debug_info = {
+        "enabled": True,
+        "reason": "connected",
+        "concept_terms": concept_terms_for_debug,
+        "concept_facets": concept_facets_for_debug,
+        "entity_terms": concept_entity_terms_for_debug,
+        "candidates": concept_candidates_count,
+        "top_scores": [round(c.keyword_score, 6) for c in concept_results[:5]],
+    }
+
+    merged_keyword_results = _merge_keyword_with_aux_candidates(
+        keyword_results,
+        concept_results,
+        aux_source="concept",
+    )
+    merged_keyword_results = _merge_keyword_with_aux_candidates(
+        merged_keyword_results,
+        people_visual_results,
+        aux_source="people_visual",
+    )
+
     trace.append({
         "stage": "keyword_recall",
         "candidates": len(keyword_results),
         "top_scores": [round(c.keyword_score, 4) for c in keyword_results[:5]],
+    })
+    trace.append({
+        "stage": "concept_recall",
+        "concept_terms": concept_terms_for_debug,
+        "concept_facets": concept_facets_for_debug,
+        "candidates": len(concept_results),
+        "top_scores": [round(c.keyword_score, 4) for c in concept_results[:5]],
+    })
+    trace.append({
+        "stage": "people_visual_recall",
+        "candidates": len(people_visual_results),
+        "top_scores": [round(c.keyword_score, 4) for c in people_visual_results[:5]],
     })
     logger.debug(
         "[search] keyword_recall candidates=%d top_scores=%s",
@@ -955,10 +1132,9 @@ def search_photos(
     # ── Keyword-only mode ─────────────────────────────────────────────────────
     if effective_mode == "keyword" or project_id is None:
         logger.debug("[search] path=keyword-only")
-        keyword_results = _attach_people_explain(keyword_results, people_results)
         total, items = build_result_items(
             db,
-            keyword_results,
+            _attach_people_explain(merged_keyword_results, people_results),
             project_id=project_id or 0,
             mode="keyword",
             page=page,
@@ -974,8 +1150,9 @@ def search_photos(
                 embedding_model="",
                 embedding_dimension=global_settings.embedding_dimension,
                 keyword_candidates=len(keyword_results),
+                concept_candidates=len(concept_results),
                 vector_candidates=0,
-                merged_candidates=len(keyword_results),
+                merged_candidates=len(merged_keyword_results),
                 fallback_reason="",
                 settings=effective_settings,
                 trace=trace,
@@ -983,7 +1160,14 @@ def search_photos(
                 people_candidates=people_candidates_debug,
                 people_filter_mode=people_resolution.people_filter_mode,
                 matched_person_ids=matched_person_ids,
+                metadata_filter_active=_mf_active,
+                metadata_filter_skipped_reason=metadata_filter_skipped_reason,
+                metadata_only_allowed=metadata_only_allowed,
+                concept_terms=concept_terms_for_debug,
+                concept_entity_terms=concept_entity_terms_for_debug,
+                concept_debug=concept_debug_info,
             )
+            _log_search_debug_payload(debug_payload)
         logger.debug(
             "[search] ── DONE ── path=keyword-only total=%d items=%d page=%d",
             total, len(items), page,
@@ -1052,6 +1236,7 @@ def search_photos(
                     embedding_model=embedding_model,
                     embedding_dimension=global_settings.embedding_dimension,
                     keyword_candidates=len(keyword_results),
+                    concept_candidates=len(concept_results),
                     vector_candidates=0,
                     merged_candidates=0,
                     fallback_reason=fallback_reason,
@@ -1061,13 +1246,19 @@ def search_photos(
                     people_candidates=people_candidates_debug,
                     people_filter_mode=people_resolution.people_filter_mode,
                     matched_person_ids=matched_person_ids,
+                    metadata_filter_active=_mf_active,
+                    metadata_filter_skipped_reason=metadata_filter_skipped_reason,
+                    metadata_only_allowed=metadata_only_allowed,
+                    concept_terms=concept_terms_for_debug,
+                    concept_entity_terms=concept_entity_terms_for_debug,
+                    concept_debug=concept_debug_info,
                 )
+                _log_search_debug_payload(debug_payload)
             return 0, [], debug_payload
         # hybrid falls back to keyword-only
-        keyword_results = _attach_people_explain(keyword_results, people_results)
         total, items = build_result_items(
             db,
-            keyword_results,
+            _attach_people_explain(merged_keyword_results, people_results),
             project_id=project_id or 0,
             mode="keyword",
             page=page,
@@ -1083,8 +1274,9 @@ def search_photos(
                 embedding_model=embedding_model,
                 embedding_dimension=global_settings.embedding_dimension,
                 keyword_candidates=len(keyword_results),
+                concept_candidates=len(concept_results),
                 vector_candidates=0,
-                merged_candidates=len(keyword_results),
+                merged_candidates=len(merged_keyword_results),
                 fallback_reason=fallback_reason,
                 settings=effective_settings,
                 trace=trace,
@@ -1092,7 +1284,14 @@ def search_photos(
                 people_candidates=people_candidates_debug,
                 people_filter_mode=people_resolution.people_filter_mode,
                 matched_person_ids=matched_person_ids,
+                metadata_filter_active=_mf_active,
+                metadata_filter_skipped_reason=metadata_filter_skipped_reason,
+                metadata_only_allowed=metadata_only_allowed,
+                concept_terms=concept_terms_for_debug,
+                concept_entity_terms=concept_entity_terms_for_debug,
+                concept_debug=concept_debug_info,
             )
+            _log_search_debug_payload(debug_payload)
         return total, items, debug_payload
 
     # ── Vector-only mode ──────────────────────────────────────────────────────
@@ -1155,6 +1354,7 @@ def search_photos(
                 embedding_model=embedding_model,
                 embedding_dimension=global_settings.embedding_dimension,
                 keyword_candidates=len(keyword_results),
+                concept_candidates=len(concept_results),
                 vector_candidates=len(vector_scores),
                 merged_candidates=len(vector_only),
                 fallback_reason="",
@@ -1164,16 +1364,23 @@ def search_photos(
                 people_candidates=people_candidates_debug,
                 people_filter_mode=people_resolution.people_filter_mode,
                 matched_person_ids=matched_person_ids,
+                metadata_filter_active=_mf_active,
+                metadata_filter_skipped_reason=metadata_filter_skipped_reason,
+                metadata_only_allowed=metadata_only_allowed,
+                concept_terms=concept_terms_for_debug,
+                concept_entity_terms=concept_entity_terms_for_debug,
+                concept_debug=concept_debug_info,
             )
+            _log_search_debug_payload(debug_payload)
         return total, items, debug_payload
 
     # ── Hybrid: RRF merge ─────────────────────────────────────────────────────
     logger.debug(
         "[search] path=hybrid rrf_merge kw_candidates=%d vec_candidates=%d people_candidates=%d",
-        len(keyword_results), len(vector_scores), len(people_results),
+        len(merged_keyword_results), len(vector_scores), len(people_results),
     )
     merged = rrf_merge(
-        keyword_results,
+        merged_keyword_results,
         vector_scores,
         effective_settings,
         people_results=people_results,
@@ -1186,7 +1393,8 @@ def search_photos(
     )
     trace.append({
         "stage": "rrf_merge",
-        "kw_candidates": len(keyword_results),
+        "kw_candidates": len(merged_keyword_results),
+        "concept_candidates": len(concept_results),
         "vec_candidates": len(vector_scores),
         "people_candidates": len(people_results),
         "merged": len(merged),
@@ -1326,6 +1534,7 @@ def search_photos(
             embedding_model=embedding_model,
             embedding_dimension=global_settings.embedding_dimension,
             keyword_candidates=len(keyword_results),
+            concept_candidates=len(concept_results),
             vector_candidates=len(vector_scores),
             merged_candidates=len(merged),
             fallback_reason="",
@@ -1339,7 +1548,14 @@ def search_photos(
             people_candidates=people_candidates_debug,
             people_filter_mode=people_resolution.people_filter_mode,
             matched_person_ids=matched_person_ids,
+            metadata_filter_active=_mf_active,
+            metadata_filter_skipped_reason=metadata_filter_skipped_reason,
+            metadata_only_allowed=metadata_only_allowed,
+            concept_terms=concept_terms_for_debug,
+            concept_entity_terms=concept_entity_terms_for_debug,
+            concept_debug=concept_debug_info,
         )
+        _log_search_debug_payload(debug_payload)
     logger.debug(
         "[search] ── DONE ── path=hybrid total=%d items=%d page=%d",
         total, len(items), page,

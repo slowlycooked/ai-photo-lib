@@ -26,6 +26,10 @@ from ..models.photo import Photo
 from ..services.embedding_client import EmbeddingRequestError
 from ..services.embedding_service import upsert_photo_embeddings
 from ..services.face_scan_service import FaceScanDisabledError, FaceScanService
+from ..services.concept_normalizer import (
+    attach_semantic_concepts_to_raw_result,
+    normalize_concepts_from_payload,
+)
 from ..services.json_parser import parse_model_json_output
 from ..services.project_ai_service import (
     TASK_IMAGE_ANALYSIS,
@@ -42,6 +46,23 @@ from ..face.providers import FaceRecognitionProviderUnavailableError
 logger = logging.getLogger(__name__)
 
 _MAX_ERROR_LEN = 12000
+
+
+def _merge_unique_str_list(*values: object) -> list[str]:
+    merged: list[str] = []
+    for value in values:
+        if isinstance(value, (list, tuple)):
+            candidates = value
+        elif value is None:
+            candidates = []
+        else:
+            candidates = [value]
+
+        for item in candidates:
+            text = str(item).strip()
+            if text and text not in merged:
+                merged.append(text)
+    return merged
 
 
 class AIJobAppService:
@@ -215,6 +236,22 @@ class AIJobAppService:
             )
             job.raw_model_output = raw_text[:_MAX_ERROR_LEN]
 
+            normalized = normalize_concepts_from_payload(
+                caption=parsed.get("caption"),
+                scene_tags=parsed.get("scene_tags"),
+                object_tags=parsed.get("object_tags"),
+                activity_tags=parsed.get("activity_tags"),
+                search_keywords=parsed.get("search_keywords"),
+                location_clues=parsed.get("location_clues"),
+                raw_result=parsed,
+                people_count=parsed.get("people_count"),
+            )
+            semantic_concepts = _merge_unique_str_list(
+                parsed.get("semantic_concepts"),
+                normalized.semantic_concepts,
+            )
+            parsed_with_semantic = attach_semantic_concepts_to_raw_result(parsed, normalized)
+
             # Delete previous analysis (upsert via delete + insert, scoped by project).
             self._db.query(PhotoAIAnalysis).filter(
                 PhotoAIAnalysis.project_id == project_id,
@@ -234,9 +271,10 @@ class AIJobAppService:
                 quality_tags=parsed.get("quality_tags", []),
                 location_clues=parsed.get("location_clues", []),
                 search_keywords=parsed.get("search_keywords", []),
+                semantic_concepts=semantic_concepts,
                 people_count=parsed.get("people_count", 0),
                 confidence=parsed.get("confidence", 0.0),
-                raw_result=parsed,
+                raw_result=parsed_with_semantic,
             )
             self._db.add(analysis)
             self._db.flush()

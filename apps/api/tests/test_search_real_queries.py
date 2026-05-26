@@ -52,3 +52,10 @@ def test_real_query_regression_semantic_light_mode() -> None:
     assert len(plan.expanded_terms) <= 3
     assert plan.support_terms == []
     assert plan.broad_terms == []
+
+
+def test_real_query_regression_animal_query_not_metadata_only() -> None:
+    plan = understand_query("动物")
+    assert plan.intent == "animal_search"
+    assert plan.metadata_filters["metadata_only"] is False
+    assert plan.metadata_filters["place_terms"] == []

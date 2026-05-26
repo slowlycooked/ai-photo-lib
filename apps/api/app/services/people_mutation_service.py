@@ -163,12 +163,7 @@ class PeopleMutationService:
                 target_assignment.is_training_candidate = assignment.is_training_candidate
                 target_assignment.updated_at = now
 
-            self._reject_assignment(
-                assignment,
-                status=STATUS_REJECTED,
-                source="human_merge",
-                now=now,
-            )
+            self._delete_assignment(assignment)
 
         if target_person.representative_face_detection_id is None:
             target_person.representative_face_detection_id = source_person.representative_face_detection_id
@@ -228,26 +223,24 @@ class PeopleMutationService:
 
         moved_assignments = 0
         for source_assignment in source_assignments:
-            self._reject_assignment(
-                source_assignment,
-                status=STATUS_REJECTED,
-                source="human_split",
-                now=now,
-            )
+            face_detection_id = source_assignment.face_detection_id
+            confidence = source_assignment.confidence
+            similarity_score = source_assignment.similarity_score
+            self._delete_assignment(source_assignment)
             target_assignment = self._get_assignment(
                 project_id=project_id,
                 person_id=target_person.id,
-                face_id=source_assignment.face_detection_id,
+                face_id=face_detection_id,
             )
             if target_assignment is None:
                 target_assignment = PersonFaceAssignment(
                     project_id=project_id,
                     person_id=target_person.id,
-                    face_detection_id=source_assignment.face_detection_id,
+                    face_detection_id=face_detection_id,
                     assignment_status=STATUS_HUMAN_CORRECTED,
                     assignment_source="human_split",
-                    confidence=source_assignment.confidence,
-                    similarity_score=source_assignment.similarity_score,
+                    confidence=confidence,
+                    similarity_score=similarity_score,
                     is_positive_sample=True,
                     is_training_candidate=True,
                     updated_at=now,
@@ -265,18 +258,18 @@ class PeopleMutationService:
 
             self._upsert_negative_constraint(
                 project_id=project_id,
-                face_id=source_assignment.face_detection_id,
+                face_id=face_detection_id,
                 not_person_id=source_person.id,
                 source="human_split",
             )
             self._remove_negative_constraint(
                 project_id=project_id,
-                face_id=source_assignment.face_detection_id,
+                face_id=face_detection_id,
                 not_person_id=target_person.id,
             )
             if target_person.representative_face_detection_id is None:
-                target_person.representative_face_detection_id = source_assignment.face_detection_id
-            if source_person.representative_face_detection_id == source_assignment.face_detection_id:
+                target_person.representative_face_detection_id = face_detection_id
+            if source_person.representative_face_detection_id == face_detection_id:
                 source_person.representative_face_detection_id = None
             moved_assignments += 1
 
@@ -427,12 +420,9 @@ class PeopleMutationService:
             raise HTTPException(status_code=404, detail="Face assignment not found for source person")
 
         now = datetime.now(timezone.utc)
-        self._reject_assignment(
-            source_assignment,
-            status=STATUS_REJECTED,
-            source="human_move",
-            now=now,
-        )
+        confidence = source_assignment.confidence
+        similarity_score = source_assignment.similarity_score
+        self._delete_assignment(source_assignment)
         target_assignment = self._get_assignment(
             project_id=project_id,
             person_id=target_person.id,
@@ -458,8 +448,8 @@ class PeopleMutationService:
                 status=STATUS_HUMAN_CORRECTED,
                 source="human_move",
                 now=now,
-                confidence=1.0,
-                similarity_score=target_assignment.similarity_score,
+                confidence=confidence,
+                similarity_score=similarity_score,
             )
 
         self._upsert_negative_constraint(
@@ -533,6 +523,21 @@ class PeopleMutationService:
             raise HTTPException(status_code=404, detail="No review_pending assignments found for this person")
 
         touched_person_ids = {person_id}
+        assigned_face_ids = [assignment.face_detection_id for assignment in assignments]
+        other_assignments = (
+            self._db.query(PersonFaceAssignment)
+            .filter(
+                PersonFaceAssignment.project_id == project_id,
+                PersonFaceAssignment.face_detection_id.in_(assigned_face_ids),
+                PersonFaceAssignment.person_id != person_id,
+                PersonFaceAssignment.assignment_status != STATUS_REJECTED,
+            )
+            .all()
+        )
+        other_assignments_by_face_id: dict[int, list[PersonFaceAssignment]] = {}
+        for other in other_assignments:
+            other_assignments_by_face_id.setdefault(other.face_detection_id, []).append(other)
+
         for assignment in assignments:
             self._activate_assignment(
                 assignment,
@@ -542,17 +547,7 @@ class PeopleMutationService:
                 confidence=assignment.confidence,
                 similarity_score=assignment.similarity_score,
             )
-            other_assignments = (
-                self._db.query(PersonFaceAssignment)
-                .filter(
-                    PersonFaceAssignment.project_id == project_id,
-                    PersonFaceAssignment.face_detection_id == assignment.face_detection_id,
-                    PersonFaceAssignment.person_id != person_id,
-                    PersonFaceAssignment.assignment_status != STATUS_REJECTED,
-                )
-                .all()
-            )
-            for other in other_assignments:
+            for other in other_assignments_by_face_id.get(assignment.face_detection_id, []):
                 self._reject_assignment(
                     other,
                     status=STATUS_REJECTED,
@@ -560,20 +555,22 @@ class PeopleMutationService:
                     now=now,
                 )
                 touched_person_ids.add(other.person_id)
-                self._upsert_negative_constraint(
-                    project_id=project_id,
-                    face_id=assignment.face_detection_id,
-                    not_person_id=other.person_id,
-                    source="human_corrected",
-                )
-            self._remove_negative_constraint(
-                project_id=project_id,
-                face_id=assignment.face_detection_id,
-                not_person_id=person_id,
-            )
             if person.representative_face_detection_id is None:
                 person.representative_face_detection_id = assignment.face_detection_id
 
+        self._upsert_negative_constraints(
+            project_id=project_id,
+            pairs=[
+                (other.face_detection_id, other.person_id)
+                for other in other_assignments
+            ],
+            source="human_corrected",
+        )
+        self._remove_negative_constraints_for_person(
+            project_id=project_id,
+            face_ids=assigned_face_ids,
+            not_person_id=person_id,
+        )
         self._finalize_people_updates(project_id=project_id, person_ids=touched_person_ids)
         self._db.commit()
         self._db.refresh(person)
@@ -602,6 +599,7 @@ class PeopleMutationService:
         if not assignments:
             raise HTTPException(status_code=404, detail="No review_pending assignments found for this person")
 
+        assigned_face_ids = [assignment.face_detection_id for assignment in assignments]
         for assignment in assignments:
             self._reject_assignment(
                 assignment,
@@ -609,15 +607,14 @@ class PeopleMutationService:
                 source="human_rejected",
                 now=now,
             )
-            self._upsert_negative_constraint(
-                project_id=project_id,
-                face_id=assignment.face_detection_id,
-                not_person_id=person_id,
-                source="human_rejected",
-            )
             if person.representative_face_detection_id == assignment.face_detection_id:
                 person.representative_face_detection_id = None
 
+        self._upsert_negative_constraints(
+            project_id=project_id,
+            pairs=[(face_id, person_id) for face_id in assigned_face_ids],
+            source="human_rejected",
+        )
         self._finalize_people_updates(project_id=project_id, person_ids=[person_id])
         self._db.commit()
         self._db.refresh(person)
@@ -651,27 +648,34 @@ class PeopleMutationService:
         if not source_assignments:
             raise HTTPException(status_code=404, detail="No review_pending assignments found for source person")
 
+        assigned_face_ids = [assignment.face_detection_id for assignment in source_assignments]
+        target_assignments = {
+            assignment.face_detection_id: assignment
+            for assignment in (
+                self._db.query(PersonFaceAssignment)
+                .filter(
+                    PersonFaceAssignment.project_id == project_id,
+                    PersonFaceAssignment.person_id == target_person.id,
+                    PersonFaceAssignment.face_detection_id.in_(assigned_face_ids),
+                )
+                .all()
+            )
+        }
         updated = 0
         for source_assignment in source_assignments:
-            self._reject_assignment(
-                source_assignment,
-                status=STATUS_REJECTED,
-                source="human_move",
-                now=now,
-            )
-            target_assignment = self._get_assignment(
-                project_id=project_id,
-                person_id=target_person.id,
-                face_id=source_assignment.face_detection_id,
-            )
+            face_detection_id = source_assignment.face_detection_id
+            confidence = source_assignment.confidence
+            similarity_score = source_assignment.similarity_score
+            self._delete_assignment(source_assignment)
+            target_assignment = target_assignments.get(face_detection_id)
             if target_assignment is None:
                 target_assignment = PersonFaceAssignment(
                     project_id=project_id,
                     person_id=target_person.id,
-                    face_detection_id=source_assignment.face_detection_id,
+                    face_detection_id=face_detection_id,
                     assignment_status=STATUS_HUMAN_CORRECTED,
                     assignment_source="human_move",
-                    confidence=1.0,
+                    confidence=confidence,
                     similarity_score=None,
                     is_positive_sample=True,
                     is_training_candidate=True,
@@ -684,27 +688,26 @@ class PeopleMutationService:
                     status=STATUS_HUMAN_CORRECTED,
                     source="human_move",
                     now=now,
-                    confidence=1.0,
-                    similarity_score=target_assignment.similarity_score,
+                    confidence=confidence,
+                    similarity_score=similarity_score,
                 )
 
-            self._upsert_negative_constraint(
-                project_id=project_id,
-                face_id=source_assignment.face_detection_id,
-                not_person_id=source_person.id,
-                source="human_corrected",
-            )
-            self._remove_negative_constraint(
-                project_id=project_id,
-                face_id=source_assignment.face_detection_id,
-                not_person_id=target_person.id,
-            )
-            if source_person.representative_face_detection_id == source_assignment.face_detection_id:
+            if source_person.representative_face_detection_id == face_detection_id:
                 source_person.representative_face_detection_id = None
             if target_person.representative_face_detection_id is None:
-                target_person.representative_face_detection_id = source_assignment.face_detection_id
+                target_person.representative_face_detection_id = face_detection_id
             updated += 1
 
+        self._upsert_negative_constraints(
+            project_id=project_id,
+            pairs=[(face_id, source_person.id) for face_id in assigned_face_ids],
+            source="human_corrected",
+        )
+        self._remove_negative_constraints_for_person(
+            project_id=project_id,
+            face_ids=assigned_face_ids,
+            not_person_id=target_person.id,
+        )
         self._finalize_people_updates(project_id=project_id, person_ids=[source_person.id, target_person.id])
         self._db.commit()
         self._db.refresh(source_person)
@@ -780,6 +783,9 @@ class PeopleMutationService:
         assignment.is_training_candidate = False
         assignment.updated_at = now
 
+    def _delete_assignment(self, assignment: PersonFaceAssignment) -> None:
+        self._db.delete(assignment)
+
     def _upsert_negative_constraint(
         self,
         *,
@@ -821,6 +827,67 @@ class PeopleMutationService:
             .filter(
                 FaceNegativeConstraint.project_id == project_id,
                 FaceNegativeConstraint.face_detection_id == face_id,
+                FaceNegativeConstraint.not_person_id == not_person_id,
+            )
+            .delete(synchronize_session=False)
+        )
+
+    def _upsert_negative_constraints(
+        self,
+        *,
+        project_id: int,
+        pairs: Collection[tuple[int, int]],
+        source: str,
+    ) -> None:
+        unique_pairs = sorted({(int(face_id), int(person_id)) for face_id, person_id in pairs})
+        if not unique_pairs:
+            return
+
+        face_ids = sorted({face_id for face_id, _ in unique_pairs})
+        person_ids = sorted({person_id for _, person_id in unique_pairs})
+        existing_rows = (
+            self._db.query(FaceNegativeConstraint)
+            .filter(
+                FaceNegativeConstraint.project_id == project_id,
+                FaceNegativeConstraint.face_detection_id.in_(face_ids),
+                FaceNegativeConstraint.not_person_id.in_(person_ids),
+            )
+            .all()
+        )
+        existing_by_pair = {
+            (row.face_detection_id, row.not_person_id): row
+            for row in existing_rows
+        }
+
+        for face_id, person_id in unique_pairs:
+            row = existing_by_pair.get((face_id, person_id))
+            if row is None:
+                self._db.add(
+                    FaceNegativeConstraint(
+                        project_id=project_id,
+                        face_detection_id=face_id,
+                        not_person_id=person_id,
+                        source=source,
+                    )
+                )
+            else:
+                row.source = source
+
+    def _remove_negative_constraints_for_person(
+        self,
+        *,
+        project_id: int,
+        face_ids: Collection[int],
+        not_person_id: int,
+    ) -> None:
+        unique_face_ids = sorted({int(face_id) for face_id in face_ids})
+        if not unique_face_ids:
+            return
+        (
+            self._db.query(FaceNegativeConstraint)
+            .filter(
+                FaceNegativeConstraint.project_id == project_id,
+                FaceNegativeConstraint.face_detection_id.in_(unique_face_ids),
                 FaceNegativeConstraint.not_person_id == not_person_id,
             )
             .delete(synchronize_session=False)

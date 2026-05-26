@@ -4,6 +4,7 @@ import os
 import tempfile
 from pathlib import Path
 
+import numpy as np
 import sqlalchemy as sa
 from PIL import Image
 from sqlalchemy.orm import Session, sessionmaker
@@ -443,6 +444,39 @@ def test_face_scan_service_marks_unmatched_old_detections_as_disappeared() -> No
         status_counts = {row[0]: row[1] for row in rows}
         assert status_counts.get("embedded", 0) == 1
         assert status_counts.get("disappeared", 0) == 2
+    finally:
+        db.close()
+        for root, dirs, files in os.walk(temp_dir, topdown=False):
+            for name in files:
+                os.unlink(Path(root) / name)
+            for name in dirs:
+                os.rmdir(Path(root) / name)
+        os.rmdir(temp_dir)
+
+
+def test_face_scan_service_embeds_on_thumbnail_fallback() -> None:
+    db, temp_dir = _make_session()
+    try:
+        service = FaceScanService(db)
+
+        def _fallback_image(*, photo, derivative_svc):
+            return np.zeros((120, 160, 3), dtype=np.uint8), "thumbnail_fallback", True
+
+        service._resolve_work_image = _fallback_image  # type: ignore[method-assign]
+        result = service.scan_photo(1, 101, provider=FakeFaceProvider())
+
+        assert result.scan_quality_degraded is True
+        assert result.faces_detected == 2
+        assert result.embeddings_created == 2
+        assert result.embeddings_updated == 0
+
+        detections = db.query(FaceDetection).filter(FaceDetection.project_id == 1).all()
+        assert len(detections) == 2
+        assert all(face.status == "embedded" for face in detections)
+        assert all(
+            (face.error_message or "").startswith("embedded from thumbnail fallback")
+            for face in detections
+        )
     finally:
         db.close()
         for root, dirs, files in os.walk(temp_dir, topdown=False):

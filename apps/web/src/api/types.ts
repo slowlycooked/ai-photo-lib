@@ -150,6 +150,14 @@ export interface ScanStatus {
   current_path: string | null;
   message: string;
   recent_errors: string[];
+  recent_files: ScanFileProgressEntry[];
+}
+
+export interface ScanFileProgressEntry {
+  path: string;
+  status: string;
+  message: string | null;
+  timestamp: string;
 }
 
 // ─── AI ───────────────────────────────────────────────────────────────────────
@@ -167,6 +175,7 @@ export interface AIAnalysis {
   quality_tags: string[] | null;
   location_clues: string[] | null;
   search_keywords: string[] | null;
+  semantic_concepts: string[] | null;
   people_count: number | null;
   confidence: number | null;
   created_at: string;
@@ -270,6 +279,12 @@ export interface SearchTraceStep {
 }
 
 export interface SearchDebugPayload {
+  query_plan?: {
+    intent?: string;
+    exact_terms?: string[];
+    expanded_terms?: string[];
+    semantic_query_text?: string;
+  };
   original_query: string;
   normalized_query: string;
   semantic_query_text?: string;
@@ -288,6 +303,7 @@ export interface SearchDebugPayload {
   embedding_model: string;
   embedding_dimension: number;
   keyword_candidates: number;
+  concept_candidates?: number;
   vector_candidates: number;
   merged_candidates: number;
   fallback_reason?: string;
@@ -304,7 +320,19 @@ export interface SearchDebugPayload {
   metadata_filters?: Record<string, unknown>;
   metadata_candidates?: number;
   metadata_only?: boolean;
+  metadata_filter_active?: boolean;
+  metadata_filter_skipped_reason?: string | null;
+  metadata_only_allowed?: boolean;
   matched_metadata_terms?: string[];
+  concept_terms?: string[];
+  concept_entity_terms?: string[];
+  concept_debug?: {
+    enabled: boolean;
+    reason: string;
+    concept_terms: string[];
+    entity_terms: string[];
+    candidates: number;
+  };
   trace?: SearchTraceStep[];
   settings_snapshot?: {
     default_mode: string;

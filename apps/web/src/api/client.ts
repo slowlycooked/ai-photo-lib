@@ -21,11 +21,17 @@ export class ApiError extends Error {
 }
 
 export async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, init);
+  const res = await fetch(`${BASE}${path}`, {
+    credentials: "same-origin",
+    ...init,
+  });
 
   if (!res.ok) {
     const body = await res.json().catch(() => null);
     const detail = body?.error ?? body?.detail ?? res.statusText;
+    if (res.status === 401) {
+      window.dispatchEvent(new Event("auth:expired"));
+    }
     throw new ApiError(res.status, detail);
   }
 

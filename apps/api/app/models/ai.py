@@ -36,6 +36,7 @@ class PhotoAIAnalysis(Base):
     quality_tags: Mapped[Optional[List[str]]] = mapped_column(ARRAY(Text), nullable=True)
     location_clues: Mapped[Optional[List[str]]] = mapped_column(ARRAY(Text), nullable=True)
     search_keywords: Mapped[Optional[List[str]]] = mapped_column(ARRAY(Text), nullable=True)
+    semantic_concepts: Mapped[Optional[List[str]]] = mapped_column(ARRAY(Text), nullable=True)
     people_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     confidence: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     raw_result: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)

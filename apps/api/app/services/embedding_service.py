@@ -23,7 +23,7 @@ _DB_EMBEDDING_DIMENSION = DB_EMBEDDING_DIMENSION
 # Version tag written into embedding_input_version.
 # Bump this when the document-building logic changes to mark existing
 # embeddings as stale so they get rebuilt.
-EMBEDDING_INPUT_VERSION = "photo_semantic_qwen3_v2"
+EMBEDDING_INPUT_VERSION = "photo_semantic_qwen3_v3"
 
 _REQUIRED_PHOTO_EMBEDDING_COLUMNS = {
     "id",
@@ -138,6 +138,10 @@ def build_photo_embedding_document(
     if keywords:
         parts.append(f"搜索关键词：{keywords}")
 
+    semantic_concepts = _join_tags(getattr(ai, "semantic_concepts", None))
+    if semantic_concepts:
+        parts.append(f"语义概念：{semantic_concepts}")
+
     ocr = _empty_to_none(ai.ocr_text)
     if ocr:
         parts.append(f"OCR文本：{ocr}")
@@ -188,6 +192,7 @@ def build_embedding_inputs(
         "quality_tags",
         "location_clues",
         "search_keywords",
+        "semantic_concepts",
     ):
         values = getattr(ai, field, None) or []
         tag_values.extend(v.strip() for v in values if isinstance(v, str) and v.strip())

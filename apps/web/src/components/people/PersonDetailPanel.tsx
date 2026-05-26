@@ -1,7 +1,86 @@
 import { useEffect, useState } from "react";
-import { AlertCircle, Loader2, ScanFace, UserRound, Users } from "lucide-react";
+import { AlertCircle, Loader2, ScanFace, UserRound, Users, X, ZoomIn } from "lucide-react";
 import { api, type PersonDetail, type PersonSummary } from "@/api";
 import { formatDateTime } from "./formatDateTime";
+
+function PersonOriginalPhotoLightbox({
+  projectId,
+  photoId,
+  faceId,
+  onClose,
+}: {
+  projectId: number;
+  photoId: number;
+  faceId: number;
+  onClose: () => void;
+}) {
+  const [imgLoaded, setImgLoaded] = useState(false);
+  const [imgError, setImgError] = useState<string | null>(null);
+
+  useEffect(() => {
+    function handleKey(e: KeyboardEvent) {
+      if (e.key === "Escape") onClose();
+    }
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, [onClose]);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      style={{ backgroundColor: "rgba(0,0,0,0.85)" }}
+      onClick={onClose}
+    >
+      <div
+        className="relative max-w-[92vw] max-h-[92vh] flex flex-col items-center"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <button
+          type="button"
+          onClick={onClose}
+          className="absolute top-3 right-3 z-10 w-9 h-9 rounded-full bg-black/60 flex items-center justify-center hover:bg-black/80 transition-colors"
+          aria-label="关闭预览"
+        >
+          <X className="w-4 h-4 text-white" />
+        </button>
+
+        {!imgLoaded && (
+          <div className="flex items-center justify-center" style={{ minWidth: 220, minHeight: 220 }}>
+            {imgError ? (
+              <div className="max-w-[320px] text-center text-white/85 text-sm px-4">{imgError}</div>
+            ) : (
+              <Loader2 className="w-8 h-8 animate-spin text-white/70" />
+            )}
+          </div>
+        )}
+
+        <img
+          src={api.projects.previewUrl(projectId, photoId)}
+          alt={`face-${faceId}-photo-${photoId}`}
+          className="rounded-md object-contain shadow-2xl"
+          style={{
+            maxWidth: "92vw",
+            maxHeight: "84vh",
+            opacity: imgLoaded ? 1 : 0,
+            transition: "opacity 0.2s",
+          }}
+          onLoad={() => {
+            setImgLoaded(true);
+            setImgError(null);
+          }}
+          onError={() => {
+            setImgLoaded(false);
+            setImgError("原图预览加载失败，请确认文件仍在磁盘或稍后重试");
+          }}
+        />
+
+        <div className="mt-3 px-3 py-1.5 rounded-md bg-black/60 text-white text-xs">
+          face #{faceId} · photo #{photoId}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function AssignmentChip({ label, value }: { label: string; value: number }) {
   return (
@@ -58,6 +137,9 @@ export function PersonDetailPanel({
   const [batchMoveTargetId, setBatchMoveTargetId] = useState<number | null>(null);
   const [splitFaceIds, setSplitFaceIds] = useState<number[]>([]);
   const [splitName, setSplitName] = useState("");
+  const [previewTarget, setPreviewTarget] = useState<{ photoId: number; faceId: number } | null>(
+    null,
+  );
 
   useEffect(() => {
     setRenameValue(detail?.display_name ?? "");
@@ -157,6 +239,13 @@ export function PersonDetailPanel({
     };
   })();
 
+  const representativeFace =
+    detail.representative_face_detection_id == null
+      ? null
+      : detail.assignments.find(
+          (item) => item.face_detection.id === detail.representative_face_detection_id,
+        )?.face_detection ?? null;
+
   const renderAssignmentCard = (assignment: PersonDetail["assignments"][number]) => {
     const face = assignment.face_detection;
     const splitSelectable = assignment.assignment_status !== "rejected";
@@ -166,7 +255,13 @@ export function PersonDetailPanel({
         key={assignment.id}
         className="rounded-xl border border-hairline bg-surface-soft p-3 flex gap-3"
       >
-        <div className="w-24 h-24 rounded-lg overflow-hidden border border-hairline bg-canvas flex-shrink-0">
+        <button
+          type="button"
+          onClick={() => setPreviewTarget({ photoId: face.photo_id, faceId: face.id })}
+          className="w-24 h-24 rounded-lg overflow-hidden border border-hairline bg-canvas flex-shrink-0 relative group cursor-zoom-in"
+          title="预览原始照片"
+          aria-label={`预览 face ${face.id} 的原始照片`}
+        >
           {faceCropEnabled && face.face_crop_path ? (
             <img
               src={api.projects.faceCropUrl(projectId, face.id, face.updated_at)}
@@ -178,7 +273,10 @@ export function PersonDetailPanel({
               <ScanFace className="w-5 h-5" />
             </div>
           )}
-        </div>
+          <div className="absolute inset-0 bg-black/0 group-hover:bg-black/25 transition-colors flex items-center justify-center">
+            <ZoomIn className="w-4 h-4 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
+          </div>
+        </button>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 flex-wrap">
             {splitSelectable && (
@@ -293,18 +391,35 @@ export function PersonDetailPanel({
         <div className="flex items-start gap-4">
           <div className="w-20 h-20 rounded-xl overflow-hidden border border-hairline bg-surface-soft flex-shrink-0">
             {faceCropEnabled && detail.representative_face_detection_id ? (
-              <img
-                src={api.projects.faceCropUrl(
-                  projectId,
-                  detail.representative_face_detection_id,
-                  detail.updated_at,
-                )}
-                alt={detail.display_name}
-                className="w-full h-full object-cover"
-                onError={(e) => {
-                  e.currentTarget.style.display = "none";
+              <button
+                type="button"
+                onClick={() => {
+                  if (!representativeFace) return;
+                  setPreviewTarget({ photoId: representativeFace.photo_id, faceId: representativeFace.id });
                 }}
-              />
+                disabled={!representativeFace}
+                className="w-full h-full relative group cursor-zoom-in disabled:cursor-default"
+                title={representativeFace ? "预览原始照片" : "无可预览原图"}
+                aria-label={representativeFace ? "预览代表头像对应原图" : "无可预览原图"}
+              >
+                <img
+                  src={api.projects.faceCropUrl(
+                    projectId,
+                    detail.representative_face_detection_id,
+                    detail.updated_at,
+                  )}
+                  alt={detail.display_name}
+                  className="w-full h-full object-cover"
+                  onError={(e) => {
+                    e.currentTarget.style.display = "none";
+                  }}
+                />
+                {representativeFace && (
+                  <div className="absolute inset-0 bg-black/0 group-hover:bg-black/25 transition-colors flex items-center justify-center">
+                    <ZoomIn className="w-4 h-4 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
+                  </div>
+                )}
+              </button>
             ) : (
               <div className="w-full h-full flex items-center justify-center text-mute">
                 <UserRound className="w-8 h-8" />
@@ -607,6 +722,15 @@ export function PersonDetailPanel({
           </>
         )}
       </div>
+
+      {previewTarget && (
+        <PersonOriginalPhotoLightbox
+          projectId={projectId}
+          photoId={previewTarget.photoId}
+          faceId={previewTarget.faceId}
+          onClose={() => setPreviewTarget(null)}
+        />
+      )}
     </div>
   );
 }

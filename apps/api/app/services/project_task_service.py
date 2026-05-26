@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..models.project_task import ProjectTask
+from ..models.project import Project
 from ..schemas.face import FaceClusterUnknownStatusResponse
 from ..schemas.scan import ScanStatus
 
@@ -20,6 +23,12 @@ SCAN_TASK_TYPES: tuple[str, ...] = (
 FACE_CLUSTER_TASK_TYPES: tuple[str, ...] = (TASK_TYPE_UNKNOWN_FACE_CLUSTERING,)
 
 
+@dataclass(frozen=True)
+class EnqueueProjectTaskResult:
+    task: ProjectTask
+    created: bool
+
+
 def empty_scan_state() -> dict:
     return {
         "running": False,
@@ -30,6 +39,7 @@ def empty_scan_state() -> dict:
         "current_path": None,
         "message": "idle",
         "recent_errors": [],
+        "recent_files": [],
     }
 
 
@@ -109,11 +119,12 @@ def enqueue_scan_task(
     project_id: int,
     task_type: str,
     request_params: Optional[dict] = None,
-) -> ProjectTask:
-    return enqueue_project_task(
+) -> EnqueueProjectTaskResult:
+    return enqueue_unique_project_task(
         db,
         project_id=project_id,
         task_type=task_type,
+        active_task_types=SCAN_TASK_TYPES,
         request_params=request_params,
     )
 
@@ -123,13 +134,52 @@ def enqueue_face_cluster_task(
     *,
     project_id: int,
     max_faces: int,
-) -> ProjectTask:
-    return enqueue_project_task(
+) -> EnqueueProjectTaskResult:
+    return enqueue_unique_project_task(
         db,
         project_id=project_id,
         task_type=TASK_TYPE_UNKNOWN_FACE_CLUSTERING,
+        active_task_types=FACE_CLUSTER_TASK_TYPES,
         request_params={"max_faces": max_faces},
     )
+
+
+def enqueue_unique_project_task(
+    db: Session,
+    *,
+    project_id: int,
+    task_type: str,
+    active_task_types: tuple[str, ...],
+    request_params: Optional[dict] = None,
+) -> EnqueueProjectTaskResult:
+    # Serialize enqueue decisions per project where the database supports row locks.
+    db.query(Project.id).filter(Project.id == project_id).with_for_update().first()
+    active_task = _get_active_project_task(db, project_id, active_task_types)
+    if active_task is not None:
+        return EnqueueProjectTaskResult(task=active_task, created=False)
+
+    task = ProjectTask(
+        project_id=project_id,
+        task_type=task_type,
+        status="queued",
+        retry_count=0,
+        request_params=request_params,
+        progress_payload=build_queued_progress_payload(task_type, request_params, project_id=project_id),
+        result_payload=None,
+        error_message=None,
+        updated_at=_now_utc(),
+    )
+    db.add(task)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        active_task = _get_active_project_task(db, project_id, active_task_types)
+        if active_task is not None:
+            return EnqueueProjectTaskResult(task=active_task, created=False)
+        raise
+    db.refresh(task)
+    return EnqueueProjectTaskResult(task=task, created=True)
 
 
 def enqueue_project_task(
@@ -174,6 +224,10 @@ def build_scan_status(task: Optional[ProjectTask]) -> ScanStatus:
     payload["running"] = False
     if task.status == "success":
         payload["message"] = payload.get("message") or "done"
+        return ScanStatus(**payload)
+    if task.status == "completed_with_errors":
+        payload["errors"] = max(int(payload.get("errors") or 0), 1)
+        payload["message"] = payload.get("message") or "done_with_errors"
         return ScanStatus(**payload)
 
     error_text = (task.error_message or "").strip()

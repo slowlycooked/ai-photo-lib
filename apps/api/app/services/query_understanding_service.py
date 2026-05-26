@@ -85,13 +85,120 @@ _META_NOISE_RE = re.compile(
 )
 _PLACE_SPLIT_RE = re.compile(r"[\s,/，、]+")
 _GENERIC_NON_PLACE_TERMS: frozenset[str] = frozenset({
-    "夜景", "夜晚", "室内", "室外", "风景", "美食", "人物", "猫", "狗", "下雨天",
-    "晴天", "雪天", "海边", "日落", "日出", "晚霞", "建筑", "街景", "自拍",
+    "夜景", "夜晚", "室内", "室外", "风景", "美食", "食物", "人物", "建筑", "街景",
+    "动物", "宠物", "野生动物", "小动物", "猫", "狗", "鸟", "马", "鹿", "兔", "兔子", "鱼",
+    "下雨天", "晴天", "雪天", "海边", "日落", "日出", "晚霞", "自拍",
+})
+
+# Strong semantic intents should never be treated as metadata-only requests,
+# even if metadata parser matched some tokens.
+_METADATA_ONLY_BLOCKED_INTENTS: frozenset[str] = frozenset({
+    "animal_search",
+    "people_search",
+    "group_photo_search",
+    "food_search",
+    "weather_search",
+    "activity_search",
+    "semantic_photo_search",
 })
 
 _ANIMAL_CATEGORY_TERMS: frozenset[str] = frozenset({
     "动物", "宠物", "野生动物", "动物园", "小动物", "animal",
 })
+
+_DEFAULT_CONCEPT_TAXONOMY: list[dict[str, object]] = [
+    {
+        "concept": "动物",
+        "children": ["猫", "狗", "鸟", "马", "鹿", "兔子", "鱼"],
+        "aliases": ["animal", "小动物", "宠物"],
+        "positive_fields": ["object_tags", "search_keywords", "raw_result.animals"],
+        "negative_terms": [],
+        "recall_policy": "expand_children",
+        "evidence_policy": "require_child_entity_or_high_vector",
+    }
+]
+
+
+def _normalise_concept_taxonomy(raw: Optional[list[dict]]) -> list[dict[str, object]]:
+    if not raw:
+        return list(_DEFAULT_CONCEPT_TAXONOMY)
+
+    normalized: list[dict[str, object]] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        concept = str(item.get("concept") or "").strip()
+        if not concept:
+            continue
+        normalized.append(
+            {
+                "concept": concept,
+                "children": [
+                    str(v).strip()
+                    for v in (item.get("children") or [])
+                    if str(v).strip()
+                ],
+                "aliases": [
+                    str(v).strip()
+                    for v in (item.get("aliases") or [])
+                    if str(v).strip()
+                ],
+                "positive_fields": [
+                    str(v).strip()
+                    for v in (item.get("positive_fields") or [])
+                    if str(v).strip()
+                ],
+                "negative_terms": [
+                    str(v).strip()
+                    for v in (item.get("negative_terms") or [])
+                    if str(v).strip()
+                ],
+                "recall_policy": str(item.get("recall_policy") or "").strip(),
+                "evidence_policy": str(item.get("evidence_policy") or "").strip(),
+            }
+        )
+    return normalized or list(_DEFAULT_CONCEPT_TAXONOMY)
+
+
+def _apply_concept_taxonomy(
+    *,
+    query_lower: str,
+    exact_lower: set[str],
+    expanded_set: set[str],
+    broad_set: set[str],
+    matched_keys_set: list[str],
+    concept_taxonomy: list[dict[str, object]],
+) -> list[str]:
+    """Apply concept taxonomy expansion and return matched concept terms."""
+    concept_terms: list[str] = []
+
+    for entry in concept_taxonomy:
+        concept = str(entry.get("concept") or "").strip()
+        if not concept:
+            continue
+        aliases = [str(v).strip() for v in (entry.get("aliases") or []) if str(v).strip()]
+        children = [str(v).strip() for v in (entry.get("children") or []) if str(v).strip()]
+        recall_policy = str(entry.get("recall_policy") or "expand_children").strip()
+
+        concept_matched = concept.lower() in query_lower
+        alias_matched = any(alias.lower() in query_lower for alias in aliases)
+        child_matched = any(child.lower() in query_lower for child in children)
+        if not (concept_matched or alias_matched or child_matched):
+            continue
+
+        if concept not in concept_terms:
+            concept_terms.append(concept)
+        if concept not in matched_keys_set:
+            matched_keys_set.append(concept)
+
+        if recall_policy == "expand_children" and (concept_matched or alias_matched):
+            for child in children:
+                if child.lower() not in exact_lower:
+                    expanded_set.add(child)
+        if child_matched and concept.lower() not in exact_lower:
+            broad_set.add(concept)
+
+    return concept_terms
 
 
 def _dedupe_terms(terms: list[str]) -> list[str]:
@@ -476,17 +583,47 @@ _PEOPLE_TERMS_TIERED: Dict[str, Any] = {
     "全家福": {
         "expanded": ["家庭", "合影", "多人"],
         "broad": [],
-        "facets": ["people"],
+        "facets": ["people", "group_photo"],
     },
     "自拍": {
         "expanded": ["selfie", "单人"],
         "broad": [],
         "facets": ["people"],
     },
+    "合照": {
+        "expanded": ["合影", "集体照", "多人", "多人合照", "人物"],
+        "broad": ["集体"],
+        "facets": ["people", "group_photo"],
+    },
     "合影": {
-        "expanded": ["集体照", "合照", "多人"],
-        "broad": [],
-        "facets": ["people"],
+        "expanded": ["合照", "集体照", "多人", "多人合影"],
+        "broad": ["集体"],
+        "facets": ["people", "group_photo"],
+    },
+    "集体照": {
+        "expanded": ["合照", "合影", "多人", "集体"],
+        "broad": ["人物"],
+        "facets": ["people", "group_photo"],
+    },
+    "多人": {
+        "expanded": ["合照", "合影", "集体照", "多人合照", "多人合影"],
+        "broad": ["人物", "集体"],
+        "facets": ["people", "group_photo"],
+    },
+    "多人合照": {
+        "expanded": ["合照", "合影", "多人", "集体照"],
+        "broad": ["人物", "集体"],
+        "facets": ["people", "group_photo"],
+    },
+    "多人合影": {
+        "expanded": ["合影", "合照", "多人", "集体照"],
+        "broad": ["人物", "集体"],
+        "facets": ["people", "group_photo"],
+    },
+    "group photo": {
+        "expanded": ["合照", "合影", "集体照", "多人"],
+        "broad": ["人物"],
+        "facets": ["people", "group_photo"],
     },
 }
 
@@ -675,6 +812,16 @@ _OUTDOOR_KEYS = set(_OUTDOOR_TERMS_TIERED.keys())
 _WEATHER_KEYS = set(_WEATHER_TERMS_TIERED.keys())
 _ANIMAL_KEYS = set(_ANIMAL_TERMS_TIERED.keys())
 _PEOPLE_KEYS = set(_PEOPLE_TERMS_TIERED.keys())
+_GROUP_PHOTO_KEYS: set[str] = {
+    "合照",
+    "合影",
+    "集体照",
+    "多人",
+    "多人合照",
+    "多人合影",
+    "group photo",
+    "全家福",
+}
 _FOOD_KEYS = set(_FOOD_TERMS_TIERED.keys())
 _TRAVEL_KEYS = set(_TRAVEL_TERMS_TIERED.keys())
 _INDOOR_KEYS = set(_INDOOR_TERMS_TIERED.keys())
@@ -755,6 +902,8 @@ def _classify_intent(query: str) -> str:
     for key in _OUTDOOR_KEYS:
         if key in q_lower:
             return "activity_search"
+    if any(k in q_lower for k in _GROUP_PHOTO_KEYS):
+        return "group_photo_search"
     if any(k in q_lower for k in _PEOPLE_KEYS):
         return "people_search"
     if any(k in q_lower for k in _FOOD_KEYS):
@@ -770,6 +919,8 @@ def _recommended_profile(intent: str) -> str:
         "ocr_text_search": "ocr_text",
         "activity_search": "activity_scene",
         "location_search": "location_time",
+        "people_search": "people_group",
+        "group_photo_search": "people_group",
     }.get(intent, "default_semantic")
 
 
@@ -787,6 +938,10 @@ def _infer_filters(query: str, intent: str) -> dict:
     }
     if intent == "animal_search":
         filters["has_animals"] = True
+    if intent in ("people_search", "group_photo_search"):
+        filters["has_people"] = True
+    if intent == "group_photo_search":
+        filters["people_count_min"] = 2
 
     q_lower = query.lower()
     for key in ("下雨", "rain", "雨天"):
@@ -875,6 +1030,8 @@ class SearchQueryPlan:
     # ── debug / explain ───────────────────────────────────────────────────────
     # which tiered dict keys were found in the (cleaned) query
     matched_keys: list[str] = field(default_factory=list)
+    # normalized concept anchors for concept recall (e.g. 动物/宠物)
+    concept_terms: list[str] = field(default_factory=list)
     # facets that are "core" (derived from exact/strong match to a tiered key)
     core_facets: list[str] = field(default_factory=list)
     # ── EXIF / Photo metadata filters (parsed from query) ─────────────────────
@@ -937,6 +1094,7 @@ class SearchQueryPlan:
 def understand_query(
     query: str,
     project_id: Optional[int] = None,
+    concept_taxonomy: Optional[list[dict]] = None,
 ) -> SearchQueryPlan:
     """Analyse a user search query and return a structured plan (rule engine)."""
     original_query = query.strip()
@@ -1008,6 +1166,29 @@ def understand_query(
                 if tl not in exact_lower:
                     negative_set.add(t)
 
+    # Apply project-level concept taxonomy after built-in dictionaries.
+    normalized_concept_taxonomy = _normalise_concept_taxonomy(concept_taxonomy)
+    concept_terms = _apply_concept_taxonomy(
+        query_lower=q_lower,
+        exact_lower=exact_lower,
+        expanded_set=expanded_set,
+        broad_set=broad_set,
+        matched_keys_set=matched_keys_set,
+        concept_taxonomy=normalized_concept_taxonomy,
+    )
+
+    if intent in ("people_search", "group_photo_search"):
+        people_concept_candidates = [
+            "人物", "单人照", "人像", "多人", "合照", "合影", "集体照", "自拍", "全家福",
+        ]
+        for term in people_concept_candidates:
+            if term.lower() in q_lower and term not in concept_terms:
+                concept_terms.append(term)
+        for term in exact_terms + list(expanded_set) + list(broad_set):
+            text = str(term).strip()
+            if text in people_concept_candidates and text not in concept_terms:
+                concept_terms.append(text)
+
     expanded_terms = sorted(t for t in expanded_set)
     support_terms = sorted(t for t in support_set if t not in expanded_set)
     broad_terms = sorted(t for t in broad_set if t not in expanded_set and t not in support_set)
@@ -1068,6 +1249,7 @@ def understand_query(
         "weather_search": ["天气", "自然"],
         "activity_search": ["户外", "自然", "旅行"],
         "people_search": ["人物", "生活"],
+        "group_photo_search": ["人物", "多人", "合照"],
         "food_search": ["美食", "生活"],
         "location_search": ["地点", "旅行", "风景"],
     }.get(intent, [])
@@ -1084,6 +1266,8 @@ def understand_query(
     }
 
     metadata_filters = _parse_metadata_filters(original_query)
+    if intent in _METADATA_ONLY_BLOCKED_INTENTS:
+        metadata_filters["metadata_only"] = False
 
     return SearchQueryPlan(
         original_query=original_query,
@@ -1103,6 +1287,7 @@ def understand_query(
         recommended_profile=profile,
         penalize_tags=penalize_tags,
         matched_keys=matched_keys_set,
+        concept_terms=concept_terms,
         core_facets=core_facets,
         metadata_filters=metadata_filters,
     )

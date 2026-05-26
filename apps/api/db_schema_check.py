@@ -61,6 +61,7 @@ REQUIRED_COLUMNS: list[tuple[str, str, bool, str]] = [
     ("photo_ai_analysis", "id", False, "PK"),
     ("photo_ai_analysis", "project_id", False, "project isolation"),
     ("photo_ai_analysis", "photo_id", False, ""),
+    ("photo_ai_analysis", "semantic_concepts", True, "added by migration 026"),
     # photo_embeddings
     ("photo_embeddings", "id", False, "must exist — used by embedding service"),
     ("photo_embeddings", "project_id", False, "project isolation"),

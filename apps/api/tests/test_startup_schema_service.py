@@ -4,7 +4,11 @@ import unittest
 
 from sqlalchemy import create_engine, text
 
-from app.services.startup_schema_service import StartupSchemaCheckError, validate_required_tables
+from app.services.startup_schema_service import (
+    StartupSchemaCheckError,
+    validate_required_columns,
+    validate_required_tables,
+)
 
 
 class StartupSchemaServiceTest(unittest.TestCase):
@@ -69,6 +73,40 @@ class StartupSchemaServiceTest(unittest.TestCase):
         msg = str(ctx.exception)
         self.assertIn("alembic_version", msg)
         self.assertIn("alembic upgrade head", msg)
+
+    def test_required_columns_pass_when_present(self):
+        engine = self._engine()
+        self._bootstrap(engine, revision="026_add_semantic_concepts")
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "CREATE TABLE photo_ai_analysis ("
+                    "id INTEGER PRIMARY KEY, "
+                    "semantic_concepts TEXT"
+                    ")"
+                )
+            )
+
+        validate_required_columns(
+            engine,
+            required_columns={"photo_ai_analysis": ("semantic_concepts",)},
+        )
+
+    def test_required_columns_raise_with_drift_hint(self):
+        engine = self._engine()
+        self._bootstrap(engine, revision="026_add_semantic_concepts")
+        with engine.begin() as conn:
+            conn.execute(text("CREATE TABLE photo_ai_analysis (id INTEGER PRIMARY KEY)"))
+
+        with self.assertRaises(StartupSchemaCheckError) as ctx:
+            validate_required_columns(
+                engine,
+                required_columns={"photo_ai_analysis": ("semantic_concepts",)},
+            )
+
+        msg = str(ctx.exception)
+        self.assertIn("photo_ai_analysis.semantic_concepts", msg)
+        self.assertIn("schema drift", msg)
 
 
 if __name__ == "__main__":

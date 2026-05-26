@@ -237,9 +237,8 @@ class ProjectPeopleEndpointsTest(unittest.TestCase):
 
       source_detail = self.client.get("/projects/1/people/101").json()
       target_detail = self.client.get("/projects/1/people/102").json()
-      source_assignment = [a for a in source_detail["assignments"] if a["face_detection_id"] == 302][0]
       target_assignment = [a for a in target_detail["assignments"] if a["face_detection_id"] == 302][0]
-      self.assertEqual(source_assignment["assignment_status"], "rejected")
+      self.assertFalse(any(a["face_detection_id"] == 302 for a in source_detail["assignments"]))
       self.assertEqual(target_assignment["assignment_status"], "human_corrected")
 
     def test_set_representative_face_requires_assignment(self) -> None:
@@ -281,6 +280,19 @@ class ProjectPeopleEndpointsTest(unittest.TestCase):
       self.assertEqual(body["items"][0]["face_detection_id"], 302)
 
     def test_batch_confirm_review_pending(self) -> None:
+      with self._engine.begin() as conn:
+        conn.execute(
+          sa.text(
+            """
+            INSERT INTO person_face_assignments (
+              id, project_id, person_id, face_detection_id, assignment_status,
+              assignment_source, confidence, similarity_score, is_positive_sample, is_training_candidate
+            )
+            VALUES (503, 1, 102, 302, 'auto_assigned', 'similarity_match', 0.71, 0.66, 0, 1)
+            """
+          )
+        )
+
       res = self.client.post(
         "/projects/1/people/101/review/batch-confirm",
         json={
@@ -300,6 +312,23 @@ class ProjectPeopleEndpointsTest(unittest.TestCase):
       target = [a for a in detail["assignments"] if a["face_detection_id"] == 302][0]
       self.assertEqual(target["assignment_status"], "human_confirmed")
       self.assertTrue(target["is_positive_sample"])
+
+      other_detail = self.client.get("/projects/1/people/102").json()
+      other = [a for a in other_detail["assignments"] if a["face_detection_id"] == 302][0]
+      self.assertEqual(other["assignment_status"], "rejected")
+
+      with self._engine.connect() as conn:
+        negative = conn.execute(
+          sa.text(
+            """
+            SELECT source
+            FROM face_negative_constraints
+            WHERE project_id = 1 AND face_detection_id = 302 AND not_person_id = 102
+            """
+          )
+        ).first()
+      self.assertIsNotNone(negative)
+      self.assertEqual(negative[0], "human_corrected")
 
     def test_batch_reject_and_move_review_pending(self) -> None:
       reject = self.client.post(
@@ -333,9 +362,8 @@ class ProjectPeopleEndpointsTest(unittest.TestCase):
 
       source_detail = self.client.get("/projects/1/people/101").json()
       target_detail = self.client.get("/projects/1/people/102").json()
-      source_assignment = [a for a in source_detail["assignments"] if a["face_detection_id"] == 302][0]
       target_assignment = [a for a in target_detail["assignments"] if a["face_detection_id"] == 302][0]
-      self.assertEqual(source_assignment["assignment_status"], "rejected")
+      self.assertFalse(any(a["face_detection_id"] == 302 for a in source_detail["assignments"]))
       self.assertEqual(target_assignment["assignment_status"], "human_corrected")
 
     def test_create_empty_person(self) -> None:
@@ -377,8 +405,7 @@ class ProjectPeopleEndpointsTest(unittest.TestCase):
       self.assertEqual(body["target_person"]["sample_count"], 1)
 
       source_detail = self.client.get("/projects/1/people/101").json()
-      source_assignment = [a for a in source_detail["assignments"] if a["face_detection_id"] == 302][0]
-      self.assertEqual(source_assignment["assignment_status"], "rejected")
+      self.assertFalse(any(a["face_detection_id"] == 302 for a in source_detail["assignments"]))
 
       target_id = body["target_person"]["id"]
       target_detail = self.client.get(f"/projects/1/people/{target_id}").json()

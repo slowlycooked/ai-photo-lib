@@ -348,6 +348,7 @@ const STAGE_LABELS: Record<string, string> = {
   settings: "③ 搜索配置",
   folder_filter: "④ 文件夹过滤",
   keyword_recall: "⑤ 关键词召回",
+  concept_recall: "⑤.5 概念召回",
   vector_recall: "⑥ 向量召回",
   rrf_merge: "⑦ RRF 融合",
   result: "⑧ 结果",
@@ -359,6 +360,7 @@ const STAGE_COLORS: Record<string, string> = {
   settings: "text-slate-600 dark:text-slate-300",
   folder_filter: "text-teal-700 dark:text-teal-300",
   keyword_recall: "text-blue-700 dark:text-blue-300",
+  concept_recall: "text-indigo-700 dark:text-indigo-300",
   vector_recall: "text-purple-700 dark:text-purple-300",
   rrf_merge: "text-orange-700 dark:text-orange-300",
   result: "text-green-700 dark:text-green-300",
@@ -383,6 +385,7 @@ function TraceStepRow({ step }: { step: SearchTraceStep }) {
     if (stage === "settings") return `mode=${rest.default_mode}  kw_k=${rest.keyword_top_k}  vec_k=${rest.vector_top_k}  rrf_k=${rest.rrf_k}  kw_w=${rest.keyword_weight}  vec_w=${rest.vector_weight}`;
     if (stage === "folder_filter") return `folder_id=${rest.folder_id}  scope=${rest.scope}  photos=${rest.photo_ids_count ?? "?"}`;
     if (stage === "keyword_recall") return `candidates=${rest.candidates}  top=[${(rest.top_scores as number[])?.join(", ")}]`;
+    if (stage === "concept_recall") return `concepts=[${(rest.concept_terms as string[])?.join(", ") || ""}] candidates=${rest.candidates}`;
     if (stage === "vector_recall") {
       if (rest.error) return `⚠ FALLBACK: ${rest.error}`;
       return `candidates=${rest.candidates}  model=${rest.embedding_model}  is_ocr=${rest.is_ocr}`;
@@ -426,16 +429,36 @@ function TraceStepRow({ step }: { step: SearchTraceStep }) {
 function DebugPanel({ payload }: { payload: SearchDebugPayload }) {
   const [showSettings, setShowSettings] = useState(false);
   const [showTrace, setShowTrace] = useState(true);
+  const queryPlan = payload.query_plan ?? {};
 
   return (
     <div className="rounded-md border border-amber-400/50 bg-amber-50 dark:bg-amber-950/30 p-3 text-[11px] font-mono space-y-1.5 text-amber-900 dark:text-amber-200">
       <div className="font-semibold text-xs mb-1.5">🔍 Search Debug</div>
+
+      <div className="rounded border border-amber-300/50 bg-white/60 dark:bg-black/20 px-2 py-1 text-[10px] space-y-0.5">
+        <div>query_plan.intent: {String(queryPlan.intent ?? payload.intent ?? "")}</div>
+        <div>query_plan.exact_terms: {(queryPlan.exact_terms ?? payload.exact_terms ?? []).join(", ") || "—"}</div>
+        <div>query_plan.expanded_terms: {(queryPlan.expanded_terms ?? payload.expanded_terms ?? []).join(", ") || "—"}</div>
+        <div>query_plan.semantic_query_text: {String(queryPlan.semantic_query_text ?? payload.semantic_query_text ?? "") || "—"}</div>
+        <div>keyword_candidates: {payload.keyword_candidates}</div>
+        <div>vector_candidates: {payload.vector_candidates}</div>
+        <div>merged_candidates: {payload.merged_candidates}</div>
+        <div>filtered_candidates: {payload.filtered_candidates ?? 0}</div>
+        <div>filtered_out_samples: {(payload.filtered_out_samples ?? []).map((it) => `${it.photo_id}:${it.filter_reason}`).join(" | ") || "—"}</div>
+        <div>stale_embedding_filtered: {payload.stale_embedding_filtered ?? 0}</div>
+        <div>metadata_filter_active: {String(payload.metadata_filter_active ?? false)}</div>
+        <div>metadata_filter_skipped_reason: {payload.metadata_filter_skipped_reason ?? "—"}</div>
+        <div>metadata_only_allowed: {String(payload.metadata_only_allowed ?? true)}</div>
+        <div>concept_terms: {(payload.concept_terms ?? []).join(", ") || "—"}</div>
+        <div>concept_entity_terms: {(payload.concept_entity_terms ?? []).join(", ") || "—"}</div>
+      </div>
 
       {/* Summary row */}
       <div className="flex flex-wrap gap-x-4 gap-y-0.5">
         <span><span className="opacity-60">意图:</span> {payload.intent}</span>
         <span><span className="opacity-60">模式:</span> {payload.mode}</span>
         <span><span className="opacity-60">关键词候选:</span> {payload.keyword_candidates}</span>
+        <span><span className="opacity-60">概念候选:</span> {payload.concept_candidates ?? 0}</span>
         <span><span className="opacity-60">向量候选:</span> {payload.vector_candidates}</span>
         <span><span className="opacity-60">合并后:</span> {payload.merged_candidates}</span>
         {payload.embedding_model && (
@@ -508,6 +531,17 @@ function DebugPanel({ payload }: { payload: SearchDebugPayload }) {
               <span><span className="opacity-60">地点:</span> {(payload.metadata_filters.place_terms as string[]).join("、")}</span>
             )}
           </div>
+        </div>
+      )}
+
+      {payload.concept_debug && (
+        <div className="rounded border border-cyan-400/50 bg-cyan-50 dark:bg-cyan-950/30 px-2 py-1 text-[10px] text-cyan-900 dark:text-cyan-200 space-y-0.5">
+          <div className="font-semibold text-[11px]">🧠 Concept Recall</div>
+          <div><span className="opacity-60">enabled:</span> {String(payload.concept_debug.enabled)}</div>
+          <div><span className="opacity-60">reason:</span> {payload.concept_debug.reason}</div>
+          <div><span className="opacity-60">concept_terms:</span> {payload.concept_debug.concept_terms.join("、") || "—"}</div>
+          <div><span className="opacity-60">entity_terms:</span> {payload.concept_debug.entity_terms.join("、") || "—"}</div>
+          <div><span className="opacity-60">candidates:</span> {payload.concept_debug.candidates}</div>
         </div>
       )}
 
@@ -670,15 +704,18 @@ export function SearchResultGrid({ query, projectId, mode = "hybrid", debug = fa
 
   if (allItems.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center py-24 gap-4 text-mute">
-        <div className="w-20 h-20 rounded-full bg-secondary-bg flex items-center justify-center">
-          <SearchX className="w-9 h-9 text-stone" />
-        </div>
-        <div className="text-center">
-          <p className="text-heading-md font-semibold text-ink">没有找到匹配的照片</p>
-          <p className="text-body-sm text-mute mt-1">
-            试试其他关键词，或确认已完成 AI 分析
-          </p>
+      <div className="space-y-4">
+        {debug && debugPayload && <DebugPanel payload={debugPayload} />}
+        <div className="flex flex-col items-center justify-center py-24 gap-4 text-mute">
+          <div className="w-20 h-20 rounded-full bg-secondary-bg flex items-center justify-center">
+            <SearchX className="w-9 h-9 text-stone" />
+          </div>
+          <div className="text-center">
+            <p className="text-heading-md font-semibold text-ink">没有找到匹配的照片</p>
+            <p className="text-body-sm text-mute mt-1">
+              试试其他关键词，或确认已完成 AI 分析
+            </p>
+          </div>
         </div>
       </div>
     );

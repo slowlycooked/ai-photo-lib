@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from typing import Optional
 
 import sqlalchemy as sa
+from sqlalchemy import inspect
 from sqlalchemy.orm import Session
 
 from ..models.face import FaceDetection, FaceEmbedding, Person, PersonFaceAssignment
@@ -19,6 +21,7 @@ class UnknownFaceClusteringResult:
     persons_created: int
     faces_clustered: int
     assignments_created: int
+    skipped_reason: Optional[str] = None
 
 
 @dataclass
@@ -33,10 +36,21 @@ def cluster_unknown_faces(
     *,
     project_id: int,
     max_faces: int = 500,
+    photo_ids: Optional[list[int]] = None,
 ) -> UnknownFaceClusteringResult:
+    if not _has_unknown_clustering_tables(db):
+        return UnknownFaceClusteringResult(
+            project_id=project_id,
+            clusters_created=0,
+            persons_created=0,
+            faces_clustered=0,
+            assignments_created=0,
+            skipped_reason="missing_people_tables",
+        )
+
     settings = get_or_create_project_face_settings(db, project_id)
 
-    rows = (
+    query = (
         db.query(FaceDetection.id, FaceEmbedding.embedding_vector)
         .join(
             FaceEmbedding,
@@ -61,10 +75,12 @@ def cluster_unknown_faces(
             FaceEmbedding.embedding_vector.isnot(None),
             PersonFaceAssignment.id.is_(None),
         )
-        .order_by(FaceDetection.id.asc())
-        .limit(max_faces)
-        .all()
     )
+
+    if photo_ids:
+        query = query.filter(FaceDetection.photo_id.in_(photo_ids))
+
+    rows = query.order_by(FaceDetection.id.asc()).limit(max_faces).all()
 
     candidates: list[tuple[int, list[float]]] = []
     for face_id, raw_vector in rows:
@@ -169,3 +185,17 @@ def cluster_unknown_faces(
         faces_clustered=len(candidates),
         assignments_created=assignments_created,
     )
+
+
+def _has_unknown_clustering_tables(db: Session) -> bool:
+    try:
+        bind = db.get_bind()
+        inspector = inspect(bind)
+        table_names = set(inspector.get_table_names())
+    except Exception:  # noqa: BLE001
+        return False
+    required = {
+        "persons",
+        "person_face_assignments",
+    }
+    return required.issubset(table_names)

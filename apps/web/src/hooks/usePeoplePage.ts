@@ -12,6 +12,12 @@ export type PeopleFilterMode =
   | "review_pending"
   | "auto_assigned";
 
+function parsePositiveIntParam(value: string | null): number | null {
+  if (!value) return null;
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
 export function usePeoplePage() {
   const { projectId } = useParams();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -265,10 +271,26 @@ export function usePeoplePage() {
   const namedCount = people.filter((item) => item.is_named).length;
   const unnamedCount = Math.max(0, people.length - namedCount);
 
-  const mergeTargetIdParam = Number(searchParams.get("merge_target_id"));
-  const mergeTargetId = Number.isFinite(mergeTargetIdParam)
-    ? mergeTargetIdParam
-    : (moveCandidates[0]?.id ?? null);
+  const mergeTargetIdParam = parsePositiveIntParam(searchParams.get("merge_target_id"));
+  const mergeTargetId =
+    mergeTargetIdParam != null && moveCandidates.some((person) => person.id === mergeTargetIdParam)
+      ? mergeTargetIdParam
+      : (moveCandidates[0]?.id ?? null);
+
+  useEffect(() => {
+    const rawTargetId = searchParams.get("merge_target_id");
+    if (mergeTargetId == null) {
+      if (!rawTargetId) return;
+      const next = new URLSearchParams(searchParams);
+      next.delete("merge_target_id");
+      setSearchParams(next, { replace: true });
+      return;
+    }
+    if (rawTargetId === String(mergeTargetId)) return;
+    const next = new URLSearchParams(searchParams);
+    next.set("merge_target_id", String(mergeTargetId));
+    setSearchParams(next, { replace: true });
+  }, [mergeTargetId, searchParams, setSearchParams]);
 
   const setSelectedPersonId = (personId: number) => {
     const next = new URLSearchParams(searchParams);
@@ -313,7 +335,8 @@ export function usePeoplePage() {
     createPerson: () =>
       createPersonMutation.mutate({ display_name: createDisplayName.trim() || undefined }),
     mergeSelectedPerson: () => {
-      if (!mergeTargetId) return;
+      if (mergeTargetId == null) return;
+      if (!moveCandidates.some((person) => person.id === mergeTargetId)) return;
       mergePersonMutation.mutate(mergeTargetId);
     },
     deleteSelectedPerson: () => deletePersonMutation.mutate(),

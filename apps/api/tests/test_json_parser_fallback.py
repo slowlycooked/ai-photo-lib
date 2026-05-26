@@ -76,6 +76,28 @@ confidence: 0.8
         self.assertIn("划船", parsed["search_keywords"])
         self.assertNotIn("boating", parsed["search_keywords"])
 
+        def test_animals_are_enriched_into_semantic_concepts(self) -> None:
+                raw = """{
+    "caption": "一只猫坐在沙发上",
+    "animals": ["猫"],
+    "objects": ["沙发"],
+    "scene_category": "家庭生活",
+    "people_count": 0,
+    "ocr_text": [],
+    "confidence": 0.9
+}"""
+
+                parsed = parse_model_json_output(raw, strategy="auto_extract")
+
+                self.assertIn("猫", parsed["object_tags"])
+                self.assertIn("猫", parsed["search_keywords"])
+                self.assertIn("动物", parsed["search_keywords"])
+                self.assertIn("宠物", parsed["search_keywords"])
+                self.assertIn("动物", parsed["semantic_concepts"])
+                self.assertIn("宠物", parsed["semantic_concepts"])
+                self.assertIn("猫科", parsed["semantic_concepts"])
+                self.assertIn("小动物", parsed["semantic_concepts"])
+
         def test_animals_are_enriched_into_search_keywords(self) -> None:
                 raw = """{
     "caption": "一只猫坐在沙发上",

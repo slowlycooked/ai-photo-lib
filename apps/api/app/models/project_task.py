@@ -18,6 +18,30 @@ class ProjectTask(Base):
         sa.Index("ix_project_tasks_project_created_at", "project_id", "created_at"),
         sa.Index("ix_project_tasks_project_status", "project_id", "status"),
         sa.Index("ix_project_tasks_project_type_status", "project_id", "task_type", "status"),
+        sa.Index(
+            "uq_project_tasks_one_active_scan",
+            "project_id",
+            unique=True,
+            sqlite_where=sa.text(
+                "task_type IN ('library_scan', 'library_reindex') "
+                "AND status IN ('queued', 'running')"
+            ),
+            postgresql_where=sa.text(
+                "task_type IN ('library_scan', 'library_reindex') "
+                "AND status IN ('queued', 'running')"
+            ),
+        ),
+        sa.Index(
+            "uq_project_tasks_one_active_face_cluster",
+            "project_id",
+            unique=True,
+            sqlite_where=sa.text(
+                "task_type = 'unknown_face_clustering' AND status IN ('queued', 'running')"
+            ),
+            postgresql_where=sa.text(
+                "task_type = 'unknown_face_clustering' AND status IN ('queued', 'running')"
+            ),
+        ),
     )
 
     id: Mapped[int] = mapped_column(_TASK_ID_TYPE, primary_key=True, autoincrement=True)

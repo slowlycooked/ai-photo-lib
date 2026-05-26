@@ -7,7 +7,7 @@ import mimetypes
 import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
@@ -45,6 +45,7 @@ def _empty_state() -> dict[str, Any]:
         "current_path": None,
         "message": "idle",
         "recent_errors": [],
+        "recent_files": [],
     }
 
 
@@ -53,6 +54,27 @@ def _push_scan_error(state: dict[str, Any], message: str, *, limit: int = 20) ->
     errors.append(message)
     if len(errors) > limit:
         del errors[:-limit]
+
+
+def _push_file_progress(
+    state: dict[str, Any],
+    *,
+    path: str,
+    status: str,
+    message: Optional[str] = None,
+    limit: int = 100,
+) -> None:
+    entries = state.setdefault("recent_files", [])
+    entries.append(
+        {
+            "path": path,
+            "status": status,
+            "message": message,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+    )
+    if len(entries) > limit:
+        del entries[:-limit]
 
 
 def _snapshot_state(state: dict[str, Any]) -> dict[str, Any]:
@@ -65,6 +87,7 @@ def _snapshot_state(state: dict[str, Any]) -> dict[str, Any]:
         "current_path": state.get("current_path"),
         "message": str(state.get("message") or "idle"),
         "recent_errors": list(state.get("recent_errors") or []),
+        "recent_files": list(state.get("recent_files") or []),
     }
 
 
@@ -314,6 +337,7 @@ def _process_file(
         if dirty:
             existing.updated_at = datetime.now()
             state["updated"] += 1
+        _push_file_progress(state, path=path_str, status="success")
         return
 
     mime_type, _ = mimetypes.guess_type(path_str)
@@ -376,6 +400,8 @@ def _process_file(
         resolve_photo_location(db, photo, force=True)
         state["inserted"] += 1
 
+    _push_file_progress(state, path=path_str, status="success")
+
 
 # ---------------------------------------------------------------------------
 # Public entry points
@@ -415,6 +441,7 @@ def scan_project(
         current_path=None,
         message="scanning",
         recent_errors=[],
+        recent_files=[],
     )
     _emit_progress(state, progress_callback)
 
@@ -515,6 +542,12 @@ def scan_project(
                 db.rollback()
                 state["errors"] += 1
                 _push_scan_error(state, f"{entry.name}: {exc}")
+                _push_file_progress(
+                    state,
+                    path=str(entry),
+                    status="failed",
+                    message=str(exc),
+                )
                 _emit_progress(state, progress_callback)
     finally:
         try:
@@ -607,6 +640,7 @@ def reindex_project(
         current_path=None,
         message=f"reindexing ({scope})",
         recent_errors=[],
+        recent_files=[],
     )
     _emit_progress(state, progress_callback)
 
@@ -621,6 +655,12 @@ def reindex_project(
                 warning = f"photo#{photo.id} 文件不存在: {photo.file_path}"
                 logger.warning("reindex: %s", warning)
                 _push_scan_error(state, warning)
+                _push_file_progress(
+                    state,
+                    path=photo.file_path,
+                    status="failed",
+                    message=warning,
+                )
                 _emit_progress(state, progress_callback)
                 continue
 
@@ -654,7 +694,10 @@ def reindex_project(
                     photo.updated_at = datetime.now()
                     db.commit()
                     state["updated"] += 1
+                    _push_file_progress(state, path=photo.file_path, status="success")
                     _emit_progress(state, progress_callback)
+                else:
+                    _push_file_progress(state, path=photo.file_path, status="success")
             except Exception as exc:
                 logger.error(
                     "reindex: failed to process photo %d (%s): %s",
@@ -665,6 +708,12 @@ def reindex_project(
                 db.rollback()
                 state["errors"] += 1
                 _push_scan_error(state, f"photo#{photo.id} {Path(photo.file_path).name}: {exc}")
+                _push_file_progress(
+                    state,
+                    path=photo.file_path,
+                    status="failed",
+                    message=str(exc),
+                )
                 _emit_progress(state, progress_callback)
     finally:
         state.update(running=False, current_path=None, message="done")

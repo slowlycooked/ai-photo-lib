@@ -5,6 +5,7 @@ import logging
 import re
 from typing import Any
 
+from .concept_normalizer import normalize_concepts_from_payload
 from .tag_localization import to_chinese_tag
 
 logger = logging.getLogger(__name__)
@@ -19,6 +20,7 @@ _DEFAULTS: dict[str, Any] = {
     "location_clues": [],
     "quality_tags": [],
     "search_keywords": [],
+    "semantic_concepts": [],
     "confidence": 0.0,
 }
 
@@ -42,17 +44,6 @@ _SCHEMA_ALIASES: dict[str, tuple[str, ...]] = {
         "season_weather",
     ),
     "quality_tags": ("quality_tags", "lighting_features", "mood_tags"),
-}
-
-_SEARCH_KEYWORD_TAXONOMY: dict[str, tuple[str, ...]] = {
-    "猫": ("动物", "宠物", "猫科动物"),
-    "狗": ("动物", "宠物", "犬类"),
-    "鸟": ("动物", "鸟类"),
-    "马": ("动物",),
-    "鹿": ("动物", "野生动物"),
-    "兔子": ("动物", "宠物", "小动物"),
-    "兔": ("动物", "宠物", "小动物"),
-    "鱼": ("动物", "水生动物"),
 }
 
 _CN_KEYWORD_TAGS: dict[str, tuple[str, str]] = {
@@ -170,6 +161,7 @@ def _localize_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "quality_tags",
         "location_clues",
         "search_keywords",
+        "semantic_concepts",
     )
     for field in tag_fields:
         localized[field] = _localize_tag_list(_ensure_list(localized.get(field)))
@@ -217,6 +209,7 @@ def _to_schema_payload(data: dict) -> dict:
 def _enrich_search_keywords(payload: dict[str, Any]) -> dict[str, Any]:
     enriched = dict(payload)
     merged_search_keywords: list[str] = []
+    semantic_concepts: list[str] = []
 
     _append_unique(merged_search_keywords, _ensure_list(enriched.get("search_keywords")))
     for field in (
@@ -228,12 +221,22 @@ def _enrich_search_keywords(payload: dict[str, Any]) -> dict[str, Any]:
     ):
         _append_unique(merged_search_keywords, _ensure_list(enriched.get(field)))
 
-    semantic_terms: list[str] = []
-    for tag in _ensure_list(enriched.get("object_tags")):
-        for key, parents in _SEARCH_KEYWORD_TAXONOMY.items():
-            if key in tag:
-                _append_unique(semantic_terms, [tag])
-                _append_unique(semantic_terms, list(parents))
+    normalized = normalize_concepts_from_payload(
+        caption=enriched.get("caption"),
+        scene_tags=_ensure_list(enriched.get("scene_tags")),
+        object_tags=_ensure_list(enriched.get("object_tags")),
+        activity_tags=_ensure_list(enriched.get("activity_tags")),
+        search_keywords=_ensure_list(enriched.get("search_keywords")),
+        location_clues=_ensure_list(enriched.get("location_clues")),
+        raw_result=enriched if isinstance(enriched, dict) else None,
+        people_count=enriched.get("people_count"),
+    )
+    semantic_terms = list(normalized.semantic_entities) + list(normalized.semantic_concepts)
+
+    _append_unique(semantic_concepts, _ensure_list(enriched.get("semantic_concepts")))
+    _append_unique(semantic_concepts, semantic_terms)
+    if semantic_concepts:
+        enriched["semantic_concepts"] = semantic_concepts
 
     _append_unique(merged_search_keywords, semantic_terms)
 

@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { ScanPanel } from "@/components/ScanPanel";
 import { FailedJobsSection } from "@/components/tasks/FailedJobsSection";
+import { TaskProgressStream } from "@/components/tasks/TaskProgressStream";
 import { TaskStatusSummary } from "@/components/tasks/TaskStatusSummary";
 import { api } from "@/api";
 import { queryKeys } from "@/api/queryKeys";
@@ -152,6 +153,13 @@ function AISection({ projectId }: { projectId: number | null }) {
       </div>
 
       {message && <p className="text-caption-sm text-mute">{message}</p>}
+
+      <TaskProgressStream
+        projectId={projectId}
+        title="AI 任务进度明细"
+        jobType="analyze,reanalyze"
+        listQueryKey="ai-jobs-progress"
+      />
 
       {!canRun && <p className="text-caption-sm text-mute">请先选择项目后再执行 AI 分析。</p>}
 
@@ -433,6 +441,14 @@ function FaceScanSection({ projectId }: { projectId: number | null }) {
 
       {message && <p className="text-caption-sm text-mute">{message}</p>}
       {error && <p className="text-caption-sm text-danger">{error}</p>}
+
+      <TaskProgressStream
+        projectId={projectId}
+        title="人脸扫描任务进度明细"
+        jobType="face_scan"
+        listQueryKey="face-scan-jobs-progress"
+      />
+
       {!canRun && <p className="text-caption-sm text-mute">请先选择项目后再执行人脸扫描任务。</p>}
 
       <FailedJobsSection
@@ -469,12 +485,12 @@ export function TasksPage() {
   const initialTab: TaskTab =
     tabParam === "scan" || tabParam === "ai" || tabParam === "face-scan"
       ? tabParam
-      : "ai";
+      : "scan";
   const [tab, setTab] = useState<TaskTab>(initialTab);
 
   const handleTabChange = (next: TaskTab) => {
     setTab(next);
-    setSearchParams(next === "ai" ? {} : { tab: next }, { replace: true });
+    setSearchParams(next === "scan" ? {} : { tab: next }, { replace: true });
   };
 
   const tabClass = (t: TaskTab) =>

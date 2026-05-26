@@ -13,7 +13,7 @@ import time
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
 
 from ..api.deps import require_project
@@ -35,6 +35,8 @@ router = APIRouter(prefix="/projects", tags=["projects-embedding-settings"])
 
 
 class ProjectEmbeddingSettingsResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     project_id: int
     provider: str
@@ -51,9 +53,6 @@ class ProjectEmbeddingSettingsResponse(BaseModel):
     search_tag_vector_weight: float
     search_caption_vector_weight: float
     search_ocr_vector_weight: float
-
-    class Config:
-        from_attributes = True
 
 
 class ProjectEmbeddingSettingsUpdate(BaseModel):

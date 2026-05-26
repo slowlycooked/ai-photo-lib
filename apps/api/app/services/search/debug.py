@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import Optional
 
 from ..query_understanding_service import SearchQueryPlan
+from .concept_recall import derive_concept_query_terms
 from .settings_resolver import SearchSettingsResolver
 from .types import EffectiveSearchSettings
 
@@ -24,6 +25,8 @@ def build_debug_payload(
     filtered_candidates: int = 0,
     filtered_out_samples: Optional[list] = None,
     stale_embedding_filtered: int = 0,
+    concept_candidates: int = 0,
+    people_visual_candidates: int = 0,
     metadata_filters: Optional[dict] = None,
     metadata_candidates: int = 0,
     metadata_only: bool = False,
@@ -31,9 +34,27 @@ def build_debug_payload(
     people_candidates: Optional[list] = None,
     people_filter_mode: Optional[str] = None,
     matched_person_ids: Optional[list[int]] = None,
+    metadata_filter_active: bool = False,
+    metadata_filter_skipped_reason: Optional[str] = None,
+    metadata_only_allowed: bool = True,
+    concept_terms: Optional[list[str]] = None,
+    concept_entity_terms: Optional[list[str]] = None,
+    concept_debug: Optional[dict] = None,
 ) -> dict:
     """Build the debug payload that accompanies a search response."""
+    derived_concept_terms, derived_entity_terms = derive_concept_query_terms(query_plan)
+    payload_concept_terms = concept_terms if concept_terms is not None else derived_concept_terms
+    payload_entity_terms = (
+        concept_entity_terms if concept_entity_terms is not None else derived_entity_terms
+    )
+
     payload: dict = {
+        "query_plan": {
+            "intent": query_plan.intent,
+            "exact_terms": query_plan.exact_terms,
+            "expanded_terms": query_plan.expanded_terms,
+            "semantic_query_text": query_plan.semantic_query_text,
+        },
         "original_query": query_plan.original_query,
         "normalized_query": query_plan.normalized_query,
         "semantic_query_text": query_plan.semantic_query_text,
@@ -65,6 +86,8 @@ def build_debug_payload(
         # Candidate pipeline counts
         "candidate_counts": {
             "keyword_candidates": keyword_candidates,
+            "concept_candidates": concept_candidates,
+            "people_visual_candidates": people_visual_candidates,
             "vector_candidates": vector_candidates,
             "merged_candidates": merged_candidates,
             "displayed_candidates": displayed_candidates,
@@ -73,8 +96,24 @@ def build_debug_payload(
         },
         # Legacy flat counts kept for backward compat
         "keyword_candidates": keyword_candidates,
+        "concept_candidates": concept_candidates,
+        "people_visual_candidates": people_visual_candidates,
         "vector_candidates": vector_candidates,
         "merged_candidates": merged_candidates,
+        "filtered_candidates": filtered_candidates,
+        "stale_embedding_filtered": stale_embedding_filtered,
+        "metadata_filter_active": metadata_filter_active,
+        "metadata_filter_skipped_reason": metadata_filter_skipped_reason,
+        "metadata_only_allowed": metadata_only_allowed,
+        "concept_terms": payload_concept_terms,
+        "concept_entity_terms": payload_entity_terms,
+        "concept_debug": concept_debug or {
+            "enabled": True,
+            "reason": "connected",
+            "concept_terms": payload_concept_terms,
+            "entity_terms": payload_entity_terms,
+            "candidates": concept_candidates,
+        },
         # Evidence / filter stats
         "filter_stats": {
             "filtered_count": filtered_candidates,

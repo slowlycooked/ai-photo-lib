@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from dataclasses import asdict
+from datetime import datetime, timezone
+import json
 from pathlib import Path
 from typing import Optional
 
@@ -28,6 +31,7 @@ from ..schemas.face import (
 )
 from ..services.face_scan_batch_service import FaceScanBatchService
 from ..services.face_scan_service import FaceScanDisabledError, FaceScanService
+from ..services.unknown_face_clustering_service import cluster_unknown_faces
 from ..services.project_task_service import (
     build_face_cluster_status,
     enqueue_face_cluster_task,
@@ -46,15 +50,110 @@ def scan_project_photo_faces(
     project: Project = Depends(require_project),
     db: Session = Depends(get_db),
 ) -> FaceScanResponse:
+    started_at = datetime.now(timezone.utc)
+    job = AIJob(
+        photo_id=photo.id,
+        project_id=project_id,
+        job_type="face_scan",
+        status="running",
+        retry_count=0,
+        started_at=started_at,
+        updated_at=started_at,
+    )
+    db.add(job)
+    db.commit()
+
     try:
         result = FaceScanService(db).scan_photo(project_id, photo.id)
+        cluster_assignments_created = 0
+        cluster_result = None
+        if result.faces_detected > 0:
+            cluster_result = cluster_unknown_faces(
+                db,
+                project_id=project_id,
+                max_faces=max(result.faces_detected, 1),
+                photo_ids=[photo.id],
+            )
+            assignments_created = getattr(cluster_result, "assignments_created", 0)
+            if isinstance(assignments_created, int):
+                cluster_assignments_created = max(assignments_created, 0)
+
+        response_payload = asdict(result)
+        total_review_pending = int(result.review_pending) + cluster_assignments_created
+        response_payload["review_pending"] = total_review_pending
+
+        if total_review_pending <= 0 and result.faces_detected > 0:
+            skipped_reason = getattr(cluster_result, "skipped_reason", None)
+            embedded_ready = int(result.embeddings_created) + int(result.embeddings_updated)
+            if skipped_reason == "missing_people_tables":
+                response_payload["message"] = (
+                    "Face scan completed: review unavailable because required tables "
+                    "persons/person_face_assignments are missing. Run alembic upgrade head."
+                )
+            elif int(result.auto_assigned) > 0:
+                response_payload["message"] = (
+                    f"Face scan completed: {int(result.auto_assigned)} faces were auto-assigned "
+                    "to existing people, so no review_pending entries were created."
+                )
+            elif embedded_ready <= 0:
+                response_payload["message"] = (
+                    "Face scan completed: no usable face embeddings were generated "
+                    "(common causes: face too small or thumbnail fallback)."
+                )
+            else:
+                response_payload["message"] = (
+                    "Face scan completed: no review_pending entries were created for this photo."
+                )
+        finished_at = datetime.now(timezone.utc)
+        job.status = "success"
+        job.error_message = None
+        job.parse_error = None
+        job.raw_model_output = json.dumps(response_payload, ensure_ascii=True)
+        job.finished_at = finished_at
+        job.updated_at = finished_at
+        db.commit()
     except FaceScanDisabledError as exc:
+        db.rollback()
+        failed_at = datetime.now(timezone.utc)
+        job.status = "failed"
+        job.error_message = str(exc)[:4000]
+        job.parse_error = str(exc)[:4000]
+        job.finished_at = failed_at
+        job.updated_at = failed_at
+        db.commit()
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except FaceRecognitionProviderUnavailableError as exc:
+        db.rollback()
+        failed_at = datetime.now(timezone.utc)
+        job.status = "failed"
+        job.error_message = str(exc)[:4000]
+        job.parse_error = str(exc)[:4000]
+        job.finished_at = failed_at
+        job.updated_at = failed_at
+        db.commit()
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except FileNotFoundError as exc:
+        db.rollback()
+        failed_at = datetime.now(timezone.utc)
+        job.status = "failed"
+        job.error_message = str(exc)[:4000]
+        job.parse_error = str(exc)[:4000]
+        job.finished_at = failed_at
+        job.updated_at = failed_at
+        db.commit()
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    return FaceScanResponse.model_validate(result)
+    except Exception as exc:  # noqa: BLE001
+        db.rollback()
+        failed_at = datetime.now(timezone.utc)
+        error_message = f"{type(exc).__name__}: {exc}"
+        job.status = "failed"
+        job.error_message = error_message[:4000]
+        job.parse_error = error_message[:4000]
+        job.finished_at = failed_at
+        job.updated_at = failed_at
+        db.commit()
+        raise
+    return FaceScanResponse.model_validate(response_payload)
 
 
 @router.post(
@@ -145,21 +244,18 @@ def cluster_project_unknown_faces(
     project: Project = Depends(require_project),
     db: Session = Depends(get_db),
 ) -> FaceClusterUnknownResponse:
-    active_task = get_active_face_cluster_task(db, project_id)
-    if active_task is not None:
-        return FaceClusterUnknownResponse(
-            message="Unknown face clustering already in progress",
-            status=build_face_cluster_status(active_task),
-        )
-
-    task = enqueue_face_cluster_task(
+    result = enqueue_face_cluster_task(
         db,
         project_id=project_id,
         max_faces=body.max_faces,
     )
     return FaceClusterUnknownResponse(
-        message="Unknown face clustering queued",
-        status=build_face_cluster_status(task),
+        message=(
+            "Unknown face clustering queued"
+            if result.created
+            else "Unknown face clustering already in progress"
+        ),
+        status=build_face_cluster_status(result.task),
     )
 
 

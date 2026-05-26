@@ -26,6 +26,52 @@ from .types import (
 logger = logging.getLogger(__name__)
 
 
+def _normalise_concept_taxonomy(raw: object) -> list[dict]:
+    """Return a sanitized project concept taxonomy list.
+
+    Each entry keeps only known keys and ensures list-valued properties.
+    Unknown or malformed entries are ignored.
+    """
+    if not isinstance(raw, list):
+        return []
+
+    normalized: list[dict] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        concept = str(item.get("concept") or "").strip()
+        if not concept:
+            continue
+        normalized.append(
+            {
+                "concept": concept,
+                "children": [
+                    str(v).strip()
+                    for v in (item.get("children") or [])
+                    if str(v).strip()
+                ],
+                "aliases": [
+                    str(v).strip()
+                    for v in (item.get("aliases") or [])
+                    if str(v).strip()
+                ],
+                "positive_fields": [
+                    str(v).strip()
+                    for v in (item.get("positive_fields") or [])
+                    if str(v).strip()
+                ],
+                "negative_terms": [
+                    str(v).strip()
+                    for v in (item.get("negative_terms") or [])
+                    if str(v).strip()
+                ],
+                "recall_policy": str(item.get("recall_policy") or "").strip(),
+                "evidence_policy": str(item.get("evidence_policy") or "").strip(),
+            }
+        )
+    return normalized
+
+
 class SearchSettingsResolver:
     """Resolve effective search settings for a project."""
 
@@ -48,6 +94,7 @@ class SearchSettingsResolver:
             enable_query_understanding=True,
             enable_structured_filters=False,
             enable_semantic_tag_boost=False,
+            concept_taxonomy=[],
         )
 
     # ── Main resolver ─────────────────────────────────────────────────────────
@@ -94,6 +141,7 @@ class SearchSettingsResolver:
                 negative_term_penalty=float(_q.get("negative_term_penalty", 0.01)),
                 require_core_facet_match=bool(_q.get("require_core_facet_match", False)),
                 allow_vector_only_for_facet_query=bool(_q.get("allow_vector_only_for_facet_query", True)),
+                concept_taxonomy=_normalise_concept_taxonomy(_q.get("concept_taxonomy")),
             )
 
         # 2. project_embedding_settings (partial fallback — vector weights only)
@@ -132,6 +180,7 @@ class SearchSettingsResolver:
             enable_query_understanding=True,
             enable_structured_filters=False,
             enable_semantic_tag_boost=False,
+            concept_taxonomy=[],
         )
 
 

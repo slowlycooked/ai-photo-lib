@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
-import { Camera, Search, X, Images, Tag, ListTodo, Settings, Users } from "lucide-react";
+import { Camera, Search, X, Images, Tag, ListTodo, Settings, Users, LogOut } from "lucide-react";
 import { NavLink, useNavigate, useSearchParams, useLocation } from "react-router-dom";
 import { ProjectSelector } from "./ProjectSelector";
 import { useProjectContext } from "@/contexts/ProjectContext";
+import { useAuth } from "@/contexts/AuthContext";
 
 const staticNavItems = [
   { to: "/photos", label: "照片", icon: Images },
@@ -13,6 +14,7 @@ const staticNavItems = [
 
 export function Header() {
   const { currentProjectId } = useProjectContext();
+  const auth = useAuth();
   const [params] = useSearchParams();
   const location = useLocation();
   const navigate = useNavigate();
@@ -50,6 +52,11 @@ export function Header() {
   const handleClear = () => {
     setInput("");
     if (location.pathname === "/search") navigate("/search");
+  };
+
+  const handleLogout = async () => {
+    await auth.logout();
+    navigate("/login", { replace: true });
   };
 
   return (
@@ -116,6 +123,16 @@ export function Header() {
           )}
         </div>
       </form>
+
+      <button
+        type="button"
+        onClick={handleLogout}
+        className="w-9 h-9 flex items-center justify-center rounded-sm text-mute hover:text-ink hover:bg-surface-card transition-colors"
+        aria-label="退出登录"
+        title="退出登录"
+      >
+        <LogOut className="w-4 h-4" />
+      </button>
     </header>
   );
 }

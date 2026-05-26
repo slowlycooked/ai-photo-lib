@@ -186,17 +186,16 @@ class FaceScanService:
                     detection.updated_at = datetime.now(timezone.utc)
                     continue
 
-                if scan_quality_degraded:
-                    detection.status = "thumbnail_fallback"
-                    detection.error_message = "scan from thumbnail fallback — embedding skipped"
-                    detection.updated_at = datetime.now(timezone.utc)
-                    continue
-
                 embedding_result = resolved_provider.embed_face_from_bgr(
                     image_bgr, detected_face
                 )
                 detection.status = "embedded"
-                detection.error_message = None
+                if scan_quality_degraded:
+                    detection.error_message = (
+                        "embedded from thumbnail fallback — quality may degrade"
+                    )
+                else:
+                    detection.error_message = None
                 detection.updated_at = datetime.now(timezone.utc)
 
                 _, emb_created = self._upsert_embedding(
@@ -204,16 +203,17 @@ class FaceScanService:
                     detection=detection,
                     embedding_result=embedding_result,
                 )
-                match_decision = match_face_detection_to_person(
-                    self._db,
-                    project_id=project_id,
-                    face_detection_id=detection.id,
-                )
-                if match_decision is not None:
-                    if match_decision.assignment_status == "auto_assigned":
-                        auto_assigned += 1
-                    elif match_decision.assignment_status == "review_pending":
-                        review_pending += 1
+                if not scan_quality_degraded:
+                    match_decision = match_face_detection_to_person(
+                        self._db,
+                        project_id=project_id,
+                        face_detection_id=detection.id,
+                    )
+                    if match_decision is not None:
+                        if match_decision.assignment_status == "auto_assigned":
+                            auto_assigned += 1
+                        elif match_decision.assignment_status == "review_pending":
+                            review_pending += 1
                 if emb_created:
                     embedding_created += 1
                 else:

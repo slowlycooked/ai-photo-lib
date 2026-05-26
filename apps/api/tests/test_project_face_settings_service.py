@@ -13,12 +13,14 @@ os.environ.setdefault("OPENAI_API_KEY", "test")
 os.environ.setdefault("OPENAI_BASE_URL", "http://127.0.0.1:9999/v1")
 os.environ.setdefault("OPENAI_MODEL", "test-model")
 os.environ.setdefault("OPENAI_VISION_MODEL", "test-model")
+os.environ["FACE_RECOGNITION_ENABLED"] = "false"
 
 from app.services.project_face_settings_service import (  # noqa: E402
     get_or_create_project_face_settings,
     reset_project_face_settings,
     update_project_face_settings,
 )
+from app.services import project_face_settings_service  # noqa: E402
 from app.models import project  # noqa: F401, E402
 
 
@@ -79,7 +81,12 @@ def _make_session() -> Session:
     return SessionLocal()
 
 
+def _force_face_recognition_default_disabled() -> None:
+    project_face_settings_service.global_settings.face_recognition_enabled = False
+
+
 def test_get_or_create_project_face_settings_uses_defaults() -> None:
+    _force_face_recognition_default_disabled()
     db = _make_session()
     try:
         row = get_or_create_project_face_settings(db, 1)
@@ -94,6 +101,7 @@ def test_get_or_create_project_face_settings_uses_defaults() -> None:
 
 
 def test_update_and_reset_project_face_settings() -> None:
+    _force_face_recognition_default_disabled()
     db = _make_session()
     try:
         update_project_face_settings(
