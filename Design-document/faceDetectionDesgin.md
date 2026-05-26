@@ -1,7 +1,7 @@
 # ai-photo-lib People / Face Recognition 设计与实施进度
 
-> 更新时间：2026-05-25
-> 状态：Phase 1 已基本落地，Phase 2 正在起步
+> 更新时间：2026-05-26
+> 状态：基础闭环已落地，当前进入工程收敛阶段
 
 ## 1. 功能边界
 
@@ -76,7 +76,7 @@
 - `FACE_DETECTOR_MODEL_PATH`
 - `FACE_EMBEDDING_MODEL_PATH`
 
-### 2.4 Faces / People 只读 API 已可用
+### 2.4 Faces / People 读写 API 已可用
 
 当前已提供：
 
@@ -85,27 +85,44 @@
 - `GET /projects/{project_id}/faces/{face_id}/crop`
 - `GET /projects/{project_id}/people`
 - `GET /projects/{project_id}/people/{person_id}`
+- `POST /projects/{project_id}/people`
+- `PATCH /projects/{project_id}/people/{person_id}`
+- `DELETE /projects/{project_id}/people/{person_id}`
+- `POST /projects/{project_id}/people/{person_id}/faces/{face_id}/confirm`
+- `POST /projects/{project_id}/people/{person_id}/faces/{face_id}/reject`
+- `POST /projects/{project_id}/people/{person_id}/faces/{face_id}/move`
+- `POST /projects/{project_id}/people/{source_person_id}/merge`
+- `POST /projects/{project_id}/people/{person_id}/split`
+- `POST /projects/{project_id}/people/{person_id}/representative-face`
+- `GET /projects/{project_id}/people/review`
+- `POST /projects/{project_id}/people/{person_id}/review/batch-confirm`
+- `POST /projects/{project_id}/people/{person_id}/review/batch-reject`
+- `POST /projects/{project_id}/people/{person_id}/review/batch-move`
 
 这批 API 主要用于：
 
 - 调试检测结果
 - 查看 embedding 与 crop
 - 展示当前已有 `persons` 和 assignments
+- 形成人工确认、纠错、拆分、合并、批量 review 的闭环
 
 ### 2.5 前端调试闭环已形成
 
-当前前端已经具备一条最小闭环：
+当前前端已经具备一条可用闭环：
 
 1. 在项目设置页开启人脸识别
 2. 在照片详情页手动执行 `face scan`
 3. 查看当前照片检测到的人脸与 crop
-4. 打开 `/projects/:projectId/people` 查看人物列表和只读详情
+4. 打开 `/projects/:projectId/people` 查看人物列表与详情
+5. 对候选人脸执行确认 / 排除 / 移动 / merge / split
+6. 打开 `/projects/:projectId/people/review` 处理批量待确认样本
 
 已落地页面：
 
 - 项目 AI 设置中的 Face Settings 面板
 - 照片详情弹窗中的人脸识别区块
 - `/projects/:projectId/people` 人物页
+- `/projects/:projectId/people/review` 复核页
 
 人物页当前能力：
 
@@ -113,28 +130,61 @@
 - 展示代表头像
 - 展示样本数、已确认数、自动识别数、待确认数
 - 展示关联人脸及状态、相似度、质量、bbox
+- 执行重命名、确认、排除、移动
+- 执行 merge / split
+- 设置 representative face
+- 处理 review pending 批量操作
+
+### 2.6 项目级批量扫描与 unknown clustering 已落地
+
+当前已经支持：
+
+- `POST /projects/{project_id}/face-scan-project/start`
+- `GET /projects/{project_id}/face-scan-project/status`
+- `POST /projects/{project_id}/face-cluster-unknown`
+
+当前能力边界：
+
+- face scan project 已走持久化 job 入队与 worker 执行
+- unknown clustering 已可把无归属人脸聚成未命名人物
+- 命名策略仍偏系统内部风格，尚未做产品化收敛
+
+### 2.7 Search 集成已部分落地
+
+目前已支持：
+
+- search query 解析人物名
+- `爸爸` / `妈妈` 这类人物查询
+- 多人共现查询，如 `爸爸和妈妈`
+- 人物查询与语义查询混合，如 `爸爸在海边`
+
+当前实现原则：
+
+- 仅在当前项目内解析已命名人物
+- 人物召回先收缩候选集，再叠加 keyword / vector / metadata
+- `review_pending` 默认不作为 people recall 的正向证据
 
 ## 3. 当前还没有完成的部分
 
 虽然基础链路已经可用，但 People Recognition 还没有进入“越用越准”的状态。当前缺口主要有：
 
-### 3.1 自动聚类与人物自动创建未完成
+### 3.1 自动人物生长能力已初步落地，但还没有产品化收敛
 
-还没有真正落地：
+当前已经落地：
 
-- `face_cluster_project`
-- 未知人脸聚类
-- 自动生成 `人物 1 / 人物 2 / 人物 3`
-- representative face 自动选择策略
+- unknown face clustering
+- 自动创建未命名人物
+- representative face 基础选择
 
-这意味着：
+当前仍有缺口：
 
-- 当前 People 页只能展示数据库中已经存在的 `persons`
-- 还不能靠扫描全库自动长出完整人物列表
+- 未命名人物命名策略仍然偏开发态
+- cluster 质量缺少产品级评估与复核流程
+- 还没有“全库持续重聚类”的长期任务机制
 
-### 3.2 人工纠错闭环未完成
+### 3.2 人工纠错闭环已落地，但服务边界还没有收敛
 
-还没有落地写操作 API：
+当前已经落地：
 
 - 人物重命名
 - 确认属于某人
@@ -143,30 +193,49 @@
 - 设为代表头像
 - 合并人物
 - 拆分人物
+- review pending 批量确认 / 排除 / 移动
 
-因此当前人物页还是只读的，不能直接形成正样本和负样本沉淀。
+当前主要问题不再是“能不能用”，而是：
 
-### 3.3 Worker 化任务体系未完成
+- router 文件过大
+- 事务、计数刷新、prototype rebuild 仍然耦合
+- 批量动作和单条动作的共享逻辑还需要抽到 service
 
-还没有接入正式 worker 任务：
+### 3.3 Worker 化任务体系已部分落地，但仍然分裂
 
-- `face_scan_photo`
-- `face_scan_project`
-- `face_match_detection`
-- `face_cluster_project`
+当前已经接入：
+
+- `face_scan_project` 的批量 job 入队与状态查询
+
+当前还没有统一收敛：
+
+- 照片库 `scan/start`
+- `scan/reindex`
+- `face_cluster_unknown`
 - `face_rematch_unknown`
 - `face_rebuild_person_prototypes`
 
-当前主要还是同步调用单张照片扫描，用于开发和调试。
+当前系统仍同时存在：
 
-### 3.4 Search 集成未完成
+- 持久化 job + worker
+- API 进程内线程 + 内存状态
 
-目前还没有把人物能力接进搜索系统：
+这是下一阶段最需要统一的点。
 
-- search query parser 还不能解析人物名
-- search service 还没有 `person_id` filter
-- 还不支持多人共现
-- 还不支持 `face_count` 条件
+### 3.4 Search 集成已初步完成，但还有深化空间
+
+当前已完成：
+
+- 人物名解析
+- 多人共现
+- 人物 + 语义混合查询
+- project-scoped people recall
+
+当前还没有完成：
+
+- `face_count` 条件搜索
+- review queue 与搜索结果页联动
+- 更细的人物过滤 UI 与 explain 展示
 
 ## 4. 当前可验收范围
 
@@ -176,15 +245,14 @@
 - 所有新增 API 都是 project-scoped
 - 单张照片的人脸检测与 embedding 入库链路已实现
 - 照片详情页可手动触发人脸扫描并查看结果
-- People 列表与详情页已经接上后端只读 API
+- People 列表、详情、review 页已经接上读写 API
+- 基础人物搜索已经接入主搜索链路
 
 当前不应误认为已经上线的能力：
 
-- 自动人物聚类
-- 人工确认闭环
-- 批量 review queue
-- 人物搜索
-- merge / split / rematch
+- 全量长期任务框架统一
+- 完整的 rematch / prototype rebuild 自动流水线
+- 产品化的 unknown cluster 生命周期管理
 
 ## 5. 下一步行动计划
 
@@ -256,7 +324,7 @@
 
 ## 6. 当前建议的开发策略
 
-建议近期不要同时并行推进太多块，而是优先保证“人工纠错闭环”先成立。
+建议近期不要同时并行推进太多块，而是优先保证“长任务体系统一”和“People 边界拆分”先成立。
 
 理由很简单：
 

@@ -23,7 +23,7 @@ os.environ.setdefault("OPENAI_VISION_MODEL", "test-model")
 
 from app.database import get_db  # noqa: E402
 from app.main import app  # noqa: E402
-from app.services.scanner import get_project_scan_state, scan_project  # noqa: E402
+from app.services.scanner import scan_project  # noqa: E402
 
 
 SCHEMA_SQL = """
@@ -289,11 +289,10 @@ class ScanCleanupTest(unittest.TestCase):
 
             db = SessionLocal()
             try:
-                scan_project(db, 1)
+                state = scan_project(db, 1)
             finally:
                 db.close()
 
-            state = get_project_scan_state(1)
             self.assertFalse(state["running"])
 
             with engine.connect() as conn:

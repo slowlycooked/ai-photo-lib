@@ -39,6 +39,10 @@ def _default_settings() -> EffectiveSearchSettings:
 
 
 class RRFMergeTest(unittest.TestCase):
+    def test_default_settings_match_project_search_settings_defaults(self) -> None:
+        settings = _default_settings()
+        self.assertFalse(settings.enable_semantic_tag_boost)
+
     def test_deduplicates_photo_ids(self) -> None:
         keyword = [
             SearchCandidate(photo_id=1, keyword_score=0.9),

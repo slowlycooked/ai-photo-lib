@@ -232,6 +232,25 @@ CREATE TABLE project_search_settings (
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE persons (
+    id INTEGER PRIMARY KEY,
+    project_id INTEGER NOT NULL,
+    display_name TEXT NOT NULL,
+    normalized_name TEXT,
+    is_named BOOLEAN NOT NULL DEFAULT 0,
+    representative_face_detection_id INTEGER,
+    sample_count INTEGER NOT NULL DEFAULT 0,
+    confirmed_sample_count INTEGER NOT NULL DEFAULT 0,
+    auto_assigned_count INTEGER NOT NULL DEFAULT 0,
+    review_pending_count INTEGER NOT NULL DEFAULT 0,
+    created_by TEXT NOT NULL DEFAULT 'system',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX ix_persons_project_named ON persons (project_id, is_named);
+CREATE INDEX ix_persons_project_updated_at ON persons (project_id, updated_at);
 """
 
 SEED_SQL = """
@@ -335,11 +354,78 @@ class ProjectIsolationEndpointsTest(unittest.TestCase):
         )
         self.assertEqual(res.status_code, 404)
 
+    def test_project_prompt_templates_list_is_scoped(self) -> None:
+        res = self.client.get("/projects/1/prompt-templates")
+        self.assertEqual(res.status_code, 200)
+        body = res.json()
+        self.assertEqual(body["total"], 1)
+        self.assertEqual(body["items"][0]["id"], 1001)
+        self.assertEqual(body["items"][0]["project_id"], 1)
+
+    def test_project_ai_settings_rejects_cross_project_active_template(self) -> None:
+        res = self.client.put(
+            "/projects/1/ai-settings",
+            json={
+                "provider": "llama-server",
+                "endpoint_url": "http://127.0.0.1:8082/v1",
+                "model_name": "test-model",
+                "temperature": 0,
+                "top_p": 0.8,
+                "max_tokens": 512,
+                "retry_count": 1,
+                "output_language": "zh-CN",
+                "json_parse_strategy": "auto_extract",
+                "active_prompt_template_id": 2002,
+            },
+        )
+        self.assertEqual(res.status_code, 404)
+        self.assertEqual(res.json().get("detail"), "Prompt template not found")
+
     def test_project_ai_start_only_queues_own_photos(self) -> None:
         res = self.client.post("/projects/1/ai/analyze/start")
         self.assertEqual(res.status_code, 200)
         body = res.json()
         self.assertEqual(body["created_jobs"], 1)
+
+    def test_project_ai_jobs_list_is_scoped(self) -> None:
+        with self._engine.begin() as conn:
+            conn.execute(
+                sa.text(
+                    """
+                    INSERT INTO ai_jobs (id, photo_id, project_id, job_type, status)
+                    VALUES (3001, 101, 1, 'analyze', 'queued'),
+                           (3002, 202, 2, 'analyze', 'failed')
+                    """
+                )
+            )
+
+        res = self.client.get("/projects/1/ai/jobs")
+        self.assertEqual(res.status_code, 200)
+        body = res.json()
+        self.assertEqual(body["total"], 1)
+        self.assertEqual(body["items"][0]["id"], 3001)
+        self.assertEqual(body["items"][0]["photo_id"], 101)
+
+    def test_project_ai_status_is_scoped(self) -> None:
+        with self._engine.begin() as conn:
+            conn.execute(
+                sa.text(
+                    """
+                    INSERT INTO ai_jobs (id, photo_id, project_id, job_type, status)
+                    VALUES (4001, 101, 1, 'analyze', 'queued'),
+                           (4002, 102, 1, 'analyze', 'running'),
+                           (4003, 202, 2, 'analyze', 'failed')
+                    """
+                )
+            )
+
+        res = self.client.get("/projects/1/ai/status")
+        self.assertEqual(res.status_code, 200)
+        body = res.json()
+        self.assertEqual(body["queued"], 1)
+        self.assertEqual(body["running"], 1)
+        self.assertEqual(body["failed"], 0)
+        self.assertEqual(body["total"], 2)
 
     def test_active_prompt_fk_blocks_cross_project_template(self) -> None:
         with self._engine.begin() as conn:

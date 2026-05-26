@@ -8,6 +8,7 @@ import type {
   EmbeddingTestResponse,
   FaceClusterUnknownRequest,
   FaceClusterUnknownResponse,
+  FaceClusterUnknownStatusResponse,
   FaceDetectionDetail,
   FaceDetectionListResponse,
   FaceScanProjectStartRequest,
@@ -200,6 +201,9 @@ export const projectsApi = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     }),
+
+  projectFaceClusterUnknownStatus: (id: number) =>
+    request<FaceClusterUnknownStatusResponse>(`/projects/${id}/face-cluster-unknown/status`),
 
   faces: (
     id: number,

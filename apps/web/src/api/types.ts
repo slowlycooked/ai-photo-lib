@@ -520,13 +520,24 @@ export interface FaceClusterUnknownRequest {
   max_faces?: number;
 }
 
-export interface FaceClusterUnknownResponse {
+export interface FaceClusterUnknownStatusResponse {
   project_id: number;
+  task_id: number | null;
+  status: string;
+  running: boolean;
+  max_faces: number;
   clusters_created: number;
   persons_created: number;
   faces_clustered: number;
   assignments_created: number;
+  errors: number;
+  recent_errors: string[];
   message: string;
+}
+
+export interface FaceClusterUnknownResponse {
+  message: string;
+  status: FaceClusterUnknownStatusResponse;
 }
 
 export interface PersonSummary {

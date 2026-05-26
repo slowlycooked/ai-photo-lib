@@ -11,21 +11,12 @@ from typing import Dict, List, Optional, Sequence, Set
 from sqlalchemy.orm import Session
 
 from ...models.face import FaceDetection, Person, PersonFaceAssignment
+from ..people_assignment_constants import (
+    ASSIGNMENT_STATUS_WEIGHT,
+    SEARCH_RECALL_ASSIGNMENT_STATUSES,
+)
 from .people_query_resolver import PeopleQueryResolution
 from .types import SearchCandidate
-
-
-ALLOWED_ASSIGNMENT_STATUSES: tuple[str, ...] = (
-    "human_confirmed",
-    "human_corrected",
-    "auto_assigned",
-)
-
-_STATUS_WEIGHT: dict[str, float] = {
-    "human_confirmed": 1.0,
-    "human_corrected": 1.0,
-    "auto_assigned": 0.82,
-}
 
 
 @dataclass(frozen=True)
@@ -47,15 +38,15 @@ class PeopleRecallService:
         *,
         resolution: PeopleQueryResolution,
         constrained_photo_ids: Optional[Set[int]] = None,
-        assignment_statuses: Sequence[str] = ALLOWED_ASSIGNMENT_STATUSES,
+        assignment_statuses: Sequence[str] = SEARCH_RECALL_ASSIGNMENT_STATUSES,
         limit: int = 5000,
     ) -> PeopleRecallResult:
         if not resolution.matched_person_ids:
             return PeopleRecallResult(candidates=[], photo_ids=set(), matched_person_ids=[])
 
-        statuses = [s for s in assignment_statuses if s in ALLOWED_ASSIGNMENT_STATUSES]
+        statuses = [s for s in assignment_statuses if s in SEARCH_RECALL_ASSIGNMENT_STATUSES]
         if not statuses:
-            statuses = list(ALLOWED_ASSIGNMENT_STATUSES)
+            statuses = list(SEARCH_RECALL_ASSIGNMENT_STATUSES)
 
         query = (
             self._db.query(
@@ -159,7 +150,7 @@ class PeopleRecallService:
         weighted = 0.0
         for row in matched_people:
             status = str(row.get("assignment_status") or "")
-            status_weight = _STATUS_WEIGHT.get(status, 0.0)
+            status_weight = ASSIGNMENT_STATUS_WEIGHT.get(status, 0.0)
             confidence = row.get("confidence")
             similarity = row.get("similarity_score")
             confidence_v = float(confidence) if confidence is not None else 0.0

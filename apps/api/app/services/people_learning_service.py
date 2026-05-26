@@ -18,6 +18,12 @@ from ..models.face import (
     PersonFaceAssignment,
     PersonPrototype,
 )
+from .people_assignment_constants import (
+    POSITIVE_ASSIGNMENT_STATUSES,
+    STATUS_AUTO_ASSIGNED,
+    STATUS_REJECTED,
+    STATUS_REVIEW_PENDING,
+)
 from .project_face_settings_service import get_or_create_project_face_settings
 
 
@@ -96,16 +102,16 @@ def _refresh_person_counters(db: Session, *, project_id: int, person_id: int) ->
                 sa.case((PersonFaceAssignment.is_positive_sample.is_(True), 1), else_=0)
             ),
             sa.func.sum(
-                sa.case((PersonFaceAssignment.assignment_status == "auto_assigned", 1), else_=0)
+                sa.case((PersonFaceAssignment.assignment_status == STATUS_AUTO_ASSIGNED, 1), else_=0)
             ),
             sa.func.sum(
-                sa.case((PersonFaceAssignment.assignment_status == "review_pending", 1), else_=0)
+                sa.case((PersonFaceAssignment.assignment_status == STATUS_REVIEW_PENDING, 1), else_=0)
             ),
         )
         .filter(
             PersonFaceAssignment.project_id == project_id,
             PersonFaceAssignment.person_id == person_id,
-            PersonFaceAssignment.assignment_status != "rejected",
+            PersonFaceAssignment.assignment_status != STATUS_REJECTED,
         )
         .one()
     )
@@ -149,7 +155,7 @@ def rebuild_person_centroid_prototype(
             PersonFaceAssignment.project_id == project_id,
             PersonFaceAssignment.person_id == person_id,
             PersonFaceAssignment.is_positive_sample.is_(True),
-            PersonFaceAssignment.assignment_status.in_(["human_confirmed", "human_corrected"]),
+            PersonFaceAssignment.assignment_status.in_(POSITIVE_ASSIGNMENT_STATUSES),
             FaceDetection.project_id == project_id,
             FaceEmbedding.project_id == project_id,
             FaceEmbedding.model_name == settings.face_embedding_model,
@@ -317,9 +323,9 @@ def match_face_detection_to_person(
 
     assignment_status: Optional[str] = None
     if best_similarity >= settings.auto_accept_threshold:
-        assignment_status = "auto_assigned"
+        assignment_status = STATUS_AUTO_ASSIGNED
     elif best_similarity >= settings.review_threshold:
-        assignment_status = "review_pending"
+        assignment_status = STATUS_REVIEW_PENDING
 
     if assignment_status is None:
         return None

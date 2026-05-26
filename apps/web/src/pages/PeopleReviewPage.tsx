@@ -1,129 +1,31 @@
-import { useMemo, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, Loader2, ScanFace } from "lucide-react";
-import { Link, Navigate, useParams } from "react-router-dom";
-import { api, type PersonFaceAssignment } from "@/api";
-import { useProjectContext } from "@/contexts/ProjectContext";
-
-const PAGE_SIZE = 80;
-
-function buildRequestId(): string {
-  try {
-    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-      return crypto.randomUUID();
-    }
-  } catch {
-    // Ignore and fallback.
-  }
-  return `req-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-}
+import { Link, Navigate } from "react-router-dom";
+import { api } from "@/api";
+import { usePeopleReviewPage } from "@/hooks/usePeopleReviewPage";
 
 export function PeopleReviewPage() {
-  const params = useParams<{ projectId: string }>();
-  const routeProjectId = Number(params.projectId);
-  const { currentProject } = useProjectContext();
-  const queryClient = useQueryClient();
-  const [page, setPage] = useState(1);
-  const [statusMessage, setStatusMessage] = useState<string | null>(null);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [moveTargets, setMoveTargets] = useState<Record<number, number>>({});
-
-  const selectedProjectId = Number.isFinite(routeProjectId)
-    ? routeProjectId
-    : (currentProject?.id ?? 0);
-
-  const { data: peopleData } = useQuery({
-    queryKey: ["project-people", selectedProjectId],
-    queryFn: () => api.projects.people(selectedProjectId, true, 500),
-    enabled: selectedProjectId > 0,
-  });
-
-  const { data: reviewData, isLoading, error } = useQuery({
-    queryKey: ["project-review-page", selectedProjectId, page],
-    queryFn: () => api.projects.reviewPending(selectedProjectId, null, PAGE_SIZE, (page - 1) * PAGE_SIZE),
-    enabled: selectedProjectId > 0,
-  });
-
-  const peopleById = useMemo(() => {
-    const map = new Map<number, string>();
-    for (const person of peopleData?.items ?? []) {
-      map.set(person.id, person.display_name);
-    }
-    return map;
-  }, [peopleData?.items]);
-
-  const grouped = useMemo(() => {
-    const map = new Map<number, PersonFaceAssignment[]>();
-    for (const item of reviewData?.items ?? []) {
-      const list = map.get(item.person_id) ?? [];
-      list.push(item);
-      map.set(item.person_id, list);
-    }
-    return Array.from(map.entries()).sort((a, b) => b[1].length - a[1].length);
-  }, [reviewData?.items]);
-
-  const maxPage = Math.max(1, Math.ceil((reviewData?.total ?? 0) / PAGE_SIZE));
-
-  const batchConfirmMutation = useMutation({
-    mutationFn: (params: { personId: number; faceIds: number[] }) =>
-      api.projects.batchConfirmReview(selectedProjectId, params.personId, {
-        face_detection_ids: params.faceIds,
-        request_id: buildRequestId(),
-        operator: "web_review_page",
-        max_retries: 3,
-      }),
-    onSuccess: (result) => {
-      setStatusMessage(`批量确认成功：updated=${result.updated} attempts=${result.attempts ?? 1}`);
-      setErrorMessage(null);
-      queryClient.invalidateQueries({ queryKey: ["project-review-page", selectedProjectId] });
-      queryClient.invalidateQueries({ queryKey: ["project-people", selectedProjectId] });
-    },
-    onError: (err) => {
-      setStatusMessage(null);
-      setErrorMessage((err as Error).message);
-    },
-  });
-
-  const batchRejectMutation = useMutation({
-    mutationFn: (params: { personId: number; faceIds: number[] }) =>
-      api.projects.batchRejectReview(selectedProjectId, params.personId, {
-        face_detection_ids: params.faceIds,
-        request_id: buildRequestId(),
-        operator: "web_review_page",
-        max_retries: 3,
-      }),
-    onSuccess: (result) => {
-      setStatusMessage(`批量排除成功：updated=${result.updated} attempts=${result.attempts ?? 1}`);
-      setErrorMessage(null);
-      queryClient.invalidateQueries({ queryKey: ["project-review-page", selectedProjectId] });
-      queryClient.invalidateQueries({ queryKey: ["project-people", selectedProjectId] });
-    },
-    onError: (err) => {
-      setStatusMessage(null);
-      setErrorMessage((err as Error).message);
-    },
-  });
-
-  const batchMoveMutation = useMutation({
-    mutationFn: (params: { personId: number; targetPersonId: number; faceIds: number[] }) =>
-      api.projects.batchMoveReview(selectedProjectId, params.personId, {
-        face_detection_ids: params.faceIds,
-        target_person_id: params.targetPersonId,
-        request_id: buildRequestId(),
-        operator: "web_review_page",
-        max_retries: 3,
-      }),
-    onSuccess: (result) => {
-      setStatusMessage(`批量移动成功：updated=${result.updated} attempts=${result.attempts ?? 1}`);
-      setErrorMessage(null);
-      queryClient.invalidateQueries({ queryKey: ["project-review-page", selectedProjectId] });
-      queryClient.invalidateQueries({ queryKey: ["project-people", selectedProjectId] });
-    },
-    onError: (err) => {
-      setStatusMessage(null);
-      setErrorMessage((err as Error).message);
-    },
-  });
+  const {
+    routeProjectId,
+    currentProject,
+    selectedProjectId,
+    page,
+    setPage,
+    statusMessage,
+    errorMessage,
+    grouped,
+    peopleData,
+    peopleById,
+    reviewData,
+    isLoading,
+    error,
+    maxPage,
+    moveTargets,
+    setMoveTargets,
+    actionBusy,
+    batchConfirmReview,
+    batchRejectReview,
+    batchMoveReview,
+  } = usePeopleReviewPage();
 
   if (!Number.isFinite(routeProjectId) || routeProjectId <= 0) {
     return <Navigate to="/people" replace />;
@@ -197,10 +99,6 @@ export function PeopleReviewPage() {
         <div className="space-y-4">
           {grouped.map(([personId, items]) => {
             const faceIds = items.map((item) => item.face_detection_id);
-            const busy =
-              batchConfirmMutation.isPending ||
-              batchRejectMutation.isPending ||
-              batchMoveMutation.isPending;
             const targetCandidates = (peopleData?.items ?? []).filter((item) => item.id !== personId);
             const currentMoveTarget = moveTargets[personId] ?? targetCandidates[0]?.id ?? null;
 
@@ -216,16 +114,16 @@ export function PeopleReviewPage() {
                   <div className="flex items-center gap-2 flex-wrap">
                     <button
                       type="button"
-                      disabled={busy}
-                      onClick={() => batchConfirmMutation.mutate({ personId, faceIds })}
+                      disabled={actionBusy}
+                      onClick={() => batchConfirmReview(personId, faceIds)}
                       className="px-2.5 py-1 rounded-md border border-hairline text-caption-sm hover:bg-surface-card disabled:opacity-50"
                     >
                       批量确认
                     </button>
                     <button
                       type="button"
-                      disabled={busy}
-                      onClick={() => batchRejectMutation.mutate({ personId, faceIds })}
+                      disabled={actionBusy}
+                      onClick={() => batchRejectReview(personId, faceIds)}
                       className="px-2.5 py-1 rounded-md border border-hairline text-caption-sm hover:bg-surface-card disabled:opacity-50"
                     >
                       批量排除
@@ -247,14 +145,8 @@ export function PeopleReviewPage() {
                         </select>
                         <button
                           type="button"
-                          disabled={busy}
-                          onClick={() =>
-                            batchMoveMutation.mutate({
-                              personId,
-                              targetPersonId: currentMoveTarget,
-                              faceIds,
-                            })
-                          }
+                          disabled={actionBusy}
+                          onClick={() => batchMoveReview(personId, currentMoveTarget, faceIds)}
                           className="px-2.5 py-1 rounded-md border border-hairline text-caption-sm hover:bg-surface-card disabled:opacity-50"
                         >
                           批量移动

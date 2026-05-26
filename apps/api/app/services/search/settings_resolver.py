@@ -47,7 +47,7 @@ class SearchSettingsResolver:
             ocr_vector_field_weights=dict(DEFAULT_OCR_VECTOR_FIELD_WEIGHTS),
             enable_query_understanding=True,
             enable_structured_filters=False,
-            enable_semantic_tag_boost=True,  # P3: enabled by default
+            enable_semantic_tag_boost=False,
         )
 
     # ── Main resolver ─────────────────────────────────────────────────────────

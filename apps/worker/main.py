@@ -40,9 +40,11 @@ from app.logging_config import (
 )
 from app.models.ai import AIJob
 from app.models.folder import ProjectFolder  # noqa: F401 — registers 'project_folders' table in metadata
+from app.models.project_task import ProjectTask  # noqa: F401 — registers 'project_tasks' table in metadata
 from app.models.project import Project  # noqa: F401 — registers 'projects' table in metadata
 from app.schemas.debug_config import build_default_debug_config
 from app.services.aijob_app_service import AIJobAppService
+from app.services.project_task_app_service import ProjectTaskAppService
 from app.services.runtime_settings_service import (
     RuntimeSettingsService,
     RuntimeSettingsStorageUnavailableError,
@@ -120,6 +122,14 @@ def run() -> None:
             with SessionLocal() as db:
                 _maybe_refresh_debug_config(db)
 
+                project_task = (
+                    db.query(ProjectTask)
+                    .filter(ProjectTask.status == "queued")
+                    .order_by(ProjectTask.created_at)
+                    .with_for_update(skip_locked=True)
+                    .first()
+                )
+
                 job = (
                     db.query(AIJob)
                     .filter(AIJob.status == "queued")
@@ -128,7 +138,7 @@ def run() -> None:
                     .first()
                 )
 
-                if job is None:
+                if project_task is None and job is None:
                     idle_polls += 1
                     # Emit a single aggregated idle log instead of per-cycle noise
                     if idle_polls % idle_report_interval == 0:
@@ -139,7 +149,22 @@ def run() -> None:
                         )
                 else:
                     idle_polls = 0
-                    # Set per-job context vars so log lines carry identifiers
+
+                if project_task is not None and (
+                    job is None or project_task.created_at <= job.created_at
+                ):
+                    tok_proj = project_id_ctx.set(
+                        str(project_task.project_id) if project_task.project_id else None
+                    )
+                    tok_task = task_id_ctx.set(str(project_task.id))
+                    tok_photo = photo_id_ctx.set(None)
+                    try:
+                        ProjectTaskAppService(db).process_task(project_task)
+                    finally:
+                        project_id_ctx.reset(tok_proj)
+                        task_id_ctx.reset(tok_task)
+                        photo_id_ctx.reset(tok_photo)
+                elif job is not None:
                     tok_proj = project_id_ctx.set(str(job.project_id) if job.project_id else None)
                     tok_task = task_id_ctx.set(str(job.id))
                     tok_photo = photo_id_ctx.set(str(job.photo_id) if job.photo_id else None)
@@ -150,6 +175,9 @@ def run() -> None:
                         task_id_ctx.reset(tok_task)
                         photo_id_ctx.reset(tok_photo)
                     continue  # immediately pick next job
+
+                if project_task is not None:
+                    continue  # immediately pick next task
 
         except OperationalError as exc:
             logger.error("Database connection error: %s — retrying in 30s", exc)
@@ -170,4 +198,3 @@ def run() -> None:
 
 if __name__ == "__main__":
     run()
-

@@ -1,255 +1,37 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { Link, Navigate, useSearchParams } from "react-router-dom";
 import {
   Brain,
   FolderSearch,
-  Loader2,
   Play,
   RefreshCw,
-  AlertCircle,
-  CheckCircle2,
   Clock,
   Settings2,
   RotateCcw,
   ScanFace,
 } from "lucide-react";
 import { ScanPanel } from "@/components/ScanPanel";
-import { api, type AIJob } from "@/api";
+import { FailedJobsSection } from "@/components/tasks/FailedJobsSection";
+import { TaskStatusSummary } from "@/components/tasks/TaskStatusSummary";
+import { api } from "@/api";
 import { queryKeys } from "@/api/queryKeys";
+import { CapabilityMaturityBadge } from "@/components/common/CapabilityMaturityBadge";
+import { useProjectQueuedTaskStatus } from "@/hooks/useProjectQueuedTaskStatus";
 import { useScanStatus, useStartScan, useStartReindex } from "@/hooks/useScan";
 import { useProjectContext } from "@/contexts/ProjectContext";
-import { ProjectAISettingsPanel } from "./ProjectAISettingsPanel";
-
-// ─── Stat tile ───────────────────────────────────────────────────────────────
-
-function StatTile({
-  label,
-  value,
-  color = "text-ink",
-}: {
-  label: string;
-  value: number | string;
-  color?: string;
-}) {
-  return (
-    <div className="bg-canvas border border-hairline rounded-md px-4 py-3 text-center">
-      <p className={`text-heading-md font-bold tabular-nums ${color}`}>{value}</p>
-      <p className="text-caption-sm text-mute mt-0.5">{label}</p>
-    </div>
-  );
-}
-
-// ─── Failed jobs list ─────────────────────────────────────────────────────────
-
-function FailedJobsSection({ projectId }: { projectId: number | null }) {
-  const queryClient = useQueryClient();
-  const [showAll, setShowAll] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const aiJobTypes = "analyze,reanalyze";
-
-  const { data } = useQuery({
-    queryKey: ["ai-jobs-failed", projectId],
-    queryFn: () => api.projects.aiJobs(projectId!, "failed", 50, 0, aiJobTypes),
-    enabled: projectId != null,
-    staleTime: 10_000,
-  });
-
-  const retryMutation = useMutation({
-    mutationFn: () => api.projects.retryFailedAiJobs(projectId!, aiJobTypes),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.aiStatus(projectId) });
-      queryClient.invalidateQueries({ queryKey: ["ai-jobs-failed", projectId] });
-    },
-  });
-
-  const clearFailedJobsMutation = useMutation({
-    mutationFn: () => api.projects.clearFailedAiJobs(projectId!, aiJobTypes),
-    onSuccess: () => {
-      setError(null);
-      queryClient.invalidateQueries({ queryKey: queryKeys.aiStatus(projectId) });
-      queryClient.invalidateQueries({ queryKey: ["ai-jobs-failed", projectId] });
-    },
-    onError: (err: Error) => {
-      setError(`清除失败记录失败：${err.message}`);
-    },
-  });
-
-  const items = data?.items ?? [];
-  if (items.length === 0) return null;
-
-  const visible = showAll ? items : items.slice(0, 5);
-
-  return (
-    <section className="space-y-3">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <AlertCircle className="w-4 h-4 text-amber-500" />
-          <h2 className="text-body-sm font-semibold text-ink">失败任务</h2>
-          <span className="text-caption-sm text-mute">{items.length} 个</span>
-        </div>
-        <div className="flex gap-2">
-          <button
-            onClick={() => retryMutation.mutate()}
-            disabled={retryMutation.isPending}
-            className="flex items-center gap-1 text-btn-sm font-bold text-primary hover:text-primary-pressed disabled:text-stone transition-colors"
-          >
-            <RefreshCw className="w-3.5 h-3.5" />
-            {retryMutation.isPending ? "重试中…" : "全部重试"}
-          </button>
-          <button
-            onClick={() => clearFailedJobsMutation.mutate()}
-            disabled={clearFailedJobsMutation.isPending}
-            className="flex items-center gap-1 text-btn-sm font-bold text-danger hover:text-danger-pressed disabled:text-stone transition-colors"
-          >
-            清除失败记录
-          </button>
-        </div>
-      </div>
-
-      <div className="space-y-1.5">
-        {visible.map((job) => (
-          <FailedJobRow key={job.id} job={job} />
-        ))}
-      </div>
-
-      {error && <p className="text-caption-sm text-danger">{error}</p>}
-
-      {items.length > 5 && (
-        <button
-          onClick={() => setShowAll((v) => !v)}
-          className="text-btn-sm text-primary hover:text-primary-pressed"
-        >
-          {showAll ? "收起" : `显示全部 ${items.length} 个`}
-        </button>
-      )}
-    </section>
-  );
-}
-
-/** Build a short summary and retain full detail text for expandable display. */
-function parseErrorMessage(raw: string): { summary: string; detail: string } {
-  const trimmed = raw.trim();
-  const firstLine = trimmed.split(/\r?\n/, 1)[0] ?? "";
-
-  // Try to extract an API-style nested message from embedded JSON.
-  const jsonMatch = raw.match(/\{[\s\S]*\}/);
-  if (jsonMatch) {
-    try {
-      const parsed = JSON.parse(jsonMatch[0]);
-      const msg: string | undefined =
-        parsed?.error?.message ?? parsed?.message ?? parsed?.detail;
-      if (msg) {
-        const prefix = raw.slice(0, jsonMatch.index).replace(/:\s*$/, "").trim();
-        return {
-          summary: prefix ? `${prefix}: ${msg}` : msg,
-          detail: trimmed,
-        };
-      }
-    } catch {
-      // Keep fallback summary below.
-    }
-  }
-
-  return {
-    summary: firstLine || trimmed,
-    detail: trimmed,
-  };
-}
-
-function FailedJobRow({ job }: { job: AIJob }) {
-  const [expanded, setExpanded] = useState(false);
-
-  const errorInfo = job.error_message ? parseErrorMessage(job.error_message) : null;
-
-  const handleCopy = (text: string) => {
-    navigator.clipboard.writeText(text).catch(() => {
-      // Ignore clipboard permission errors in non-secure contexts.
-    });
-  };
-
-  return (
-    <div className="bg-canvas border border-hairline rounded-md px-4 py-2.5 flex items-start gap-3">
-      <AlertCircle className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" />
-      <div className="min-w-0 flex-1 space-y-1">
-        <p className="text-body-sm text-ink truncate">{job.file_name ?? `#${job.photo_id}`}</p>
-        <p className="text-caption-sm text-mute">
-          prompt v{job.prompt_version ?? "-"} · model {job.model_name ?? "-"}
-        </p>
-        {errorInfo && (
-          <>
-            <p className={`text-caption-sm text-mute mt-0.5 ${expanded ? "whitespace-pre-wrap break-all" : "truncate"}`}>
-              {expanded ? errorInfo.detail : errorInfo.summary}
-            </p>
-            {errorInfo.detail && (
-              <button
-                onClick={() => setExpanded((v) => !v)}
-                className="text-caption-sm text-primary hover:text-primary-pressed"
-              >
-                {expanded ? "收起" : "展开详情"}
-              </button>
-            )}
-            {expanded && (
-              <div className="mt-2 space-y-2">
-                <div className="bg-surface-soft border border-hairline rounded-md p-2">
-                  <div className="flex items-center justify-between gap-2 mb-1">
-                    <p className="text-caption-sm text-mute">parse_error</p>
-                    {job.parse_error && (
-                      <button
-                        onClick={() => handleCopy(job.parse_error || "")}
-                        className="text-caption-sm text-primary hover:text-primary-pressed"
-                      >
-                        复制
-                      </button>
-                    )}
-                  </div>
-                  <pre className="text-caption-sm whitespace-pre-wrap break-all">
-                    {job.parse_error || "(空)"}
-                  </pre>
-                </div>
-
-                <div className="bg-surface-soft border border-hairline rounded-md p-2">
-                  <div className="flex items-center justify-between gap-2 mb-1">
-                    <p className="text-caption-sm text-mute">raw_model_output</p>
-                    {job.raw_model_output && (
-                      <button
-                        onClick={() => handleCopy(job.raw_model_output || "")}
-                        className="text-caption-sm text-primary hover:text-primary-pressed"
-                      >
-                        复制
-                      </button>
-                    )}
-                  </div>
-                  <pre className="text-caption-sm whitespace-pre-wrap break-all max-h-48 overflow-auto">
-                    {job.raw_model_output || "(空)"}
-                  </pre>
-                </div>
-              </div>
-            )}
-          </>
-        )}
-      </div>
-      <span className="text-caption-sm text-stone flex-shrink-0">
-        {job.retry_count > 0 ? `重试 ${job.retry_count}×` : ""}
-      </span>
-    </div>
-  );
-}
+import { CAPABILITY_MATURITY } from "@/lib/capabilityMaturity";
 
 function AISection({ projectId }: { projectId: number | null }) {
   const queryClient = useQueryClient();
   const [message, setMessage] = useState<string | null>(null);
   const wasActiveRef = useRef(false);
 
-  const { data: status, isLoading } = useQuery({
-    queryKey: queryKeys.aiStatus(projectId),
-    queryFn: () => api.projects.aiStatus(projectId!),
-    enabled: projectId != null,
-    refetchInterval: (query) => {
-      const d = query.state.data;
-      return d && (d.queued > 0 || d.running > 0) ? 3000 : 15000;
-    },
-  });
+  const { data: status, isLoading } = useProjectQueuedTaskStatus(
+    queryKeys.aiStatus(projectId),
+    () => api.projects.aiStatus(projectId!),
+    projectId != null
+  );
 
   useEffect(() => {
     const isActive = !!status && (status.queued > 0 || status.running > 0);
@@ -311,47 +93,26 @@ function AISection({ projectId }: { projectId: number | null }) {
     onError: (err: Error) => setMessage(`重新分析失败：${err.message}`),
   });
 
-  const isRunning = status && status.running > 0;
   const canRun = projectId != null;
   const isAnyPending =
     startMutation.isPending ||
     reanalyzeCompletedMutation.isPending ||
     reanalyzeAllMutation.isPending;
 
-  // Rough speed: success / (age of oldest running job in hours) — simplified
   const speed = status && status.success > 0 ? status.success : null;
 
   return (
     <section className="space-y-4">
-      {/* Header */}
-      <div className="flex items-center gap-2">
-        {isLoading ? (
-          <Loader2 className="w-4 h-4 animate-spin text-mute" />
-        ) : isRunning ? (
-          <Loader2 className="w-4 h-4 animate-spin text-primary" />
-        ) : (
-          <Brain className="w-4 h-4 text-primary" />
-        )}
-        <h2 className="text-body-sm font-semibold text-ink">
-          {isRunning ? "AI 分析进行中…" : "AI 图片分析"}
-        </h2>
-      </div>
-
-      {/* Stats */}
-      {status && (
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          <StatTile label="排队中" value={status.queued} />
-          <StatTile label="进行中" value={status.running} color={status.running > 0 ? "text-primary" : "text-ink"} />
-          <StatTile label="已完成" value={status.success} color="text-green-700" />
-          <StatTile label="失败" value={status.failed} color={status.failed > 0 ? "text-amber-600" : "text-ink"} />
-        </div>
-      )}
+      <TaskStatusSummary
+        status={status}
+        loading={isLoading}
+        idleTitle="AI 图片分析"
+        runningTitle="AI 分析进行中…"
+        noun="任务"
+      />
 
       {speed !== null && (
-        <p className="text-caption-sm text-mute flex items-center gap-1">
-          <CheckCircle2 className="w-3.5 h-3.5 text-green-600" />
-          累计已分析 {speed.toLocaleString()} 张照片
-        </p>
+        <p className="text-caption-sm text-mute">累计已分析 {speed.toLocaleString()} 张照片</p>
       )}
 
       {/* Action buttons */}
@@ -394,7 +155,12 @@ function AISection({ projectId }: { projectId: number | null }) {
 
       {!canRun && <p className="text-caption-sm text-mute">请先选择项目后再执行 AI 分析。</p>}
 
-      <FailedJobsSection projectId={projectId} />
+      <FailedJobsSection
+        projectId={projectId}
+        title="AI 失败任务"
+        jobType="analyze,reanalyze"
+        listQueryKey="ai-jobs-failed"
+      />
     </section>
   );
 }
@@ -433,6 +199,7 @@ function FaceScanSection({ projectId }: { projectId: number | null }) {
   const queryClient = useQueryClient();
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const clusterWasActiveRef = useRef(false);
   const [preview, setPreview] = useState<{
     scope: FaceScanPreviewScope;
     total_photos: number;
@@ -443,8 +210,6 @@ function FaceScanSection({ projectId }: { projectId: number | null }) {
     failed_count: number;
     dry_run: boolean;
   } | null>(null);
-  const [showAllFailed, setShowAllFailed] = useState(false);
-
   const canRun = projectId != null;
   const peoplePath = canRun ? `/projects/${projectId}/people` : "/people";
   const reviewPath = canRun ? `/projects/${projectId}/people/review` : "/people";
@@ -455,22 +220,39 @@ function FaceScanSection({ projectId }: { projectId: number | null }) {
     enabled: canRun,
   });
 
-  const { data: status, isLoading: statusLoading } = useQuery({
-    queryKey: ["face-scan-status", projectId],
-    queryFn: () => api.projects.projectFaceScanStatus(projectId!),
+  const { data: status, isLoading: statusLoading } = useProjectQueuedTaskStatus(
+    ["face-scan-status", projectId],
+    () => api.projects.projectFaceScanStatus(projectId!),
+    canRun
+  );
+
+  const { data: clusterStatus } = useQuery({
+    queryKey: ["face-cluster-unknown-status", projectId],
+    queryFn: () => api.projects.projectFaceClusterUnknownStatus(projectId!),
     enabled: canRun,
     refetchInterval: (query) => {
       const d = query.state.data;
-      return d && (d.queued > 0 || d.running > 0) ? 3000 : 15000;
+      return d && d.running ? 3000 : 15000;
     },
   });
 
-  const { data: failedJobsData } = useQuery({
-    queryKey: ["face-scan-failed-jobs", projectId],
-    queryFn: () => api.projects.aiJobs(projectId!, "failed", 50, 0, "face_scan"),
-    enabled: canRun,
-    staleTime: 10_000,
-  });
+  useEffect(() => {
+    const isActive = !!clusterStatus && clusterStatus.running;
+    if (clusterWasActiveRef.current && !isActive && clusterStatus) {
+      if (clusterStatus.status === "success") {
+        setError(null);
+        setMessage(
+          `聚类完成：clusters=${clusterStatus.clusters_created} · persons=${clusterStatus.persons_created} · faces=${clusterStatus.faces_clustered}`
+        );
+        queryClient.invalidateQueries({ queryKey: ["project-people", projectId] });
+        queryClient.invalidateQueries({ queryKey: ["project-review-page", projectId] });
+        queryClient.invalidateQueries({ queryKey: queryKeys.projectFaces(projectId) });
+      } else if (clusterStatus.status === "failed") {
+        setError(`聚类失败：${clusterStatus.recent_errors[0] ?? clusterStatus.message}`);
+      }
+    }
+    clusterWasActiveRef.current = isActive;
+  }, [clusterStatus, projectId, queryClient]);
 
   const previewMutation = useMutation({
     mutationFn: (scope: FaceScanScope) =>
@@ -517,57 +299,28 @@ function FaceScanSection({ projectId }: { projectId: number | null }) {
     onSuccess: (result) => {
       setError(null);
       setMessage(
-        `聚类完成：clusters=${result.clusters_created} · persons=${result.persons_created} · faces=${result.faces_clustered}`
+        result.status.status === "queued" || result.status.status === "running"
+          ? `已提交未知人脸聚类任务（max_faces=${result.status.max_faces}）`
+          : result.message
       );
-      queryClient.invalidateQueries({ queryKey: queryKeys.projectPeople(projectId, true) });
+      queryClient.invalidateQueries({ queryKey: ["face-cluster-unknown-status", projectId] });
     },
     onError: (err: Error) => {
       setError(`聚类失败：${err.message}`);
     },
   });
 
-  const retryFailedMutation = useMutation({
-    mutationFn: () => api.projects.retryFailedAiJobs(projectId!, "face_scan"),
-    onSuccess: (result) => {
-      setError(null);
-      setMessage(`已重试 ${result.retried_jobs} 个 face_scan 失败任务`);
-      queryClient.invalidateQueries({ queryKey: ["face-scan-status", projectId] });
-      queryClient.invalidateQueries({ queryKey: ["face-scan-failed-jobs", projectId] });
-    },
-    onError: (err: Error) => {
-      setError(`重试失败：${err.message}`);
-    },
-  });
-
-  const clearFailedMutation = useMutation({
-    mutationFn: () => api.projects.clearFailedAiJobs(projectId!, "face_scan"),
-    onSuccess: (result) => {
-      setError(null);
-      setMessage(`已清理 ${result.deleted_jobs} 个 face_scan 失败任务`);
-      queryClient.invalidateQueries({ queryKey: ["face-scan-status", projectId] });
-      queryClient.invalidateQueries({ queryKey: ["face-scan-failed-jobs", projectId] });
-    },
-    onError: (err: Error) => {
-      setError(`清理失败：${err.message}`);
-    },
-  });
-
-  const failedItems = failedJobsData?.items ?? [];
-  const failedVisible = showAllFailed ? failedItems : failedItems.slice(0, 5);
   const statusLoadingNow = statusLoading || settingsLoading;
 
   return (
     <section className="space-y-4">
-      <div className="flex items-center gap-2">
-        {statusLoadingNow ? (
-          <Loader2 className="w-4 h-4 animate-spin text-mute" />
-        ) : status && (status.queued > 0 || status.running > 0) ? (
-          <Loader2 className="w-4 h-4 animate-spin text-primary" />
-        ) : (
-          <ScanFace className="w-4 h-4 text-primary" />
-        )}
-        <h2 className="text-body-sm font-semibold text-ink">人脸扫描任务</h2>
-      </div>
+      <TaskStatusSummary
+        status={status}
+        loading={statusLoadingNow}
+        idleTitle="人脸扫描任务"
+        runningTitle="人脸扫描进行中…"
+        noun="任务"
+      />
 
       {faceSettings && (
         <div className="bg-canvas border border-hairline rounded-md px-4 py-3 space-y-1.5">
@@ -578,16 +331,6 @@ function FaceScanSection({ projectId }: { projectId: number | null }) {
           <p className="text-caption-sm text-mute">
             runtime={faceSettings.face_runtime} · min_face_size={faceSettings.min_face_size} · min_confidence={faceSettings.min_detection_confidence}
           </p>
-        </div>
-      )}
-
-      {status && (
-        <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
-          <StatTile label="排队中" value={status.queued} />
-          <StatTile label="进行中" value={status.running} color={status.running > 0 ? "text-primary" : "text-ink"} />
-          <StatTile label="已完成" value={status.success} color="text-green-700" />
-          <StatTile label="失败" value={status.failed} color={status.failed > 0 ? "text-amber-600" : "text-ink"} />
-          <StatTile label="总计" value={status.total} />
         </div>
       )}
 
@@ -636,14 +379,43 @@ function FaceScanSection({ projectId }: { projectId: number | null }) {
         </div>
       )}
 
+      {clusterStatus && clusterStatus.status !== "idle" && (
+        <div className="bg-surface-soft border border-hairline rounded-md px-4 py-3 space-y-1">
+          <p className="text-body-sm font-medium text-ink">
+            未知人脸聚类任务 · {clusterStatus.status}
+          </p>
+          <p className="text-caption-sm text-mute">
+            task={clusterStatus.task_id ?? "-"} · max_faces={clusterStatus.max_faces} · errors={clusterStatus.errors}
+          </p>
+          <p className="text-caption-sm text-mute">
+            clusters={clusterStatus.clusters_created} · persons={clusterStatus.persons_created} · faces={clusterStatus.faces_clustered} · assignments={clusterStatus.assignments_created}
+          </p>
+          <p className="text-caption-sm text-mute">{clusterStatus.message}</p>
+          {clusterStatus.recent_errors.length > 0 && (
+            <p className="text-caption-sm text-danger">
+              最近错误：{clusterStatus.recent_errors[clusterStatus.recent_errors.length - 1]}
+            </p>
+          )}
+        </div>
+      )}
+
+      <p className="text-caption-sm text-mute flex flex-wrap items-center gap-2">
+        <CapabilityMaturityBadge item={CAPABILITY_MATURITY.face_clustering} compact />
+        <span>{CAPABILITY_MATURITY.face_clustering.hint}</span>
+      </p>
+
       <div className="flex flex-wrap items-center gap-2">
         <button
           onClick={() => clusterMutation.mutate()}
-          disabled={!canRun || clusterMutation.isPending}
+          disabled={!canRun || clusterMutation.isPending || !!clusterStatus?.running}
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-hairline text-btn-sm hover:bg-surface-card disabled:opacity-50 transition-colors"
         >
           <ScanFace className="w-3.5 h-3.5" />
-          {clusterMutation.isPending ? "聚类中…" : "聚类未知人脸"}
+          {clusterMutation.isPending
+            ? "提交中…"
+            : clusterStatus?.running
+              ? "聚类任务进行中…"
+              : "聚类未知人脸"}
         </button>
         <Link
           to={reviewPath}
@@ -663,56 +435,19 @@ function FaceScanSection({ projectId }: { projectId: number | null }) {
       {error && <p className="text-caption-sm text-danger">{error}</p>}
       {!canRun && <p className="text-caption-sm text-mute">请先选择项目后再执行人脸扫描任务。</p>}
 
-      {failedItems.length > 0 && (
-        <section className="space-y-3">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <AlertCircle className="w-4 h-4 text-amber-500" />
-              <h3 className="text-body-sm font-semibold text-ink">Face Scan 失败任务</h3>
-              <span className="text-caption-sm text-mute">{failedItems.length} 个</span>
-            </div>
-            <div className="flex gap-2">
-              <button
-                onClick={() => retryFailedMutation.mutate()}
-                disabled={retryFailedMutation.isPending}
-                className="flex items-center gap-1 text-btn-sm font-bold text-primary hover:text-primary-pressed disabled:text-stone transition-colors"
-              >
-                <RefreshCw className="w-3.5 h-3.5" />
-                {retryFailedMutation.isPending ? "重试中…" : "全部重试"}
-              </button>
-              <button
-                onClick={() => clearFailedMutation.mutate()}
-                disabled={clearFailedMutation.isPending}
-                className="flex items-center gap-1 text-btn-sm font-bold text-danger hover:text-danger-pressed disabled:text-stone transition-colors"
-              >
-                清除失败记录
-              </button>
-            </div>
-          </div>
-
-          <div className="space-y-1.5">
-            {failedVisible.map((job) => (
-              <FailedJobRow key={job.id} job={job} />
-            ))}
-          </div>
-
-          {failedItems.length > 5 && (
-            <button
-              onClick={() => setShowAllFailed((v) => !v)}
-              className="text-btn-sm text-primary hover:text-primary-pressed"
-            >
-              {showAllFailed ? "收起" : `显示全部 ${failedItems.length} 个`}
-            </button>
-          )}
-        </section>
-      )}
+      <FailedJobsSection
+        projectId={projectId}
+        title="Face Scan 失败任务"
+        jobType="face_scan"
+        listQueryKey="face-scan-failed-jobs"
+      />
     </section>
   );
 }
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
-type TaskTab = "scan" | "ai" | "face-scan" | "ai-settings";
+type TaskTab = "scan" | "ai" | "face-scan";
 
 export function TasksPage() {
   const { currentProjectId } = useProjectContext();
@@ -722,8 +457,17 @@ export function TasksPage() {
   const [searchParams, setSearchParams] = useSearchParams();
 
   const tabParam = searchParams.get("tab");
+  if (tabParam === "ai-settings") {
+    return (
+      <Navigate
+        to={currentProjectId != null ? `/projects/${currentProjectId}/settings/ai` : "/settings"}
+        replace
+      />
+    );
+  }
+
   const initialTab: TaskTab =
-    tabParam === "scan" || tabParam === "ai" || tabParam === "face-scan" || tabParam === "ai-settings"
+    tabParam === "scan" || tabParam === "ai" || tabParam === "face-scan"
       ? tabParam
       : "ai";
   const [tab, setTab] = useState<TaskTab>(initialTab);
@@ -743,10 +487,24 @@ export function TasksPage() {
 
   return (
     <main className="max-w-3xl mx-auto px-4 sm:px-6 py-6 space-y-6">
-      <h1 className="text-heading-md font-semibold text-ink flex items-center gap-2">
-        <Clock className="w-5 h-5" />
-        任务中心
-      </h1>
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <div className="space-y-1">
+          <h1 className="text-heading-md font-semibold text-ink flex items-center gap-2">
+            <Clock className="w-5 h-5" />
+            任务中心
+          </h1>
+          <p className="text-caption-sm text-mute">
+            这里只保留执行类操作；模型、Prompt、Embedding 与搜索参数已收敛到独立配置页。
+          </p>
+        </div>
+        <Link
+          to={currentProjectId != null ? `/projects/${currentProjectId}/settings/ai` : "/settings"}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-hairline text-btn-sm hover:bg-surface-card transition-colors"
+        >
+          <Settings2 className="w-3.5 h-3.5" />
+          打开项目 AI 配置
+        </Link>
+      </div>
 
       {/* Tab nav */}
       <div className="flex gap-0 border-b border-hairline -mb-2">
@@ -766,12 +524,6 @@ export function TasksPage() {
           <span className="flex items-center gap-1.5">
             <ScanFace className="w-3.5 h-3.5" />
             人脸扫描
-          </span>
-        </button>
-        <button onClick={() => handleTabChange("ai-settings")} className={tabClass("ai-settings")}>
-          <span className="flex items-center gap-1.5">
-            <Settings2 className="w-3.5 h-3.5" />
-            AI 配置
           </span>
         </button>
       </div>
@@ -797,16 +549,6 @@ export function TasksPage() {
 
       {tab === "face-scan" && (
         <FaceScanSection projectId={currentProjectId} />
-      )}
-
-      {tab === "ai-settings" && (
-        currentProjectId != null ? (
-          <ProjectAISettingsPanel projectId={currentProjectId} />
-        ) : (
-          <div className="bg-canvas border border-hairline rounded-md px-5 py-4 text-body-sm text-mute">
-            请先选择项目后再查看 AI 配置。
-          </div>
-        )
       )}
     </main>
   );

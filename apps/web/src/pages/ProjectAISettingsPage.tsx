@@ -52,7 +52,7 @@ export function ProjectAISettingsPage() {
         </div>
         <div className="flex gap-2">
           <button
-            onClick={() => navigate("/tasks?tab=ai-settings")}
+            onClick={() => navigate("/tasks")}
             className="px-3 py-1.5 text-btn-sm rounded-md border border-hairline hover:bg-surface-card"
           >
             返回任务中心
@@ -70,4 +70,3 @@ export function ProjectAISettingsPage() {
     </main>
   );
 }
-

@@ -17,6 +17,7 @@ from ..models.project import Project
 from ..schemas.face import (
     FaceClusterUnknownRequest,
     FaceClusterUnknownResponse,
+    FaceClusterUnknownStatusResponse,
     FaceDetectionDetailResponse,
     FaceDetectionListResponse,
     FaceDetectionResponse,
@@ -27,8 +28,13 @@ from ..schemas.face import (
 )
 from ..services.face_scan_batch_service import FaceScanBatchService
 from ..services.face_scan_service import FaceScanDisabledError, FaceScanService
+from ..services.project_task_service import (
+    build_face_cluster_status,
+    enqueue_face_cluster_task,
+    get_active_face_cluster_task,
+    get_latest_face_cluster_task,
+)
 from ..services.project_face_settings_service import get_or_create_project_face_settings
-from ..services.unknown_face_clustering_service import cluster_unknown_faces
 
 router = APIRouter(prefix="/projects", tags=["project-faces"])
 
@@ -139,16 +145,37 @@ def cluster_project_unknown_faces(
     project: Project = Depends(require_project),
     db: Session = Depends(get_db),
 ) -> FaceClusterUnknownResponse:
-    result = cluster_unknown_faces(db, project_id=project_id, max_faces=body.max_faces)
-    db.commit()
-    return FaceClusterUnknownResponse(
+    active_task = get_active_face_cluster_task(db, project_id)
+    if active_task is not None:
+        return FaceClusterUnknownResponse(
+            message="Unknown face clustering already in progress",
+            status=build_face_cluster_status(active_task),
+        )
+
+    task = enqueue_face_cluster_task(
+        db,
         project_id=project_id,
-        clusters_created=result.clusters_created,
-        persons_created=result.persons_created,
-        faces_clustered=result.faces_clustered,
-        assignments_created=result.assignments_created,
-        message="Unknown face clustering completed",
+        max_faces=body.max_faces,
     )
+    return FaceClusterUnknownResponse(
+        message="Unknown face clustering queued",
+        status=build_face_cluster_status(task),
+    )
+
+
+@router.get(
+    "/{project_id}/face-cluster-unknown/status",
+    response_model=FaceClusterUnknownStatusResponse,
+)
+def get_cluster_project_unknown_faces_status(
+    project_id: int,
+    project: Project = Depends(require_project),
+    db: Session = Depends(get_db),
+) -> FaceClusterUnknownStatusResponse:
+    active_task = get_active_face_cluster_task(db, project_id)
+    if active_task is not None:
+        return build_face_cluster_status(active_task)
+    return build_face_cluster_status(get_latest_face_cluster_task(db, project_id))
 
 
 @router.get("/{project_id}/faces", response_model=FaceDetectionListResponse)

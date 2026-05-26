@@ -15,7 +15,7 @@
 
 ## People Recognition 当前状态
 
-本项目已经开始落地本地人物识别能力，但目前仍处于“基础链路已通、人物闭环未完成”的阶段。
+People Recognition 已经从“只读调试阶段”进入“人工纠错闭环已成型、工程收敛仍在继续”的阶段。
 
 当前已经完成：
 
@@ -29,21 +29,43 @@
   - `person_cannot_links`
 - 项目级人脸配置 API 与前端配置面板
 - 单张照片手动 `face scan` 链路
-- `faces` / `people` 只读 API
+- 项目级批量 `face scan` 任务入队与状态查询
+- unknown face clustering / 自动创建未命名人物
+- `faces` / `people` 读写 API
+- 人工确认 / 排除 / 移动 / 合并 / 拆分 / 代表头像设置
+- 待确认队列与批量操作
+- 搜索页的人物过滤与多人共现搜索
 - 照片详情页的人脸调试区块
-- `/projects/:projectId/people` 人物页只读视图
+- `/projects/:projectId/people` 人物页与 `/projects/:projectId/people/review` 复核页
 
 当前还没有完成：
 
-- 人物自动聚类与自动创建 `人物 1 / 人物 2`
-- 人工确认 / 排除 / 移动 / 合并 / 拆分 API
-- 待确认队列与批量操作
-- worker 化批量扫描、重匹配、prototype rebuild
-- 搜索页的人物过滤与多人共现搜索
+- 照片库全量扫描 / reindex / clustering 任务体系完全统一到持久化 worker
+- 人脸匹配、prototype rebuild、重匹配链路进一步服务化和任务化
+- People 模块后端与前端的大文件拆分收敛
+- 前端 People / Search / Tasks 主路径自动化测试补齐
 
 如果你想了解更完整的设计边界、当前进度和下一步实施计划，请看：
 
 - [Design-document/faceDetectionDesgin.md](Design-document/faceDetectionDesgin.md)
+
+## 第 4 周发布分层：能力成熟度标记
+
+以下能力在 UI 与文档统一使用三档成熟度：`稳定` / `实验` / `待收敛`。
+
+| 能力 | 成熟度 | 发布说明 |
+|------|--------|----------|
+| Face clustering | 实验 | 聚类算法与参数仍在持续打磨，建议结合 Review Pending 人工复核。 |
+| Prompt 测试 | 待收敛 | 主链路可用，测试历史与交互细节仍在持续收敛。 |
+| Embedding rebuild | 稳定 | 已支持项目级状态检查、按范围重建与任务入队。 |
+
+发布前检查清单见：[Design-document/release-checklist.md](Design-document/release-checklist.md)。
+
+发布前一键预检命令：
+
+```bash
+./scripts/release-preflight.sh
+```
 
 ## 架构
 
@@ -61,7 +83,7 @@
 - 代码库不绑定机器角色。开发机和运行机都用同一套脚本，只通过 `.env` 切换。
 - 所有状态目录都由环境变量决定，不把本机绝对路径写死在代码里。
 - Mac mini 可以随时替换为第二台机器，只要复制仓库、数据目录和对应 `.env` 即可。
-- API 启动时自动跑 Alembic migration，降低部署切换成本。
+- API 启动时执行 schema self-check，尽早暴露 migration 缺失或 schema drift。
 
 ## 目录与配置建议
 
@@ -153,6 +175,7 @@ WEB_MODE=dev
 - `init-db.sh` 仅执行 `alembic upgrade head`。
 - `db-schema.sh upgrade` 与 `init-db.sh` 作用等价，二选一即可。
 - 如果出现 `alembic_version` 多行异常，可执行 `./scripts/db-schema.sh fix-version` 后再 `upgrade`。
+- API 启动不会自动执行 migration；如果数据库未升级到最新版本，启动时会直接报 schema self-check 错误。
 
 ### 启动开发服务
 

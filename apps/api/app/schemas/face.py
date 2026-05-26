@@ -161,13 +161,24 @@ class FaceClusterUnknownRequest(BaseModel):
     max_faces: int = Field(500, ge=1, le=5000)
 
 
-class FaceClusterUnknownResponse(BaseModel):
+class FaceClusterUnknownStatusResponse(BaseModel):
     project_id: int
-    clusters_created: int
-    persons_created: int
-    faces_clustered: int
-    assignments_created: int
+    task_id: Optional[int] = None
+    status: str
+    running: bool
+    max_faces: int = 500
+    clusters_created: int = 0
+    persons_created: int = 0
+    faces_clustered: int = 0
+    assignments_created: int = 0
+    errors: int = 0
+    recent_errors: list[str] = Field(default_factory=list)
     message: str
+
+
+class FaceClusterUnknownResponse(BaseModel):
+    message: str
+    status: FaceClusterUnknownStatusResponse
 
 
 class PersonSummaryResponse(BaseModel):

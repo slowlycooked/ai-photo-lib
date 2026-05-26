@@ -5,6 +5,7 @@ import io
 import logging
 import mimetypes
 import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -27,6 +28,9 @@ logger = logging.getLogger(__name__)
 # Commit scan writes in batches to reduce transaction overhead on large libraries.
 _SCAN_COMMIT_BATCH_SIZE = 100
 
+ScanProgressCallback = Callable[[dict[str, Any]], None]
+
+
 # ---------------------------------------------------------------------------
 # Scan state management
 # ---------------------------------------------------------------------------
@@ -44,21 +48,32 @@ def _empty_state() -> dict[str, Any]:
     }
 
 
-# Per-project state keyed by project_id
-_project_scan_states: dict[int, dict[str, Any]] = {}
-
-
-def get_project_scan_state(project_id: int) -> dict[str, Any]:
-    if project_id not in _project_scan_states:
-        _project_scan_states[project_id] = _empty_state()
-    return _project_scan_states[project_id]
-
-
 def _push_scan_error(state: dict[str, Any], message: str, *, limit: int = 20) -> None:
     errors = state.setdefault("recent_errors", [])
     errors.append(message)
     if len(errors) > limit:
         del errors[:-limit]
+
+
+def _snapshot_state(state: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "running": bool(state.get("running")),
+        "scanned": int(state.get("scanned") or 0),
+        "inserted": int(state.get("inserted") or 0),
+        "updated": int(state.get("updated") or 0),
+        "errors": int(state.get("errors") or 0),
+        "current_path": state.get("current_path"),
+        "message": str(state.get("message") or "idle"),
+        "recent_errors": list(state.get("recent_errors") or []),
+    }
+
+
+def _emit_progress(
+    state: dict[str, Any],
+    progress_callback: Optional[ScanProgressCallback],
+) -> None:
+    if progress_callback is not None:
+        progress_callback(_snapshot_state(state))
 
 
 # ---------------------------------------------------------------------------
@@ -366,14 +381,19 @@ def _process_file(
 # Public entry points
 # ---------------------------------------------------------------------------
 
-def scan_project(db: Session, project_id: int) -> None:
+def scan_project(
+    db: Session,
+    project_id: int,
+    *,
+    progress_callback: Optional[ScanProgressCallback] = None,
+) -> dict[str, Any]:
     """
     Scan photos for a specific project using its photo_library_path.
     Updates per-project scan state. Designed to be run in a background thread.
     """
     from ..models.project import Project
 
-    state = get_project_scan_state(project_id)
+    state = _empty_state()
 
     project = (
         db.query(Project)
@@ -383,7 +403,8 @@ def scan_project(db: Session, project_id: int) -> None:
     if not project:
         state.update(running=False, message=f"Project {project_id} not found")
         logger.error("scan_project: project %d not found", project_id)
-        return
+        _emit_progress(state, progress_callback)
+        return _snapshot_state(state)
 
     state.update(
         running=True,
@@ -395,6 +416,7 @@ def scan_project(db: Session, project_id: int) -> None:
         message="scanning",
         recent_errors=[],
     )
+    _emit_progress(state, progress_callback)
 
     library = Path(project.photo_library_path)
     resolved_library = False
@@ -433,7 +455,8 @@ def scan_project(db: Session, project_id: int) -> None:
     if not library.exists():
         state.update(running=False, message=f"Directory not found: {library}")
         logger.error("Project library path does not exist: %s", library)
-        return
+        _emit_progress(state, progress_callback)
+        return _snapshot_state(state)
 
     thumb_path = project.thumbnail_path or settings.thumbnail_path
     thumb_root = Path(thumb_path).resolve()
@@ -454,6 +477,7 @@ def scan_project(db: Session, project_id: int) -> None:
 
     pending_writes = 0
     commit_count = 0
+    final_message = "done"
     try:
         for entry in library.rglob("*"):
             if not entry.is_file():
@@ -468,6 +492,8 @@ def scan_project(db: Session, project_id: int) -> None:
 
             state["current_path"] = str(entry)
             state["scanned"] += 1
+            if state["scanned"] % 25 == 0:
+                _emit_progress(state, progress_callback)
 
             try:
                 _process_file(
@@ -483,13 +509,14 @@ def scan_project(db: Session, project_id: int) -> None:
                     db.commit()
                     commit_count += 1
                     pending_writes = 0
+                    _emit_progress(state, progress_callback)
             except Exception as exc:
                 logger.error("Failed to process %s: %s", entry, exc)
                 db.rollback()
                 state["errors"] += 1
                 _push_scan_error(state, f"{entry.name}: {exc}")
+                _emit_progress(state, progress_callback)
     finally:
-        final_message = "done"
         try:
             if pending_writes > 0:
                 db.commit()
@@ -518,23 +545,31 @@ def scan_project(db: Session, project_id: int) -> None:
         finally:
             state.pop("_folder_cache", None)
             state.update(running=False, current_path=None, message=final_message)
+            _emit_progress(state, progress_callback)
 
-        logger.info(
-            "Project %d scan complete — scanned=%d inserted=%d updated=%d errors=%d commits=%d",
-            project_id,
-            state["scanned"],
-            state["inserted"],
-            state["updated"],
-            state["errors"],
-            commit_count,
-        )
+    logger.info(
+        "Project %d scan complete — scanned=%d inserted=%d updated=%d errors=%d commits=%d",
+        project_id,
+        state["scanned"],
+        state["inserted"],
+        state["updated"],
+        state["errors"],
+        commit_count,
+    )
+    return _snapshot_state(state)
 
 
 # ---------------------------------------------------------------------------
 # Reindex — re-extract metadata for existing DB records
 # ---------------------------------------------------------------------------
 
-def reindex_project(db: Session, project_id: int, scope: str = "missing_metadata") -> None:
+def reindex_project(
+    db: Session,
+    project_id: int,
+    scope: str = "missing_metadata",
+    *,
+    progress_callback: Optional[ScanProgressCallback] = None,
+) -> dict[str, Any]:
     """Re-extract EXIF metadata (date, GPS, camera info) for photos already in
     the DB without re-traversing the filesystem.
 
@@ -543,10 +578,10 @@ def reindex_project(db: Session, project_id: int, scope: str = "missing_metadata
       "missing_location" — only photos with GPS but no resolved place fields
       "all"              — every photo belonging to this project
 
-    Uses the same per-project scan state so the frontend progress panel works
-    with no extra changes.
+    Returns a ScanStatus-compatible payload and can stream progress through
+    *progress_callback* for persisted task updates.
     """
-    state = get_project_scan_state(project_id)
+    state = _empty_state()
 
     query = db.query(Photo).filter(
         Photo.project_id == project_id,
@@ -573,16 +608,20 @@ def reindex_project(db: Session, project_id: int, scope: str = "missing_metadata
         message=f"reindexing ({scope})",
         recent_errors=[],
     )
+    _emit_progress(state, progress_callback)
 
     try:
         for photo in photos:
             state["current_path"] = photo.file_path
             state["scanned"] += 1
+            if state["scanned"] % 10 == 0:
+                _emit_progress(state, progress_callback)
 
             if not Path(photo.file_path).exists():
                 warning = f"photo#{photo.id} 文件不存在: {photo.file_path}"
                 logger.warning("reindex: %s", warning)
                 _push_scan_error(state, warning)
+                _emit_progress(state, progress_callback)
                 continue
 
             try:
@@ -615,6 +654,7 @@ def reindex_project(db: Session, project_id: int, scope: str = "missing_metadata
                     photo.updated_at = datetime.now()
                     db.commit()
                     state["updated"] += 1
+                    _emit_progress(state, progress_callback)
             except Exception as exc:
                 logger.error(
                     "reindex: failed to process photo %d (%s): %s",
@@ -625,12 +665,16 @@ def reindex_project(db: Session, project_id: int, scope: str = "missing_metadata
                 db.rollback()
                 state["errors"] += 1
                 _push_scan_error(state, f"photo#{photo.id} {Path(photo.file_path).name}: {exc}")
+                _emit_progress(state, progress_callback)
     finally:
         state.update(running=False, current_path=None, message="done")
-        logger.info(
-            "Project %d reindex complete — scanned=%d updated=%d errors=%d",
-            project_id,
-            state["scanned"],
-            state["updated"],
-            state["errors"],
-        )
+        _emit_progress(state, progress_callback)
+
+    logger.info(
+        "Project %d reindex complete — scanned=%d updated=%d errors=%d",
+        project_id,
+        state["scanned"],
+        state["updated"],
+        state["errors"],
+    )
+    return _snapshot_state(state)

@@ -1,46 +1,58 @@
 from __future__ import annotations
 
-import threading
 from enum import Enum
 
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from ..api.deps import require_project
-from ..database import SessionLocal, get_db
+from ..api.deps import get_db, require_project
 from ..models.project import Project
 from ..schemas.scan import ScanStatus
-from ..services.scanner import get_project_scan_state, reindex_project, scan_project
+from ..services.project_task_service import (
+    TASK_TYPE_LIBRARY_REINDEX,
+    TASK_TYPE_LIBRARY_SCAN,
+    build_scan_status,
+    enqueue_scan_task,
+    get_active_scan_task,
+    get_latest_scan_task,
+)
 
 router = APIRouter(prefix="/projects", tags=["projects-scan"])
 
 
 @router.post("/{project_id}/scan/start")
-def start_project_scan(project: Project = Depends(require_project)):
-    """Start an async scan for a project's photo library."""
+def start_project_scan(
+    project: Project = Depends(require_project),
+    db: Session = Depends(get_db),
+):
+    """Queue a project library scan for the worker to execute."""
     project_id = project.id
-    state = get_project_scan_state(project_id)
-    if state["running"]:
-        return {"message": "Scan already in progress", "status": ScanStatus(**state)}
+    active_task = get_active_scan_task(db, project_id)
+    if active_task is not None:
+        return {
+            "message": "Scan already in progress",
+            "status": build_scan_status(active_task),
+        }
 
-    def _run() -> None:
-        sess = SessionLocal()
-        try:
-            scan_project(sess, project_id)
-        finally:
-            sess.close()
-
-    thread = threading.Thread(
-        target=_run, daemon=True, name=f"scanner-project-{project_id}"
+    task = enqueue_scan_task(
+        db,
+        project_id=project_id,
+        task_type=TASK_TYPE_LIBRARY_SCAN,
+        request_params={},
     )
-    thread.start()
-    return {"message": "Scan started", "status": ScanStatus(**state)}
+    return {"message": "Scan queued", "status": build_scan_status(task)}
 
 
 @router.get("/{project_id}/scan/status", response_model=ScanStatus)
-def get_project_scan_status(project: Project = Depends(require_project)):
-    """Return the current scan state for a project."""
-    return ScanStatus(**get_project_scan_state(project.id))
+def get_project_scan_status(
+    project: Project = Depends(require_project),
+    db: Session = Depends(get_db),
+):
+    """Return the current persisted scan/reindex task state for a project."""
+    active_task = get_active_scan_task(db, project.id)
+    if active_task is not None:
+        return build_scan_status(active_task)
+    return build_scan_status(get_latest_scan_task(db, project.id))
 
 
 class _ReindexScope(str, Enum):
@@ -53,27 +65,21 @@ class _ReindexScope(str, Enum):
 def start_project_reindex(
     scope: _ReindexScope = _ReindexScope.missing_metadata,
     project: Project = Depends(require_project),
+    db: Session = Depends(get_db),
 ):
-    """Re-extract EXIF metadata for photos already in the DB.
-
-    scope=missing_metadata (default): only photos where taken_at IS NULL
-    scope=missing_location: only photos where GPS exists but place fields are empty
-    scope=all: every photo in the project
-    """
+    """Queue a metadata reindex task for the worker to execute."""
     project_id = project.id
-    state = get_project_scan_state(project_id)
-    if state["running"]:
-        return {"message": "Scan/reindex already in progress", "status": ScanStatus(**state)}
+    active_task = get_active_scan_task(db, project_id)
+    if active_task is not None:
+        return {
+            "message": "Scan/reindex already in progress",
+            "status": build_scan_status(active_task),
+        }
 
-    def _run() -> None:
-        sess = SessionLocal()
-        try:
-            reindex_project(sess, project_id, scope=scope.value)
-        finally:
-            sess.close()
-
-    thread = threading.Thread(
-        target=_run, daemon=True, name=f"reindex-project-{project_id}"
+    task = enqueue_scan_task(
+        db,
+        project_id=project_id,
+        task_type=TASK_TYPE_LIBRARY_REINDEX,
+        request_params={"scope": scope.value},
     )
-    thread.start()
-    return {"message": "Reindex started", "status": ScanStatus(**state)}
+    return {"message": "Reindex queued", "status": build_scan_status(task)}

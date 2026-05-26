@@ -7,6 +7,7 @@ import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
 from ..models.face import FaceDetection, FaceEmbedding, Person, PersonFaceAssignment
+from .people_assignment_constants import STATUS_REJECTED, STATUS_REVIEW_PENDING
 from .people_learning_service import _coerce_vector, _cosine_similarity
 from .project_face_settings_service import get_or_create_project_face_settings
 
@@ -49,7 +50,7 @@ def cluster_unknown_faces(
             sa.and_(
                 PersonFaceAssignment.project_id == FaceDetection.project_id,
                 PersonFaceAssignment.face_detection_id == FaceDetection.id,
-                PersonFaceAssignment.assignment_status != "rejected",
+                PersonFaceAssignment.assignment_status != STATUS_REJECTED,
             ),
         )
         .filter(
@@ -148,7 +149,7 @@ def cluster_unknown_faces(
                     project_id=project_id,
                     person_id=person.id,
                     face_detection_id=face_id,
-                    assignment_status="review_pending",
+                    assignment_status=STATUS_REVIEW_PENDING,
                     assignment_source="unknown_cluster",
                     confidence=None,
                     similarity_score=None,
