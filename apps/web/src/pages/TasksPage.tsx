@@ -208,6 +208,7 @@ function FaceScanSection({ projectId }: { projectId: number | null }) {
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const clusterWasActiveRef = useRef(false);
+  const rematchWasActiveRef = useRef(false);
   const [preview, setPreview] = useState<{
     scope: FaceScanPreviewScope;
     total_photos: number;
@@ -244,6 +245,16 @@ function FaceScanSection({ projectId }: { projectId: number | null }) {
     },
   });
 
+  const { data: rematchStatus } = useQuery({
+    queryKey: ["face-rematch-unknown-status", projectId],
+    queryFn: () => api.projects.projectFaceRematchUnknownStatus(projectId!),
+    enabled: canRun,
+    refetchInterval: (query) => {
+      const d = query.state.data;
+      return d && d.running ? 3000 : 15000;
+    },
+  });
+
   useEffect(() => {
     const isActive = !!clusterStatus && clusterStatus.running;
     if (clusterWasActiveRef.current && !isActive && clusterStatus) {
@@ -261,6 +272,24 @@ function FaceScanSection({ projectId }: { projectId: number | null }) {
     }
     clusterWasActiveRef.current = isActive;
   }, [clusterStatus, projectId, queryClient]);
+
+  useEffect(() => {
+    const isActive = !!rematchStatus && rematchStatus.running;
+    if (rematchWasActiveRef.current && !isActive && rematchStatus) {
+      if (rematchStatus.status === "success") {
+        setError(null);
+        setMessage(
+          `重匹配完成：considered=${rematchStatus.faces_considered} · matched=${rematchStatus.matched_faces} · review=${rematchStatus.review_pending}`
+        );
+        queryClient.invalidateQueries({ queryKey: ["project-people", projectId] });
+        queryClient.invalidateQueries({ queryKey: ["project-review-page", projectId] });
+        queryClient.invalidateQueries({ queryKey: queryKeys.projectFaces(projectId) });
+      } else if (rematchStatus.status === "failed") {
+        setError(`重匹配失败：${rematchStatus.recent_errors[0] ?? rematchStatus.message}`);
+      }
+    }
+    rematchWasActiveRef.current = isActive;
+  }, [rematchStatus, projectId, queryClient]);
 
   const previewMutation = useMutation({
     mutationFn: (scope: FaceScanScope) =>
@@ -317,6 +346,22 @@ function FaceScanSection({ projectId }: { projectId: number | null }) {
     },
     onError: (err: Error) => {
       setError(`聚类失败：${err.message}`);
+    },
+  });
+
+  const rematchMutation = useMutation({
+    mutationFn: () => api.projects.rematchUnknownFaces(projectId!),
+    onSuccess: (result) => {
+      setError(null);
+      setMessage(
+        result.status.status === "queued" || result.status.status === "running"
+          ? `已提交未知人脸重匹配任务（max_faces=${result.status.max_faces}）`
+          : result.message
+      );
+      queryClient.invalidateQueries({ queryKey: ["face-rematch-unknown-status", projectId] });
+    },
+    onError: (err: Error) => {
+      setError(`重匹配失败：${err.message}`);
     },
   });
 
@@ -409,9 +454,31 @@ function FaceScanSection({ projectId }: { projectId: number | null }) {
         </div>
       )}
 
+      {rematchStatus && rematchStatus.status !== "idle" && (
+        <div className="bg-surface-soft border border-hairline rounded-md px-4 py-3 space-y-1">
+          <p className="text-body-sm font-medium text-ink">
+            未知人脸重匹配任务 · {rematchStatus.status}
+          </p>
+          <p className="text-caption-sm text-mute">
+            task={rematchStatus.task_id ?? "-"} · max_faces={rematchStatus.max_faces} · errors={rematchStatus.errors}
+          </p>
+          <p className="text-caption-sm text-mute">
+            considered={rematchStatus.faces_considered} · matched={rematchStatus.matched_faces} · auto={rematchStatus.auto_assigned} · review={rematchStatus.review_pending}
+          </p>
+          <p className="text-caption-sm text-mute">{rematchStatus.message}</p>
+          {rematchStatus.recent_errors.length > 0 && (
+            <p className="text-caption-sm text-danger">
+              最近错误：{rematchStatus.recent_errors[rematchStatus.recent_errors.length - 1]}
+            </p>
+          )}
+        </div>
+      )}
+
       <p className="text-caption-sm text-mute flex flex-wrap items-center gap-2">
         <CapabilityMaturityBadge item={CAPABILITY_MATURITY.face_clustering} compact />
+        <CapabilityMaturityBadge item={CAPABILITY_MATURITY.face_rematch_unknown} compact />
         <span>{CAPABILITY_MATURITY.face_clustering.hint}</span>
+        <span>{CAPABILITY_MATURITY.face_rematch_unknown.hint}</span>
       </p>
 
       <div className="flex flex-wrap items-center gap-2">
@@ -426,6 +493,18 @@ function FaceScanSection({ projectId }: { projectId: number | null }) {
             : clusterStatus?.running
               ? "聚类任务进行中…"
               : "聚类未知人脸"}
+        </button>
+        <button
+          onClick={() => rematchMutation.mutate()}
+          disabled={!canRun || rematchMutation.isPending || !!rematchStatus?.running}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-hairline text-btn-sm hover:bg-surface-card disabled:opacity-50 transition-colors"
+        >
+          <RefreshCw className="w-3.5 h-3.5" />
+          {rematchMutation.isPending
+            ? "提交中…"
+            : rematchStatus?.running
+              ? "重匹配进行中…"
+              : "重匹配未知人脸"}
         </button>
         <Link
           to={reviewPath}

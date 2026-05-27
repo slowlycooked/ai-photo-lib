@@ -19,6 +19,7 @@ import json
 import logging
 from typing import Optional
 
+import sqlalchemy as sa
 from sqlalchemy import func
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -26,6 +27,7 @@ from sqlalchemy.sql import Select
 
 from ...config import settings as global_settings
 from ...models.ai import PhotoAIAnalysis
+from ...models.face import FaceDetection, Person, PersonFaceAssignment
 from ...services.embedding_client import EmbeddingRequestError
 from ...services.folder_service import build_folder_photo_ids_subquery
 from ...services.query_understanding_service import SearchQueryPlan, understand_query
@@ -514,6 +516,91 @@ def _resolve_folder_photo_subquery(
     return build_folder_photo_ids_subquery(db, project_id, folder_id, folder_scope)
 
 
+def _resolve_face_filter_photo_ids(
+    db: Session,
+    *,
+    project_id: int,
+    face_count_min: Optional[int],
+    face_count_max: Optional[int],
+    has_review_pending: Optional[bool],
+    has_unnamed_people: Optional[bool],
+) -> set[int]:
+    counts = (
+        db.query(FaceDetection.photo_id, func.count(FaceDetection.id).label("face_count"))
+        .filter(
+            FaceDetection.project_id == project_id,
+            FaceDetection.status != "failed",
+        )
+        .group_by(FaceDetection.photo_id)
+        .all()
+    )
+    photo_ids = {int(photo_id) for photo_id, _ in counts}
+    if face_count_min is not None or face_count_max is not None:
+        filtered_by_count: set[int] = set()
+        for photo_id, count in counts:
+            count_int = int(count)
+            if face_count_min is not None and count_int < face_count_min:
+                continue
+            if face_count_max is not None and count_int > face_count_max:
+                continue
+            filtered_by_count.add(int(photo_id))
+        photo_ids = filtered_by_count
+
+    if has_review_pending is not None:
+        review_photo_ids = {
+            int(row[0])
+            for row in (
+                db.query(FaceDetection.photo_id)
+                .join(
+                    PersonFaceAssignment,
+                    sa.and_(
+                        PersonFaceAssignment.project_id == FaceDetection.project_id,
+                        PersonFaceAssignment.face_detection_id == FaceDetection.id,
+                    ),
+                )
+                .filter(
+                    FaceDetection.project_id == project_id,
+                    PersonFaceAssignment.assignment_status == "review_pending",
+                )
+                .distinct()
+                .all()
+            )
+        }
+        photo_ids = photo_ids & review_photo_ids if has_review_pending else photo_ids - review_photo_ids
+
+    if has_unnamed_people is not None:
+        unnamed_photo_ids = {
+            int(row[0])
+            for row in (
+                db.query(FaceDetection.photo_id)
+                .join(
+                    PersonFaceAssignment,
+                    sa.and_(
+                        PersonFaceAssignment.project_id == FaceDetection.project_id,
+                        PersonFaceAssignment.face_detection_id == FaceDetection.id,
+                        PersonFaceAssignment.assignment_status != "rejected",
+                    ),
+                )
+                .join(
+                    Person,
+                    sa.and_(
+                        Person.project_id == PersonFaceAssignment.project_id,
+                        Person.id == PersonFaceAssignment.person_id,
+                    ),
+                )
+                .filter(
+                    FaceDetection.project_id == project_id,
+                    Person.is_named.is_(False),
+                )
+                .distinct()
+                .all()
+            )
+        }
+        photo_ids = photo_ids & unnamed_photo_ids if has_unnamed_people else photo_ids - unnamed_photo_ids
+
+    return photo_ids
+
+
 def _attach_people_explain(
     candidates: list[SearchCandidate],
     people_results: list[SearchCandidate],
@@ -584,6 +671,10 @@ def search_photos(
     folder_scope: str = "subtree",
     mode: SearchMode = "hybrid",
     debug: bool = False,
+    face_count_min: Optional[int] = None,
+    face_count_max: Optional[int] = None,
+    has_review_pending: Optional[bool] = None,
+    has_unnamed_people: Optional[bool] = None,
 ) -> tuple[int, list, Optional[dict]]:
     """Search photos using project-configurable hybrid search.
 
@@ -827,12 +918,45 @@ def search_photos(
             folder_id, folder_scope, folder_count,
         )
 
+    face_filter_active = (
+        face_count_min is not None
+        or face_count_max is not None
+        or has_review_pending is not None
+        or has_unnamed_people is not None
+    )
+    face_filter_photo_ids: Optional[set[int]] = None
+    if project_id is not None and face_filter_active:
+        face_filter_photo_ids = _resolve_face_filter_photo_ids(
+            db,
+            project_id=project_id,
+            face_count_min=face_count_min,
+            face_count_max=face_count_max,
+            has_review_pending=has_review_pending,
+            has_unnamed_people=has_unnamed_people,
+        )
+        constrained_photo_ids = (
+            set(face_filter_photo_ids)
+            if constrained_photo_ids is None
+            else constrained_photo_ids & face_filter_photo_ids
+        )
+        trace.append(
+            {
+                "stage": "face_filter",
+                "face_count_min": face_count_min,
+                "face_count_max": face_count_max,
+                "has_review_pending": has_review_pending,
+                "has_unnamed_people": has_unnamed_people,
+                "matched_count": len(face_filter_photo_ids),
+                "constrained_count": len(constrained_photo_ids),
+            }
+        )
+
     # ── Metadata filter (EXIF / Photo fields) ──────────────────────────────
     metadata_filters = search_query_plan.metadata_filters
     if (not effective_settings.enable_structured_filters) or people_resolution.is_people_only:
         metadata_filters = {}
 
-    metadata_only_requested = bool(metadata_filters.get("metadata_only"))
+    metadata_only_requested = bool(metadata_filters.get("metadata_only")) and not face_filter_active
     metadata_only_allowed = search_query_plan.intent not in _METADATA_ONLY_BLOCKED_INTENTS
     metadata_filter_skipped_reason = "not_skipped"
     if not effective_settings.enable_structured_filters:
@@ -1061,12 +1185,79 @@ def search_photos(
             return total, items, debug_payload
 
     kw_service = KeywordRecallService(db, effective_settings)
-    keyword_results = kw_service.search(
-        search_query_plan,
-        project_id=project_id or 0,
-        folder_photo_subquery=folder_photo_subquery,
-        constrained_photo_ids=constrained_photo_ids,
-    )
+    try:
+        keyword_results = kw_service.search(
+            search_query_plan,
+            project_id=project_id or 0,
+            folder_photo_subquery=folder_photo_subquery,
+            constrained_photo_ids=constrained_photo_ids,
+        )
+    except SQLAlchemyError as exc:
+        fallback_metadata_filters = metadata_filters
+        if project_id is not None and not _mf_active:
+            fallback_metadata_filters = understand_query(
+                query,
+                project_id=project_id,
+                concept_taxonomy=effective_settings.concept_taxonomy,
+            ).metadata_filters
+        fallback_active = bool(
+            fallback_metadata_filters.get("year")
+            or fallback_metadata_filters.get("month")
+            or fallback_metadata_filters.get("date_from")
+            or fallback_metadata_filters.get("place_terms")
+        )
+        if not (fallback_active and project_id is not None):
+            raise
+        db.rollback()
+        meta_results = MetadataRecallService(db, project_id).search(
+            metadata_filters=fallback_metadata_filters,
+            folder_photo_subquery=folder_photo_subquery,
+        )
+        total, items = build_result_items(
+            db,
+            meta_results,
+            project_id=project_id,
+            mode="hybrid",
+            page=page,
+            page_size=page_size,
+            debug=debug,
+        )
+        trace.append(
+            {
+                "stage": "keyword_recall",
+                "fallback": "metadata",
+                "error": str(exc),
+                "metadata_candidates": len(meta_results),
+            }
+        )
+        debug_payload = None
+        if debug:
+            debug_payload = build_debug_payload(
+                query_plan=search_query_plan,
+                mode="metadata",
+                embedding_model="",
+                embedding_dimension=global_settings.embedding_dimension,
+                keyword_candidates=0,
+                vector_candidates=0,
+                merged_candidates=len(meta_results),
+                fallback_reason=str(exc),
+                settings=effective_settings,
+                trace=trace,
+                metadata_filters=fallback_metadata_filters,
+                metadata_candidates=len(meta_results),
+                metadata_only=True,
+                people_query_plan=people_query_plan,
+                people_candidates=people_candidates_debug,
+                people_filter_mode=people_resolution.people_filter_mode,
+                matched_person_ids=matched_person_ids,
+                metadata_filter_active=_mf_active,
+                metadata_filter_skipped_reason=metadata_filter_skipped_reason,
+                metadata_only_allowed=metadata_only_allowed,
+                concept_terms=concept_terms_for_debug,
+                concept_entity_terms=concept_entity_terms_for_debug,
+                concept_debug=concept_debug_info,
+            )
+        return total, items, debug_payload
 
     concept_results: list[SearchCandidate] = []
     people_visual_results: list[SearchCandidate] = []

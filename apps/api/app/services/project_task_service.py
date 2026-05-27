@@ -9,13 +9,14 @@ from sqlalchemy.orm import Session
 
 from ..models.project_task import ProjectTask
 from ..models.project import Project
-from ..schemas.face import FaceClusterUnknownStatusResponse
+from ..schemas.face import FaceClusterUnknownStatusResponse, FaceRematchUnknownStatusResponse
 from ..schemas.scan import ScanStatus
 
 TASK_TYPE_LIBRARY_SCAN = "library_scan"
 TASK_TYPE_LIBRARY_REINDEX = "library_reindex"
 TASK_TYPE_UNKNOWN_FACE_CLUSTERING = "unknown_face_clustering"
 TASK_TYPE_FACE_SCAN_PROJECT = "face_scan_project"
+TASK_TYPE_FACE_REMATCH_UNKNOWN = "face_rematch_unknown"
 
 SCAN_TASK_TYPES: tuple[str, ...] = (
     TASK_TYPE_LIBRARY_SCAN,
@@ -23,6 +24,7 @@ SCAN_TASK_TYPES: tuple[str, ...] = (
 )
 FACE_CLUSTER_TASK_TYPES: tuple[str, ...] = (TASK_TYPE_UNKNOWN_FACE_CLUSTERING,)
 FACE_SCAN_TASK_TYPES: tuple[str, ...] = (TASK_TYPE_FACE_SCAN_PROJECT,)
+FACE_REMATCH_TASK_TYPES: tuple[str, ...] = (TASK_TYPE_FACE_REMATCH_UNKNOWN,)
 
 
 @dataclass(frozen=True)
@@ -88,6 +90,14 @@ def get_active_face_scan_task(db: Session, project_id: int) -> Optional[ProjectT
 
 def get_latest_face_scan_task(db: Session, project_id: int) -> Optional[ProjectTask]:
     return _get_latest_project_task(db, project_id, FACE_SCAN_TASK_TYPES)
+
+
+def get_active_face_rematch_task(db: Session, project_id: int) -> Optional[ProjectTask]:
+    return _get_active_project_task(db, project_id, FACE_REMATCH_TASK_TYPES)
+
+
+def get_latest_face_rematch_task(db: Session, project_id: int) -> Optional[ProjectTask]:
+    return _get_latest_project_task(db, project_id, FACE_REMATCH_TASK_TYPES)
 
 
 def _get_active_project_task(
@@ -166,6 +176,21 @@ def enqueue_face_scan_project_task(
         task_type=TASK_TYPE_FACE_SCAN_PROJECT,
         active_task_types=FACE_SCAN_TASK_TYPES,
         request_params=request_params,
+    )
+
+
+def enqueue_face_rematch_unknown_task(
+    db: Session,
+    *,
+    project_id: int,
+    max_faces: int,
+) -> EnqueueProjectTaskResult:
+    return enqueue_unique_project_task(
+        db,
+        project_id=project_id,
+        task_type=TASK_TYPE_FACE_REMATCH_UNKNOWN,
+        active_task_types=FACE_REMATCH_TASK_TYPES,
+        request_params={"max_faces": max_faces},
     )
 
 
@@ -298,6 +323,39 @@ def build_face_cluster_status(task: Optional[ProjectTask]) -> FaceClusterUnknown
     return FaceClusterUnknownStatusResponse(**payload)
 
 
+def build_face_rematch_status(task: Optional[ProjectTask]) -> FaceRematchUnknownStatusResponse:
+    if task is None:
+        return FaceRematchUnknownStatusResponse(**empty_face_rematch_state())
+
+    request_params = dict(task.request_params or {})
+    max_faces = int(request_params.get("max_faces") or 1000)
+    payload = empty_face_rematch_state(project_id=task.project_id, max_faces=max_faces)
+
+    if task.status == "success":
+        payload.update(task.result_payload or {})
+    else:
+        payload.update(task.progress_payload or {})
+
+    payload["project_id"] = task.project_id
+    payload["task_id"] = task.id
+    payload["status"] = task.status
+    payload["running"] = task.status in ("queued", "running")
+    payload["max_faces"] = int(payload.get("max_faces") or max_faces)
+
+    if task.status == "failed":
+        error_text = (task.error_message or "").strip()
+        recent_errors = list(payload.get("recent_errors") or [])
+        if error_text and error_text not in recent_errors:
+            recent_errors.append(error_text)
+        payload["recent_errors"] = recent_errors
+        payload["errors"] = max(int(payload.get("errors") or 0), 1)
+        payload["message"] = error_text or payload.get("message") or "rematch_failed"
+    elif not payload.get("message"):
+        payload["message"] = _default_running_message(task.task_type, request_params)
+
+    return FaceRematchUnknownStatusResponse(**payload)
+
+
 def build_queued_progress_payload(
     task_type: str,
     request_params: Optional[dict],
@@ -343,6 +401,9 @@ def empty_project_task_state(
             "recent_errors": [],
             "message": "idle",
         }
+    if task_type == TASK_TYPE_FACE_REMATCH_UNKNOWN:
+        max_faces = int((request_params or {}).get("max_faces") or 1000)
+        return empty_face_rematch_state(project_id=project_id, max_faces=max_faces)
     return empty_scan_state()
 
 
@@ -356,6 +417,9 @@ def _default_running_message(task_type: str, request_params: Optional[dict]) -> 
     if task_type == TASK_TYPE_FACE_SCAN_PROJECT:
         scope = (request_params or {}).get("scope") or "missing"
         return f"queuing face scan jobs ({scope})"
+    if task_type == TASK_TYPE_FACE_REMATCH_UNKNOWN:
+        max_faces = int((request_params or {}).get("max_faces") or 1000)
+        return f"rematching unknown faces (max_faces={max_faces})"
     return "scanning"
 
 
@@ -403,6 +467,51 @@ def build_face_cluster_result_payload(
         faces_clustered=faces_clustered,
         assignments_created=assignments_created,
         message="Unknown face clustering completed",
+    )
+    return payload
+
+
+def empty_face_rematch_state(
+    *,
+    project_id: int = 0,
+    max_faces: int = 1000,
+) -> dict:
+    return {
+        "project_id": project_id,
+        "task_id": None,
+        "status": "idle",
+        "running": False,
+        "max_faces": max_faces,
+        "faces_considered": 0,
+        "matched_faces": 0,
+        "auto_assigned": 0,
+        "review_pending": 0,
+        "errors": 0,
+        "recent_errors": [],
+        "message": "idle",
+    }
+
+
+def build_face_rematch_result_payload(
+    *,
+    project_id: int,
+    task_id: int,
+    max_faces: int,
+    faces_considered: int,
+    matched_faces: int,
+    auto_assigned: int,
+    review_pending: int,
+) -> dict:
+    payload = empty_face_rematch_state(project_id=project_id, max_faces=max_faces)
+    payload.update(
+        task_id=task_id,
+        status="success",
+        running=False,
+        faces_considered=faces_considered,
+        matched_faces=matched_faces,
+        auto_assigned=auto_assigned,
+        review_pending=review_pending,
+        message="Unknown face rematch completed",
     )
     return payload
 

@@ -3,10 +3,13 @@ import type {
   AppSettings,
   DebugSettingsResponse,
   DebugSettingsUpdate,
+  SystemHealthResponse,
 } from "./types";
 
 export const settingsApi = {
   get: () => request<AppSettings>("/settings"),
+
+  health: () => request<SystemHealthResponse>("/health/system"),
 
   getDebug: () => request<DebugSettingsResponse>("/settings/debug"),
 

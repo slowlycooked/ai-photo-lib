@@ -283,6 +283,61 @@ class SearchPhotosTest(unittest.TestCase):
         self.assertEqual(total, 1)
         self.assertEqual(items[0]["photo_id"], 9)
 
+    def test_face_filters_constrain_recall_candidates(self) -> None:
+        candidate = self._make_candidate()
+
+        with (
+            patch(
+                "app.services.search.app_service.SearchSettingsResolver.resolve",
+                return_value=_default_settings(),
+            ),
+            patch(
+                "app.services.search.app_service.understand_query",
+                return_value=SearchQueryPlan(
+                    original_query="合照",
+                    normalized_query="合照",
+                    exact_terms=["合照"],
+                    expanded_terms=[],
+                    intent="group_photo_search",
+                    metadata_filters={},
+                ),
+            ),
+            patch(
+                "app.services.search.app_service._resolve_face_filter_photo_ids",
+                return_value={9},
+            ) as resolve_face_filter,
+            patch(
+                "app.services.search.app_service.build_folder_photo_ids_subquery",
+                return_value=None,
+            ),
+            patch(
+                "app.services.search.app_service.KeywordRecallService.search",
+                return_value=[candidate],
+            ) as keyword_search,
+            patch(
+                "app.services.search.app_service.VectorRecallService.search",
+                side_effect=EmbeddingRequestError("down"),
+            ),
+            patch(
+                "app.services.search.app_service.build_result_items",
+                return_value=(1, [{"photo_id": 9, "score": 0.7}]),
+            ),
+        ):
+            total, items, _debug = search_photos(
+                db=MagicMock(),
+                query="合照",
+                page=1,
+                page_size=20,
+                project_id=1,
+                mode="hybrid",
+                face_count_min=2,
+            )
+
+        self.assertEqual(total, 1)
+        self.assertEqual(items[0]["photo_id"], 9)
+        resolve_face_filter.assert_called_once()
+        self.assertEqual(keyword_search.call_args.kwargs["constrained_photo_ids"], {9})
+
     def test_vector_fallback_debug_has_error(self) -> None:
         candidate = self._make_candidate()
 

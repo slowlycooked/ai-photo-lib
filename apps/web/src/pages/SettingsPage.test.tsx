@@ -4,9 +4,10 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ApiError, type DebugSettingsResponse } from "@/api";
-import { DebugLogSettingsCard } from "@/pages/SettingsPage";
+import { DebugLogSettingsCard, SystemHealthCard } from "@/pages/SettingsPage";
 
 const getDebugMock = vi.fn();
+const healthMock = vi.fn();
 const updateDebugMock = vi.fn();
 const configureFrontendLoggerMock = vi.fn();
 
@@ -19,6 +20,7 @@ vi.mock("@/api", async () => {
       settings: {
         ...actual.api.settings,
         getDebug: (...args: unknown[]) => getDebugMock(...args),
+        health: (...args: unknown[]) => healthMock(...args),
         updateDebug: (...args: unknown[]) => updateDebugMock(...args),
       },
     },
@@ -95,6 +97,21 @@ function renderCard() {
   );
 }
 
+function renderHealthCard() {
+  const client = new QueryClient({
+    defaultOptions: {
+      queries: { retry: false },
+      mutations: { retry: false },
+    },
+  });
+
+  return render(
+    <QueryClientProvider client={client}>
+      <SystemHealthCard />
+    </QueryClientProvider>
+  );
+}
+
 function getRowSelect(label: string) {
   const row = screen.getByText(label).closest("tr");
   if (!row) {
@@ -106,9 +123,18 @@ function getRowSelect(label: string) {
 describe("DebugLogSettingsCard", () => {
   beforeEach(() => {
     getDebugMock.mockReset();
+    healthMock.mockReset();
     updateDebugMock.mockReset();
     configureFrontendLoggerMock.mockReset();
     getDebugMock.mockResolvedValue(response);
+    healthMock.mockResolvedValue({
+      status: "warn",
+      version: "0.9.0",
+      checks: [
+        { name: "database", status: "ok", message: "connected" },
+        { name: "embedding endpoint configured", status: "warn", message: "not configured" },
+      ],
+    });
     updateDebugMock.mockResolvedValue(response);
   });
 
@@ -190,5 +216,15 @@ describe("DebugLogSettingsCard", () => {
       expect(screen.getByText(/页面已回退到 BASIC 预设/)).toBeInTheDocument();
     });
     expect(screen.getByText("当前模式：BASIC")).toBeInTheDocument();
+  });
+
+  it("shows system health checks", async () => {
+    renderHealthCard();
+
+    expect(await screen.findByText("整体状态")).toBeInTheDocument();
+    expect(screen.getByText("WARN · v0.9.0")).toBeInTheDocument();
+    expect(screen.getByText("database")).toBeInTheDocument();
+    expect(screen.getByText("OK · connected")).toBeInTheDocument();
+    expect(screen.getByText("embedding endpoint configured")).toBeInTheDocument();
   });
 });

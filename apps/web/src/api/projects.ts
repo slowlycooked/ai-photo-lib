@@ -11,6 +11,9 @@ import type {
   FaceClusterUnknownStatusResponse,
   FaceDetectionDetail,
   FaceDetectionListResponse,
+  FaceRematchUnknownRequest,
+  FaceRematchUnknownResponse,
+  FaceRematchUnknownStatusResponse,
   FaceScanProjectStartRequest,
   FaceScanProjectStartResponse,
   FaceScanProjectStatusResponse,
@@ -211,6 +214,16 @@ export const projectsApi = {
   projectFaceClusterUnknownStatus: (id: number) =>
     request<FaceClusterUnknownStatusResponse>(`/projects/${id}/face-cluster-unknown/status`),
 
+  rematchUnknownFaces: (id: number, body: FaceRematchUnknownRequest = {}) =>
+    request<FaceRematchUnknownResponse>(`/projects/${id}/face-rematch-unknown`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+
+  projectFaceRematchUnknownStatus: (id: number) =>
+    request<FaceRematchUnknownStatusResponse>(`/projects/${id}/face-rematch-unknown/status`),
+
   faces: (
     id: number,
     page = 1,
@@ -405,6 +418,10 @@ export const projectsApi = {
     debug = false,
     tagField?: TagField | null,
     tagValue?: string | null,
+    faceCountMin?: number | null,
+    faceCountMax?: number | null,
+    hasReviewPending?: boolean | null,
+    hasUnnamedPeople?: boolean | null,
   ) =>
     request<SearchResponse>(
       `/projects/${id}/search${qs({
@@ -418,6 +435,10 @@ export const projectsApi = {
         filter: tagField && tagValue ? "tag" : undefined,
         tag_field: tagField ?? undefined,
         tag_value: tagValue ?? undefined,
+        face_count_min: faceCountMin ?? undefined,
+        face_count_max: faceCountMax ?? undefined,
+        has_review_pending: hasReviewPending ?? undefined,
+        has_unnamed_people: hasUnnamedPeople ?? undefined,
       })}`,
     ),
 

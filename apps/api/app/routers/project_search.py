@@ -31,6 +31,10 @@ def project_search(
     filter: Optional[str] = Query(None, pattern="^(tag)$"),
     tag_field: Optional[str] = None,
     tag_value: Optional[str] = None,
+    face_count_min: Optional[int] = Query(default=None, ge=0),
+    face_count_max: Optional[int] = Query(default=None, ge=0),
+    has_review_pending: Optional[bool] = None,
+    has_unnamed_people: Optional[bool] = None,
     project: Project = Depends(require_project),
     db: Session = Depends(get_db),
 ):
@@ -81,6 +85,10 @@ def project_search(
         folder_scope=folder_scope,
         mode=mode,
         debug=debug,
+        face_count_min=face_count_min,
+        face_count_max=face_count_max,
+        has_review_pending=has_review_pending,
+        has_unnamed_people=has_unnamed_people,
     )
     return SearchResponse(
         query=q,

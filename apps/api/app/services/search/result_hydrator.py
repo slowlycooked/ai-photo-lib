@@ -3,10 +3,12 @@ from __future__ import annotations
 
 from typing import Optional
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from ...logging_config import should_include_search_debug_payload
 from ...models.ai import PhotoAIAnalysis
+from ...models.face import FaceDetection
 from ...models.photo import Photo
 from .types import SearchCandidate, SearchMode
 
@@ -59,6 +61,22 @@ def build_result_items(
         .all()
     )
     row_by_photo_id = {photo.id: (photo, ai) for photo, ai in rows}
+    try:
+        face_counts = {
+            int(photo_id): int(count)
+            for photo_id, count in (
+                db.query(FaceDetection.photo_id, func.count(FaceDetection.id))
+                .filter(
+                    FaceDetection.project_id == project_id,
+                    FaceDetection.photo_id.in_(photo_ids),
+                    FaceDetection.status != "failed",
+                )
+                .group_by(FaceDetection.photo_id)
+                .all()
+            )
+        }
+    except Exception:  # noqa: BLE001
+        face_counts = {}
 
     items: list[dict] = []
     for candidate in page_candidates:
@@ -106,6 +124,7 @@ def build_result_items(
             "city": photo.city,
             "district": photo.district,
             "formatted_address": photo.formatted_address,
+            "face_count": face_counts.get(photo.id, 0),
             # P2: evidence level always present (frontend uses for fold/filter UI)
             "evidence_level": candidate.evidence_level or "E",
             "matched_people": list(candidate.people_explain.get("matched_people", [])),

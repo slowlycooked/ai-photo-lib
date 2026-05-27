@@ -182,6 +182,30 @@ class FaceClusterUnknownResponse(BaseModel):
     status: FaceClusterUnknownStatusResponse
 
 
+class FaceRematchUnknownRequest(BaseModel):
+    max_faces: int = Field(1000, ge=1, le=10000)
+
+
+class FaceRematchUnknownStatusResponse(BaseModel):
+    project_id: int
+    task_id: Optional[int] = None
+    status: str
+    running: bool
+    max_faces: int = 1000
+    faces_considered: int = 0
+    matched_faces: int = 0
+    auto_assigned: int = 0
+    review_pending: int = 0
+    errors: int = 0
+    recent_errors: list[str] = Field(default_factory=list)
+    message: str
+
+
+class FaceRematchUnknownResponse(BaseModel):
+    message: str
+    status: FaceRematchUnknownStatusResponse
+
+
 class PersonSummaryResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

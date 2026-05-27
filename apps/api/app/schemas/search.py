@@ -48,6 +48,7 @@ class SearchResultItem(BaseModel):
     city: Optional[str] = None
     district: Optional[str] = None
     formatted_address: Optional[str] = None
+    face_count: Optional[int] = None
     matched_people: Optional[List[Dict[str, Any]]] = None
 
 

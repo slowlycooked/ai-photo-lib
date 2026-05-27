@@ -579,6 +579,26 @@ class ProjectFacesEndpointsTest(unittest.TestCase):
     self.assertEqual(status_payload["queued"], 0)
     self.assertEqual(status_payload["failed"], 1)
 
+  def test_face_rematch_unknown_can_be_queued_and_reported(self) -> None:
+    start = self.client.post("/projects/1/face-rematch-unknown", json={"max_faces": 123})
+    self.assertEqual(start.status_code, 200)
+    payload = start.json()
+    self.assertEqual(payload["status"]["status"], "queued")
+    self.assertEqual(payload["status"]["max_faces"], 123)
+    self.assertTrue(payload["status"]["running"])
+
+    duplicate = self.client.post("/projects/1/face-rematch-unknown", json={"max_faces": 456})
+    self.assertEqual(duplicate.status_code, 200)
+    duplicate_payload = duplicate.json()
+    self.assertEqual(duplicate_payload["message"], "Unknown face rematch already in progress")
+    self.assertEqual(duplicate_payload["status"]["max_faces"], 123)
+
+    status = self.client.get("/projects/1/face-rematch-unknown/status")
+    self.assertEqual(status.status_code, 200)
+    status_payload = status.json()
+    self.assertEqual(status_payload["status"], "queued")
+    self.assertEqual(status_payload["max_faces"], 123)
+
   def test_ai_jobs_failed_list_can_filter_job_type(self) -> None:
     with self._engine.begin() as conn:
       conn.execute(

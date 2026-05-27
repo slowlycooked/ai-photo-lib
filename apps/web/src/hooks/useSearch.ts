@@ -11,6 +11,10 @@ interface UseSearchOptions {
   folderScope?: string;
   tagField?: TagField | null;
   tagValue?: string | null;
+  faceCountMin?: number | null;
+  faceCountMax?: number | null;
+  hasReviewPending?: boolean | null;
+  hasUnnamedPeople?: boolean | null;
 }
 
 export function useSearch(
@@ -25,12 +29,30 @@ export function useSearch(
     folderScope = "subtree",
     tagField = null,
     tagValue = null,
+    faceCountMin = null,
+    faceCountMax = null,
+    hasReviewPending = null,
+    hasUnnamedPeople = null,
   } = options;
 
   const isTagFilter = tagField != null && tagValue != null;
 
   return useInfiniteQuery({
-    queryKey: ["search", query, projectId, mode, debug, folderId, folderScope, tagField, tagValue],
+    queryKey: [
+      "search",
+      query,
+      projectId,
+      mode,
+      debug,
+      folderId,
+      folderScope,
+      tagField,
+      tagValue,
+      faceCountMin,
+      faceCountMax,
+      hasReviewPending,
+      hasUnnamedPeople,
+    ],
     queryFn: ({ pageParam = 1 }) =>
       api.projects.search(
         projectId!,
@@ -43,6 +65,10 @@ export function useSearch(
         debug,
         tagField,
         tagValue,
+        faceCountMin,
+        faceCountMax,
+        hasReviewPending,
+        hasUnnamedPeople,
       ),
     initialPageParam: 1,
     enabled: (query.trim().length > 0 || isTagFilter) && projectId !== null,

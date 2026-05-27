@@ -14,6 +14,10 @@ interface SearchResultGridProps {
   debug?: boolean;
   tagField?: TagField | null;
   tagValue?: string | null;
+  faceCountMin?: number | null;
+  faceCountMax?: number | null;
+  hasReviewPending?: boolean | null;
+  hasUnnamedPeople?: boolean | null;
 }
 
 // ── Lightbox ──────────────────────────────────────────────────────────────
@@ -277,6 +281,9 @@ function SearchCard({
           )}
 
           <p className="text-caption-sm text-ash truncate">{item.file_name}</p>
+          {item.face_count != null && item.face_count > 0 && (
+            <p className="text-caption-sm text-mute">人脸 {item.face_count}</p>
+          )}
 
           {/* Debug per-card scores */}
           {debug && (
@@ -661,7 +668,18 @@ function downloadJson(data: unknown, filename: string) {
   URL.revokeObjectURL(url);
 }
 
-export function SearchResultGrid({ query, projectId, mode = "hybrid", debug = false, tagField, tagValue }: SearchResultGridProps) {
+export function SearchResultGrid({
+  query,
+  projectId,
+  mode = "hybrid",
+  debug = false,
+  tagField,
+  tagValue,
+  faceCountMin,
+  faceCountMax,
+  hasReviewPending,
+  hasUnnamedPeople,
+}: SearchResultGridProps) {
   const {
     data,
     fetchNextPage,
@@ -670,7 +688,16 @@ export function SearchResultGrid({ query, projectId, mode = "hybrid", debug = fa
     isLoading,
     isError,
     error,
-  } = useSearch(query, projectId ?? null, { mode, debug, tagField, tagValue });
+  } = useSearch(query, projectId ?? null, {
+    mode,
+    debug,
+    tagField,
+    tagValue,
+    faceCountMin,
+    faceCountMax,
+    hasReviewPending,
+    hasUnnamedPeople,
+  });
 
   const [previewItem, setPreviewItem] = useState<SearchResultItem | null>(null);
   const sentinelRef = useRef<HTMLDivElement>(null);

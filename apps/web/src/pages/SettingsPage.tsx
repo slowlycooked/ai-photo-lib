@@ -15,6 +15,7 @@ import {
   X,
   Star,
   AlertTriangle,
+  Activity,
 } from "lucide-react";
 import {
   api,
@@ -652,10 +653,74 @@ export function DebugLogSettingsCard() {
   );
 }
 
+export function SystemHealthCard() {
+  const { data, isLoading, isError, error, refetch, isFetching } = useQuery({
+    queryKey: ["system-health"],
+    queryFn: api.settings.health,
+    staleTime: 15_000,
+    retry: 0,
+  });
+
+  const statusClass = {
+    ok: "text-green-700",
+    warn: "text-amber-600",
+    fail: "text-red-600",
+  } as const;
+
+  return (
+    <SettingsCard
+      title="运行状态"
+      action={
+        <button
+          type="button"
+          onClick={() => refetch()}
+          disabled={isFetching}
+          className="flex items-center gap-1.5 px-2.5 py-1 text-body-sm rounded-md border border-hairline text-ink hover:bg-secondary-bg disabled:opacity-50 transition-colors"
+        >
+          {isFetching ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Activity className="w-3.5 h-3.5" />}
+          检查
+        </button>
+      }
+    >
+      {isLoading && (
+        <div className="flex items-center gap-2 text-mute py-6 justify-center">
+          <Loader2 className="w-4 h-4 animate-spin" />
+          <span className="text-body-sm">检查中…</span>
+        </div>
+      )}
+      {isError && (
+        <div className="flex items-center gap-2 text-red-600 py-6 justify-center">
+          <AlertCircle className="w-4 h-4" />
+          <span className="text-body-sm">{error instanceof Error ? error.message : "健康检查失败"}</span>
+        </div>
+      )}
+      {data && (
+        <div className="py-3 space-y-2">
+          <div className="flex items-center justify-between gap-3 border-b border-hairline pb-3">
+            <span className="text-body-sm text-mute">整体状态</span>
+            <span className={`text-body-sm font-semibold ${statusClass[data.status]}`}>
+              {data.status.toUpperCase()} · v{data.version}
+            </span>
+          </div>
+          {data.checks.map((check) => (
+            <div key={check.name} className="flex items-start justify-between gap-4 py-2 border-b border-hairline last:border-0">
+              <span className="text-body-sm text-ink">{check.name}</span>
+              <span className={`text-caption-sm text-right break-all ${statusClass[check.status]}`}>
+                {check.status.toUpperCase()}
+                {check.message ? ` · ${check.message}` : ""}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </SettingsCard>
+  );
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export function SettingsPage() {
-  const [activeTab, setActiveTab] = useState<"general" | "debug">("general");
+  const [activeTab, setActiveTab] = useState<"general" | "health" | "debug">("general");
   const { currentProjectId } = useProjectContext();
   const { data, isLoading, isError } = useQuery({
     queryKey: queryKeys.settings(),
@@ -687,6 +752,20 @@ export function SettingsPage() {
         </button>
         <button
           type="button"
+          onClick={() => setActiveTab("health")}
+          className={`px-3 py-1.5 rounded-md text-body-sm border transition-colors ${
+            activeTab === "health"
+              ? "border-primary text-primary bg-primary/10"
+              : "border-hairline text-ink hover:bg-secondary-bg"
+          }`}
+        >
+          <span className="inline-flex items-center gap-1.5">
+            <Activity className="w-3.5 h-3.5" />
+            运行状态
+          </span>
+        </button>
+        <button
+          type="button"
           onClick={() => setActiveTab("debug")}
           className={`px-3 py-1.5 rounded-md text-body-sm border transition-colors ${
             activeTab === "debug"
@@ -702,6 +781,7 @@ export function SettingsPage() {
       </div>
 
       {activeTab === "debug" && <DebugLogSettingsCard />}
+      {activeTab === "health" && <SystemHealthCard />}
 
       {activeTab === "general" && (
         <>

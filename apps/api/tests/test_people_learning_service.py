@@ -19,6 +19,7 @@ from app.services.people_learning_service import (  # noqa: E402
     match_face_detection_to_person,
     rebuild_person_centroid_prototype,
 )
+from app.services.face_rematch_service import rematch_unknown_faces  # noqa: E402
 
 
 SCHEMA_SQL = """
@@ -267,5 +268,36 @@ def test_match_face_detection_assigns_auto_and_review() -> None:
             )
         ).fetchall()
         assert [row[0] for row in rows] == ["auto_assigned", "review_pending"]
+    finally:
+        db.close()
+
+
+def test_rematch_unknown_faces_only_matches_unassigned_faces() -> None:
+    db = _make_session()
+    try:
+        rebuild_person_centroid_prototype(db, project_id=1, person_id=101)
+
+        result = rematch_unknown_faces(db, project_id=1, max_faces=10)
+        assert result.faces_considered == 2
+        assert result.matched_faces == 2
+        assert result.auto_assigned == 1
+        assert result.review_pending == 1
+
+        db.commit()
+        rows = db.execute(
+            sa.text(
+                """
+                SELECT face_detection_id, assignment_status
+                FROM person_face_assignments
+                WHERE project_id = 1 AND person_id = 101
+                ORDER BY face_detection_id
+                """
+            )
+        ).fetchall()
+        assert [(row[0], row[1]) for row in rows] == [
+            (201, "human_confirmed"),
+            (202, "auto_assigned"),
+            (203, "review_pending"),
+        ]
     finally:
         db.close()

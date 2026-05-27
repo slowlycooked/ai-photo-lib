@@ -271,6 +271,8 @@ export interface SearchResultItem {
   city?: string | null;
   district?: string | null;
   formatted_address?: string | null;
+  face_count?: number | null;
+  matched_people?: Array<Record<string, unknown>>;
 }
 
 export interface SearchTraceStep {
@@ -396,6 +398,18 @@ export interface AppSettings {
   openai_model: string;
   openai_vision_model: string;
   ai_max_retries: number;
+}
+
+export interface SystemHealthCheck {
+  name: string;
+  status: "ok" | "warn" | "fail";
+  message: string;
+}
+
+export interface SystemHealthResponse {
+  status: "ok" | "warn" | "fail";
+  version: string;
+  checks: SystemHealthCheck[];
 }
 
 export type DebugMode = "OFF" | "BASIC" | "DEBUG" | "TRACE" | "CUSTOM";
@@ -574,6 +588,30 @@ export interface FaceClusterUnknownStatusResponse {
 export interface FaceClusterUnknownResponse {
   message: string;
   status: FaceClusterUnknownStatusResponse;
+}
+
+export interface FaceRematchUnknownRequest {
+  max_faces?: number;
+}
+
+export interface FaceRematchUnknownStatusResponse {
+  project_id: number;
+  task_id: number | null;
+  status: string;
+  running: boolean;
+  max_faces: number;
+  faces_considered: number;
+  matched_faces: number;
+  auto_assigned: number;
+  review_pending: number;
+  errors: number;
+  recent_errors: string[];
+  message: string;
+}
+
+export interface FaceRematchUnknownResponse {
+  message: string;
+  status: FaceRematchUnknownStatusResponse;
 }
 
 export interface PersonSummary {

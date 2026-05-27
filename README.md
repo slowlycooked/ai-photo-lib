@@ -29,19 +29,20 @@ People Recognition 已经从“只读调试阶段”进入“人工纠错闭环�
   - `person_cannot_links`
 - 项目级人脸配置 API 与前端配置面板
 - 单张照片手动 `face scan` 链路
-- 项目级批量 `face scan` 任务入队与状态查询
+- 项目级批量 `face scan` 任务入队与状态查询；批量扫描和失败重试统一通过 `ProjectTask`
 - unknown face clustering / 自动创建未命名人物
+- unknown face rematch：基于已重建 prototype 异步重匹配未知人脸，生成 auto-assigned / review-pending
 - `faces` / `people` 读写 API
 - 人工确认 / 排除 / 移动 / 合并 / 拆分 / 代表头像设置
 - 待确认队列与批量操作
-- 搜索页的人物过滤与多人共现搜索
+- 搜索页的人物过滤、多人共现搜索，以及合照/单人照/待确认/未命名人物筛选
 - 照片详情页的人脸调试区块
 - `/projects/:projectId/people` 人物页与 `/projects/:projectId/people/review` 复核页
 
 当前还没有完成：
 
-- 照片库全量扫描 / reindex / clustering 任务体系完全统一到持久化 worker
-- 人脸匹配、prototype rebuild、重匹配链路进一步服务化和任务化
+- 任务中心的暂停 / 取消 / 子任务错误照片明细查看
+- 人脸重匹配的自动触发策略与更细粒度范围控制
 - People 模块后端与前端的大文件拆分收敛
 - 前端 People / Search / Tasks 主路径自动化测试补齐
 
@@ -55,8 +56,11 @@ People Recognition 已经从“只读调试阶段”进入“人工纠错闭环�
 
 | 能力 | 成熟度 | 发布说明 |
 |------|--------|----------|
-| Face clustering | 实验 | 聚类算法与参数仍在持续打磨，建议结合 Review Pending 人工复核。 |
-| Prompt 测试 | 待收敛 | 主链路可用，测试历史与交互细节仍在持续收敛。 |
+| Face clustering | 稳定 | 聚类任务已纳入项目级队列、状态跟踪与 Review Pending 主链路。 |
+| Face rematch unknown | 稳定 | 未知人脸重匹配已纳入项目级队列，并保留人工确认结果。 |
+| Search face filters | 稳定 | 合照、单人照、待确认和未命名人物筛选已接入搜索主链路。 |
+| System health check | 稳定 | `/health/system` 与设置页“运行状态”可用于部署检查和排错。 |
+| Prompt 测试 | 稳定 | Prompt 测试支持项目模板、测试图片、解析结果与本地历史回看。 |
 | Embedding rebuild | 稳定 | 已支持项目级状态检查、按范围重建与任务入队。 |
 
 发布前检查清单见：[Design-document/release-checklist.md](Design-document/release-checklist.md)。
@@ -66,6 +70,8 @@ People Recognition 已经从“只读调试阶段”进入“人工纠错闭环�
 ```bash
 ./scripts/release-preflight.sh
 ```
+
+该预检会覆盖后端发布审计、项目隔离、任务/People/Search 主链路、前端关键页面测试、TypeScript typecheck 和前端 build。
 
 ## 架构
 

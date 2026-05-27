@@ -20,6 +20,7 @@ from app.models.project import Project  # noqa: E402
 from app.services.project_task_app_service import ProjectTaskAppService  # noqa: E402
 from app.services.project_task_service import (  # noqa: E402
     TASK_TYPE_FACE_SCAN_PROJECT,
+    TASK_TYPE_FACE_REMATCH_UNKNOWN,
     TASK_TYPE_LIBRARY_REINDEX,
     TASK_TYPE_LIBRARY_SCAN,
     TASK_TYPE_UNKNOWN_FACE_CLUSTERING,
@@ -286,6 +287,38 @@ class ProjectTaskAppServiceTest(unittest.TestCase):
         self.assertEqual(task.progress_payload["created_jobs"], 2)
         self.assertEqual(task.progress_payload["candidate_count"], 2)
         self.assertEqual(task.result_payload["message"], "Project face scan jobs queued")
+        db.close()
+
+    def test_process_face_rematch_unknown_task_marks_success(self) -> None:
+        db = self._SessionLocal()
+        task = ProjectTask(
+            project_id=1,
+            task_type=TASK_TYPE_FACE_REMATCH_UNKNOWN,
+            status="queued",
+            request_params={"max_faces": 321},
+        )
+        db.add(task)
+        db.commit()
+        db.refresh(task)
+
+        class _Result:
+            faces_considered = 9
+            matched_faces = 5
+            auto_assigned = 2
+            review_pending = 3
+
+        with patch(
+            "app.services.project_task_app_service.rematch_unknown_faces",
+            return_value=_Result(),
+        ):
+            ProjectTaskAppService(db, session_factory=self._SessionLocal).process_task(task)
+
+        db.refresh(task)
+        self.assertEqual(task.status, "success")
+        self.assertEqual(task.progress_payload["max_faces"], 321)
+        self.assertEqual(task.progress_payload["faces_considered"], 9)
+        self.assertEqual(task.result_payload["matched_faces"], 5)
+        self.assertEqual(task.result_payload["review_pending"], 3)
         db.close()
 
     def test_enqueue_scan_task_returns_existing_active_scan_family_task(self) -> None:

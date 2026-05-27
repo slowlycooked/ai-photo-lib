@@ -82,6 +82,8 @@ export type {
   SearchMode,
   SearchResponse,
   SearchResultItem,
+  SystemHealthCheck,
+  SystemHealthResponse,
   TagCount,
   TagsResponse,
   TimelineItem,

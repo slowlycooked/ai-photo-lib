@@ -24,6 +24,9 @@ from ..schemas.face import (
     FaceDetectionDetailResponse,
     FaceDetectionListResponse,
     FaceDetectionResponse,
+    FaceRematchUnknownRequest,
+    FaceRematchUnknownResponse,
+    FaceRematchUnknownStatusResponse,
     FaceScanProjectStartRequest,
     FaceScanProjectStartResponse,
     FaceScanProjectStatusResponse,
@@ -34,11 +37,15 @@ from ..services.face_scan_service import FaceScanDisabledError, FaceScanService
 from ..services.unknown_face_clustering_service import cluster_unknown_faces
 from ..services.project_task_service import (
     build_face_cluster_status,
+    build_face_rematch_status,
     enqueue_face_cluster_task,
+    enqueue_face_rematch_unknown_task,
     enqueue_face_scan_project_task,
     get_active_face_cluster_task,
+    get_active_face_rematch_task,
     get_active_face_scan_task,
     get_latest_face_cluster_task,
+    get_latest_face_rematch_task,
     get_latest_face_scan_task,
 )
 from ..services.project_face_settings_service import get_or_create_project_face_settings
@@ -312,6 +319,46 @@ def get_cluster_project_unknown_faces_status(
     if active_task is not None:
         return build_face_cluster_status(active_task)
     return build_face_cluster_status(get_latest_face_cluster_task(db, project_id))
+
+
+@router.post(
+    "/{project_id}/face-rematch-unknown",
+    response_model=FaceRematchUnknownResponse,
+)
+def rematch_project_unknown_faces(
+    project_id: int,
+    body: FaceRematchUnknownRequest,
+    project: Project = Depends(require_project),
+    db: Session = Depends(get_db),
+) -> FaceRematchUnknownResponse:
+    result = enqueue_face_rematch_unknown_task(
+        db,
+        project_id=project_id,
+        max_faces=body.max_faces,
+    )
+    return FaceRematchUnknownResponse(
+        message=(
+            "Unknown face rematch queued"
+            if result.created
+            else "Unknown face rematch already in progress"
+        ),
+        status=build_face_rematch_status(result.task),
+    )
+
+
+@router.get(
+    "/{project_id}/face-rematch-unknown/status",
+    response_model=FaceRematchUnknownStatusResponse,
+)
+def get_rematch_project_unknown_faces_status(
+    project_id: int,
+    project: Project = Depends(require_project),
+    db: Session = Depends(get_db),
+) -> FaceRematchUnknownStatusResponse:
+    active_task = get_active_face_rematch_task(db, project_id)
+    if active_task is not None:
+        return build_face_rematch_status(active_task)
+    return build_face_rematch_status(get_latest_face_rematch_task(db, project_id))
 
 
 @router.get("/{project_id}/faces", response_model=FaceDetectionListResponse)

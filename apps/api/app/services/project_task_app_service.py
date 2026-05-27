@@ -10,12 +10,15 @@ from sqlalchemy.orm import Session
 from ..database import SessionLocal
 from ..models.project_task import ProjectTask
 from .face_scan_batch_service import FaceScanBatchService
+from .face_rematch_service import rematch_unknown_faces
 from .project_task_service import (
     TASK_TYPE_FACE_SCAN_PROJECT,
+    TASK_TYPE_FACE_REMATCH_UNKNOWN,
     TASK_TYPE_LIBRARY_REINDEX,
     TASK_TYPE_LIBRARY_SCAN,
     TASK_TYPE_UNKNOWN_FACE_CLUSTERING,
     build_face_cluster_result_payload,
+    build_face_rematch_result_payload,
     build_face_scan_project_result_payload,
     build_queued_progress_payload,
     empty_project_task_state,
@@ -51,62 +54,7 @@ class ProjectTaskAppService:
         self._db.commit()
 
         try:
-            if task.task_type == TASK_TYPE_LIBRARY_SCAN:
-                final_state = scan_project(
-                    self._db,
-                    task.project_id,
-                    progress_callback=lambda state: self._persist_progress(task.id, state),
-                )
-            elif task.task_type == TASK_TYPE_LIBRARY_REINDEX:
-                scope = str((task.request_params or {}).get("scope") or "missing_metadata")
-                final_state = reindex_project(
-                    self._db,
-                    task.project_id,
-                    scope=scope,
-                    progress_callback=lambda state: self._persist_progress(task.id, state),
-                )
-            elif task.task_type == TASK_TYPE_UNKNOWN_FACE_CLUSTERING:
-                max_faces = int((task.request_params or {}).get("max_faces") or 500)
-                self._persist_progress(
-                    task.id,
-                    build_queued_progress_payload(
-                        task.task_type,
-                        task.request_params,
-                        project_id=task.project_id,
-                    ),
-                )
-                result = cluster_unknown_faces(
-                    self._db,
-                    project_id=task.project_id,
-                    max_faces=max_faces,
-                )
-                final_state = build_face_cluster_result_payload(
-                    project_id=task.project_id,
-                    task_id=task.id,
-                    max_faces=max_faces,
-                    clusters_created=result.clusters_created,
-                    persons_created=result.persons_created,
-                    faces_clustered=result.faces_clustered,
-                    assignments_created=result.assignments_created,
-                )
-            elif task.task_type == TASK_TYPE_FACE_SCAN_PROJECT:
-                params = dict(task.request_params or {})
-                plan = FaceScanBatchService(self._db).plan(
-                    task.project_id,
-                    scope=str(params.get("scope") or "missing"),
-                    photo_ids=[int(photo_id) for photo_id in params.get("photo_ids") or []],
-                    force=bool(params.get("force") or False),
-                )
-                enqueue_result = FaceScanBatchService(self._db).enqueue(plan)
-                final_state = build_face_scan_project_result_payload(
-                    project_id=task.project_id,
-                    task_id=task.id,
-                    request_params=params,
-                    created_jobs=enqueue_result.created_jobs,
-                    skipped_active_jobs=enqueue_result.skipped_active,
-                )
-            else:
-                raise RuntimeError(f"Unsupported project task type: {task.task_type}")
+            final_state = self._run_task(task)
 
             self._db.refresh(task)
             final_errors = int(final_state.get("errors") or 0)
@@ -162,6 +110,95 @@ class ProjectTaskAppService:
             progress["recent_errors"] = recent_errors
             task.progress_payload = progress
             db.commit()
+
+    def _run_task(self, task: ProjectTask) -> dict:
+        if task.task_type == TASK_TYPE_LIBRARY_SCAN:
+            return self._run_library_scan(task)
+        if task.task_type == TASK_TYPE_LIBRARY_REINDEX:
+            return self._run_library_reindex(task)
+        if task.task_type == TASK_TYPE_UNKNOWN_FACE_CLUSTERING:
+            return self._run_unknown_face_clustering(task)
+        if task.task_type == TASK_TYPE_FACE_SCAN_PROJECT:
+            return self._run_face_scan_project(task)
+        if task.task_type == TASK_TYPE_FACE_REMATCH_UNKNOWN:
+            return self._run_face_rematch_unknown(task)
+        raise RuntimeError(f"Unsupported project task type: {task.task_type}")
+
+    def _run_library_scan(self, task: ProjectTask) -> dict:
+        return scan_project(
+            self._db,
+            task.project_id,
+            progress_callback=lambda state: self._persist_progress(task.id, state),
+        )
+
+    def _run_library_reindex(self, task: ProjectTask) -> dict:
+        scope = str((task.request_params or {}).get("scope") or "missing_metadata")
+        return reindex_project(
+            self._db,
+            task.project_id,
+            scope=scope,
+            progress_callback=lambda state: self._persist_progress(task.id, state),
+        )
+
+    def _run_unknown_face_clustering(self, task: ProjectTask) -> dict:
+        max_faces = int((task.request_params or {}).get("max_faces") or 500)
+        self._persist_progress(
+            task.id,
+            build_queued_progress_payload(
+                task.task_type,
+                task.request_params,
+                project_id=task.project_id,
+            ),
+        )
+        result = cluster_unknown_faces(
+            self._db,
+            project_id=task.project_id,
+            max_faces=max_faces,
+        )
+        return build_face_cluster_result_payload(
+            project_id=task.project_id,
+            task_id=task.id,
+            max_faces=max_faces,
+            clusters_created=result.clusters_created,
+            persons_created=result.persons_created,
+            faces_clustered=result.faces_clustered,
+            assignments_created=result.assignments_created,
+        )
+
+    def _run_face_scan_project(self, task: ProjectTask) -> dict:
+        params = dict(task.request_params or {})
+        service = FaceScanBatchService(self._db)
+        plan = service.plan(
+            task.project_id,
+            scope=str(params.get("scope") or "missing"),
+            photo_ids=[int(photo_id) for photo_id in params.get("photo_ids") or []],
+            force=bool(params.get("force") or False),
+        )
+        enqueue_result = service.enqueue(plan)
+        return build_face_scan_project_result_payload(
+            project_id=task.project_id,
+            task_id=task.id,
+            request_params=params,
+            created_jobs=enqueue_result.created_jobs,
+            skipped_active_jobs=enqueue_result.skipped_active,
+        )
+
+    def _run_face_rematch_unknown(self, task: ProjectTask) -> dict:
+        max_faces = int((task.request_params or {}).get("max_faces") or 1000)
+        result = rematch_unknown_faces(
+            self._db,
+            project_id=task.project_id,
+            max_faces=max_faces,
+        )
+        return build_face_rematch_result_payload(
+            project_id=task.project_id,
+            task_id=task.id,
+            max_faces=max_faces,
+            faces_considered=result.faces_considered,
+            matched_faces=result.matched_faces,
+            auto_assigned=result.auto_assigned,
+            review_pending=result.review_pending,
+        )
 
     @staticmethod
     def _load_task(db: Session, task_id: int) -> Optional[ProjectTask]:

@@ -38,7 +38,14 @@ class ReleaseChecklistConsistencyTest(unittest.TestCase):
             level = level.strip()
             if capability in {"能力", "------"}:
                 continue
-            if capability in {"Face clustering", "Prompt 测试", "Embedding rebuild"}:
+            if capability in {
+                "Face clustering",
+                "Face rematch unknown",
+                "Search face filters",
+                "System health check",
+                "Prompt 测试",
+                "Embedding rebuild",
+            }:
                 rows[capability] = level
         return rows
 
@@ -52,8 +59,11 @@ class ReleaseChecklistConsistencyTest(unittest.TestCase):
         checklist = self._parse_maturity_from_markdown(checklist_path.read_text(encoding="utf-8"))
 
         expected = {
-            "Face clustering": "实验",
-            "Prompt 测试": "待收敛",
+            "Face clustering": "稳定",
+            "Face rematch unknown": "稳定",
+            "Search face filters": "稳定",
+            "System health check": "稳定",
+            "Prompt 测试": "稳定",
             "Embedding rebuild": "稳定",
         }
         self.assertEqual(catalog, expected)

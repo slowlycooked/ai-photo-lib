@@ -4,8 +4,11 @@
 
 | 能力 | 成熟度 | 发布说明 |
 |------|--------|----------|
-| Face clustering | 实验 | 聚类算法与参数仍在持续打磨，建议结合 Review Pending 人工复核。 |
-| Prompt 测试 | 待收敛 | 主链路可用，测试历史与交互细节仍在持续收敛。 |
+| Face clustering | 稳定 | 聚类任务已纳入项目级队列、状态跟踪与 Review Pending 主链路。 |
+| Face rematch unknown | 稳定 | 未知人脸重匹配已纳入项目级队列，并保留人工确认结果。 |
+| Search face filters | 稳定 | 合照、单人照、待确认和未命名人物筛选已接入搜索主链路。 |
+| System health check | 稳定 | `/health/system` 与设置页“运行状态”可用于部署检查和排错。 |
+| Prompt 测试 | 稳定 | Prompt 测试支持项目模板、测试图片、解析结果与本地历史回看。 |
 | Embedding rebuild | 稳定 | 已支持项目级状态检查、按范围重建与任务入队。 |
 
 发布要求：文档与页面标记必须一致，禁止“文档实验、页面无标记”。
@@ -23,8 +26,16 @@
 - 无未经确认的新配置项。
 - 配置缺失必须显式失败。
 - worker 任务处理必须携带并严格使用 project_id。
+- 新增系统健康检查项必须避免泄露密钥，只返回状态和可操作提示。
 
-## 4. 一键预检命令
+## 4. 产品化主链路验收
+
+- Tasks：项目级 scan / face scan / unknown clustering / unknown rematch 可入队、可查询状态。
+- People：人工确认/排除/移动后 prototype rebuild 保持有效；unknown rematch 不覆盖人工确认结果。
+- Search：人脸筛选入口可用，结果返回 `face_count`，普通搜索在缺少人脸表时可降级。
+- Settings：运行状态页能展示 DB、migration、路径、模型配置、auth 配置等检查结果。
+
+## 5. 一键预检命令
 
 发布前请在仓库根目录执行：
 
@@ -34,6 +45,7 @@
 
 该命令会依次执行：
 
-- 后端发布审计 + 隔离/People/任务主链路回归
-- 前端成熟度渲染回归
+- 后端发布审计 + 项目隔离 / People / Face / Search / 任务主链路回归
+- 前端成熟度渲染、Tasks、Settings、失败任务组件回归
+- TypeScript typecheck
 - 前端 build
