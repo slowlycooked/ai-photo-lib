@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from app.services.query_understanding_service import SearchQueryPlan
 from app.services.search.concept_recall import (
     ConceptRecallService,
+    derive_concept_query_context,
     derive_concept_query_terms,
 )
 from app.services.search.settings_resolver import SearchSettingsResolver
@@ -64,6 +65,26 @@ def test_derive_concept_query_terms_for_animal_query() -> None:
     assert "猫" in entities
     assert "狗" in entities
     assert "鸟" in entities
+
+
+def test_derive_concept_query_context_for_group_photo_query() -> None:
+    plan = SearchQueryPlan(
+        original_query="合照",
+        normalized_query="合照",
+        intent="group_photo_search",
+        exact_terms=["合照"],
+        expanded_terms=["合影", "集体照", "多人"],
+        core_facets=["people", "group_photo"],
+    )
+
+    concept_terms, entity_terms, concept_facets = derive_concept_query_context(plan)
+
+    assert "人物" in concept_terms
+    assert "合照" in concept_terms
+    assert "多人" in concept_terms
+    assert entity_terms == []
+    assert "people" in concept_facets
+    assert "group_photo" in concept_facets
 
 
 def test_concept_recall_search_matches_semantic_concepts_and_entities() -> None:

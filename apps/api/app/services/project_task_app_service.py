@@ -9,11 +9,14 @@ from sqlalchemy.orm import Session
 
 from ..database import SessionLocal
 from ..models.project_task import ProjectTask
+from .face_scan_batch_service import FaceScanBatchService
 from .project_task_service import (
-    TASK_TYPE_UNKNOWN_FACE_CLUSTERING,
+    TASK_TYPE_FACE_SCAN_PROJECT,
     TASK_TYPE_LIBRARY_REINDEX,
     TASK_TYPE_LIBRARY_SCAN,
+    TASK_TYPE_UNKNOWN_FACE_CLUSTERING,
     build_face_cluster_result_payload,
+    build_face_scan_project_result_payload,
     build_queued_progress_payload,
     empty_project_task_state,
 )
@@ -85,6 +88,22 @@ class ProjectTaskAppService:
                     persons_created=result.persons_created,
                     faces_clustered=result.faces_clustered,
                     assignments_created=result.assignments_created,
+                )
+            elif task.task_type == TASK_TYPE_FACE_SCAN_PROJECT:
+                params = dict(task.request_params or {})
+                plan = FaceScanBatchService(self._db).plan(
+                    task.project_id,
+                    scope=str(params.get("scope") or "missing"),
+                    photo_ids=[int(photo_id) for photo_id in params.get("photo_ids") or []],
+                    force=bool(params.get("force") or False),
+                )
+                enqueue_result = FaceScanBatchService(self._db).enqueue(plan)
+                final_state = build_face_scan_project_result_payload(
+                    project_id=task.project_id,
+                    task_id=task.id,
+                    request_params=params,
+                    created_jobs=enqueue_result.created_jobs,
+                    skipped_active_jobs=enqueue_result.skipped_active,
                 )
             else:
                 raise RuntimeError(f"Unsupported project task type: {task.task_type}")

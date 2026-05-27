@@ -108,6 +108,8 @@ def derive_concept_query_context(
         concept_terms.extend([str(t).strip() for t in query_plan.concept_terms if str(t).strip()])
 
     if query_plan.intent in ("people_search", "group_photo_search"):
+        if "人物" not in concept_terms:
+            concept_terms.append("人物")
         for term in query_plan.exact_terms + query_plan.expanded_terms + query_plan.broad_terms:
             text = str(term).strip()
             if text in _PEOPLE_CONCEPT_TERMS and text not in concept_terms:

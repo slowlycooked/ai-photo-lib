@@ -81,3 +81,6 @@ class StartAnalysisResponse(BaseModel):
 class RetryFailedResponse(BaseModel):
     retried_jobs: int
     message: str
+    task_id: Optional[int] = None
+    task_created: bool = False
+    task_status: Optional[str] = None

@@ -170,6 +170,14 @@ class FaceScanBatchService:
         )
 
     def enqueue(self, plan: FaceScanBatchPlan) -> FaceScanBatchEnqueueResult:
+        if plan.scope == "failed" and plan.candidate_photo_ids:
+            self._db.query(AIJob).filter(
+                AIJob.project_id == plan.project_id,
+                AIJob.photo_id.in_(plan.candidate_photo_ids),
+                AIJob.job_type == "face_scan",
+                AIJob.status == "failed",
+            ).delete(synchronize_session=False)
+
         uow = UnitOfWork(self._db)
         created_jobs, skipped_active_at_enqueue = uow.ai_jobs.enqueue_bulk_unique(
             plan.project_id,

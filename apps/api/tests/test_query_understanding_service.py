@@ -115,6 +115,26 @@ class TestUnderstandQuery:
         plan = understand_query("travel adventure")
         assert all(isinstance(t, str) for t in plan.expanded_terms)
 
+    def test_query_understanding_group_photo(self):
+        plan = understand_query("合照")
+        expanded = set(plan.expanded_terms)
+
+        assert plan.intent in {"people_search", "group_photo_search"}
+        assert "合影" in expanded
+        assert "集体照" in expanded
+        assert "多人" in expanded
+        assert "people" in plan.core_facets
+        assert "group_photo" in plan.core_facets
+        assert plan.recommended_profile == "people_group"
+
+    @pytest.mark.parametrize("query", ["合影", "集体照", "多人合照"])
+    def test_query_understanding_group_photo_aliases(self, query: str):
+        plan = understand_query(query)
+
+        assert plan.intent in {"people_search", "group_photo_search"}
+        assert "people" in plan.core_facets
+        assert "group_photo" in plan.core_facets
+
     # ── P1: recall_terms excludes weak/broad terms ────────────────────────────
 
     def test_recall_terms_excludes_broad(self):

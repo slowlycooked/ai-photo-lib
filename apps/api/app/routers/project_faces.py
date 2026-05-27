@@ -35,8 +35,11 @@ from ..services.unknown_face_clustering_service import cluster_unknown_faces
 from ..services.project_task_service import (
     build_face_cluster_status,
     enqueue_face_cluster_task,
+    enqueue_face_scan_project_task,
     get_active_face_cluster_task,
+    get_active_face_scan_task,
     get_latest_face_cluster_task,
+    get_latest_face_scan_task,
 )
 from ..services.project_face_settings_service import get_or_create_project_face_settings
 
@@ -188,19 +191,47 @@ def start_project_face_scan_jobs(
         force=body.force,
     )
 
+    task_id = None
+    task_created = False
+    task_status = None
     created_jobs = 0
     skipped_active = plan.skipped_active
     message = "Face scan batch plan generated"
     if not body.dry_run and plan.candidate_photo_ids:
-        enqueue_result = service.enqueue(plan)
-        created_jobs = enqueue_result.created_jobs
-        skipped_active = enqueue_result.skipped_active
-        message = "Project face scan jobs created"
+        task_result = enqueue_face_scan_project_task(
+            db,
+            project_id=project_id,
+            request_params={
+                "scope": plan.scope,
+                "photo_ids": plan.candidate_photo_ids,
+                "force": body.force,
+                "total_photos": plan.total_photos,
+                "candidate_count": plan.candidate_count,
+                "skipped_active_jobs": plan.skipped_active,
+                "skipped_already_scanned": plan.skipped_already_scanned,
+                "skipped_other_project": plan.skipped_other_project,
+                "stale_count": plan.stale_count,
+                "failed_count": plan.failed_count,
+            },
+        )
+        task_id = task_result.task.id
+        task_created = task_result.created
+        task_status = task_result.task.status
+        if not task_result.created:
+            skipped_active += plan.candidate_count
+        message = (
+            "Project face scan task queued"
+            if task_result.created
+            else "Project face scan task already in progress"
+        )
     elif not body.dry_run:
         message = "No face scan jobs created"
 
     return FaceScanProjectStartResponse(
         project_id=project_id,
+        task_id=task_id,
+        task_created=task_created,
+        task_status=task_status,
         created_jobs=created_jobs,
         skipped_active_jobs=skipped_active,
         scope=plan.scope,
@@ -225,12 +256,21 @@ def get_project_face_scan_job_status(
     db: Session = Depends(get_db),
 ) -> FaceScanProjectStatusResponse:
     counts = FaceScanBatchService(db).status(project_id)
+    latest_task = get_active_face_scan_task(db, project_id) or get_latest_face_scan_task(
+        db,
+        project_id,
+    )
+    task_status = latest_task.status if latest_task is not None else None
+    if latest_task is not None and latest_task.status in ("queued", "running"):
+        counts[latest_task.status] = counts.get(latest_task.status, 0) + 1
     return FaceScanProjectStatusResponse(
         queued=counts.get("queued", 0),
         running=counts.get("running", 0),
         success=counts.get("success", 0),
         failed=counts.get("failed", 0),
         total=sum(counts.values()),
+        task_id=latest_task.id if latest_task is not None else None,
+        task_status=task_status,
     )
 
 

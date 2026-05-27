@@ -283,6 +283,65 @@ class SearchPhotosTest(unittest.TestCase):
         self.assertEqual(total, 1)
         self.assertEqual(items[0]["photo_id"], 9)
 
+    def test_vector_fallback_debug_has_error(self) -> None:
+        candidate = self._make_candidate()
+
+        with (
+            patch(
+                "app.services.search.app_service.SearchSettingsResolver.resolve",
+                return_value=_default_settings(),
+            ),
+            patch(
+                "app.services.search.app_service.understand_query",
+                return_value=SearchQueryPlan(
+                    original_query="合照",
+                    normalized_query="合照",
+                    exact_terms=["合照"],
+                    expanded_terms=["合影", "集体照", "多人"],
+                    intent="group_photo_search",
+                    core_facets=["people", "group_photo"],
+                    concept_terms=["人物", "多人", "合照", "合影", "集体照"],
+                    metadata_filters={},
+                ),
+            ),
+            patch(
+                "app.services.search.app_service.build_folder_photo_ids_subquery",
+                return_value=None,
+            ),
+            patch(
+                "app.services.search.app_service.KeywordRecallService.search",
+                return_value=[candidate],
+            ),
+            patch(
+                "app.services.search.app_service.VectorRecallService.search",
+                side_effect=EmbeddingRequestError("embedding-down"),
+            ),
+            patch(
+                "app.services.search.app_service.build_result_items",
+                return_value=(1, [{"photo_id": 9, "score": 0.7}]),
+            ),
+        ):
+            _total, _items, debug_payload = search_photos(
+                db=MagicMock(),
+                query="合照",
+                page=1,
+                page_size=20,
+                project_id=1,
+                mode="hybrid",
+                debug=True,
+            )
+
+        assert debug_payload is not None
+        self.assertIn("embedding-down", debug_payload.get("fallback_reason", ""))
+        vector_steps = [step for step in debug_payload.get("trace", []) if step.get("stage") == "vector_recall"]
+        self.assertTrue(vector_steps)
+        latest = vector_steps[-1]
+        self.assertTrue(latest.get("fallback"))
+        self.assertIn("embedding-down", str(latest.get("error", "")))
+        self.assertIn("embedding_model", latest)
+        self.assertIn("stale_embedding_filtered", latest)
+        self.assertIn("vector_candidates", latest)
+
     def test_debug_true_returns_debug_payload(self) -> None:
         candidate = SearchCandidate(
             photo_id=1,

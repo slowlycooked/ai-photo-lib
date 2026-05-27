@@ -1151,6 +1151,7 @@ def search_photos(
                 embedding_dimension=global_settings.embedding_dimension,
                 keyword_candidates=len(keyword_results),
                 concept_candidates=len(concept_results),
+                people_visual_candidates=people_visual_candidates_count,
                 vector_candidates=0,
                 merged_candidates=len(merged_keyword_results),
                 fallback_reason="",
@@ -1200,9 +1201,12 @@ def search_photos(
         trace.append({
             "stage": "vector_recall",
             "candidates": len(vector_scores),
+            "vector_candidates": len(vector_scores),
             "embedding_model": embedding_model,
             "is_ocr": is_ocr_query,
             "stale_embedding_filtered": stale_embedding_filtered,
+            "fallback": False,
+            "error": "",
         })
         logger.debug(
             "[search] vector_recall done candidates=%d embedding_model=%s stale_filtered=%d",
@@ -1214,6 +1218,9 @@ def search_photos(
             "stage": "vector_recall",
             "error": fallback_reason,
             "fallback": True,
+            "embedding_model": embedding_model,
+            "stale_embedding_filtered": stale_embedding_filtered,
+            "vector_candidates": 0,
         })
         logger.warning(
             "Vector search fallback to keyword. project_id=%s query=%r error=%s",
@@ -1237,6 +1244,7 @@ def search_photos(
                     embedding_dimension=global_settings.embedding_dimension,
                     keyword_candidates=len(keyword_results),
                     concept_candidates=len(concept_results),
+                    people_visual_candidates=people_visual_candidates_count,
                     vector_candidates=0,
                     merged_candidates=0,
                     fallback_reason=fallback_reason,
@@ -1275,6 +1283,7 @@ def search_photos(
                 embedding_dimension=global_settings.embedding_dimension,
                 keyword_candidates=len(keyword_results),
                 concept_candidates=len(concept_results),
+                people_visual_candidates=people_visual_candidates_count,
                 vector_candidates=0,
                 merged_candidates=len(merged_keyword_results),
                 fallback_reason=fallback_reason,
@@ -1355,6 +1364,7 @@ def search_photos(
                 embedding_dimension=global_settings.embedding_dimension,
                 keyword_candidates=len(keyword_results),
                 concept_candidates=len(concept_results),
+                people_visual_candidates=people_visual_candidates_count,
                 vector_candidates=len(vector_scores),
                 merged_candidates=len(vector_only),
                 fallback_reason="",
@@ -1535,6 +1545,7 @@ def search_photos(
             embedding_dimension=global_settings.embedding_dimension,
             keyword_candidates=len(keyword_results),
             concept_candidates=len(concept_results),
+            people_visual_candidates=people_visual_candidates_count,
             vector_candidates=len(vector_scores),
             merged_candidates=len(merged),
             fallback_reason="",

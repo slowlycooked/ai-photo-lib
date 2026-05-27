@@ -19,6 +19,7 @@ from app.models.project_task import ProjectTask  # noqa: E402
 from app.models.project import Project  # noqa: E402
 from app.services.project_task_app_service import ProjectTaskAppService  # noqa: E402
 from app.services.project_task_service import (  # noqa: E402
+    TASK_TYPE_FACE_SCAN_PROJECT,
     TASK_TYPE_LIBRARY_REINDEX,
     TASK_TYPE_LIBRARY_SCAN,
     TASK_TYPE_UNKNOWN_FACE_CLUSTERING,
@@ -231,6 +232,60 @@ class ProjectTaskAppServiceTest(unittest.TestCase):
         self.assertEqual(task.progress_payload["clusters_created"], 4)
         self.assertEqual(task.progress_payload["max_faces"], 123)
         self.assertEqual(task.result_payload["faces_clustered"], 21)
+        db.close()
+
+    def test_process_face_scan_project_task_queues_child_jobs(self) -> None:
+        db = self._SessionLocal()
+        task = ProjectTask(
+            project_id=1,
+            task_type=TASK_TYPE_FACE_SCAN_PROJECT,
+            status="queued",
+            request_params={
+                "scope": "missing",
+                "photo_ids": [101, 102],
+                "candidate_count": 2,
+                "total_photos": 3,
+            },
+        )
+        db.add(task)
+        db.commit()
+        db.refresh(task)
+
+        class _Plan:
+            project_id = 1
+            candidate_photo_ids = [101, 102]
+            skipped_active = 0
+
+        class _EnqueueResult:
+            created_jobs = 2
+            skipped_active = 0
+
+        class _FakeFaceScanBatchService:
+            def __init__(self, session) -> None:
+                self.session = session
+
+            def plan(self, project_id, *, scope, photo_ids, force):
+                assert project_id == 1
+                assert scope == "missing"
+                assert photo_ids == [101, 102]
+                assert force is False
+                return _Plan()
+
+            def enqueue(self, plan):
+                assert plan.candidate_photo_ids == [101, 102]
+                return _EnqueueResult()
+
+        with patch(
+            "app.services.project_task_app_service.FaceScanBatchService",
+            _FakeFaceScanBatchService,
+        ):
+            ProjectTaskAppService(db, session_factory=self._SessionLocal).process_task(task)
+
+        db.refresh(task)
+        self.assertEqual(task.status, "success")
+        self.assertEqual(task.progress_payload["created_jobs"], 2)
+        self.assertEqual(task.progress_payload["candidate_count"], 2)
+        self.assertEqual(task.result_payload["message"], "Project face scan jobs queued")
         db.close()
 
     def test_enqueue_scan_task_returns_existing_active_scan_family_task(self) -> None:

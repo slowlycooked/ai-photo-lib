@@ -132,6 +132,9 @@ class FaceScanProjectStartRequest(BaseModel):
 
 class FaceScanProjectStartResponse(BaseModel):
     project_id: int
+    task_id: Optional[int] = None
+    task_created: bool = False
+    task_status: Optional[str] = None
     created_jobs: int
     skipped_active_jobs: int
     scope: Literal["missing", "failed", "stale", "all", "selected"] = "missing"
@@ -151,6 +154,8 @@ class FaceScanProjectStatusResponse(BaseModel):
     success: int
     failed: int
     total: int
+    task_id: Optional[int] = None
+    task_status: Optional[str] = None
 
 
 class FaceClusterUnknownRequest(BaseModel):

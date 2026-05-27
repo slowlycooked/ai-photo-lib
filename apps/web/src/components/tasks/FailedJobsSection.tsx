@@ -138,6 +138,9 @@ export function FailedJobsSection({
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.aiStatus(projectId) });
       queryClient.invalidateQueries({ queryKey: [listQueryKey, projectId] });
+      if (jobType === "face_scan") {
+        queryClient.invalidateQueries({ queryKey: ["face-scan-status", projectId] });
+      }
     },
   });
 

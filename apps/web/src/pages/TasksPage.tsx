@@ -290,8 +290,10 @@ function FaceScanSection({ projectId }: { projectId: number | null }) {
     onSuccess: (result) => {
       setError(null);
       setMessage(
-        result.created_jobs > 0
-          ? `已创建 ${result.created_jobs} 个人脸扫描任务（scope=${result.scope}）`
+        result.task_id
+          ? `已提交全库人脸扫描任务 #${result.task_id}（scope=${result.scope}）`
+          : result.created_jobs > 0
+            ? `已创建 ${result.created_jobs} 个人脸扫描任务（scope=${result.scope}）`
           : `没有可创建的人脸扫描任务（scope=${result.scope}）`
       );
       queryClient.invalidateQueries({ queryKey: ["face-scan-status", projectId] });

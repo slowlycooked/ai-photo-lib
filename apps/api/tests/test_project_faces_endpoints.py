@@ -21,7 +21,9 @@ os.environ.setdefault("OPENAI_VISION_MODEL", "test-model")
 
 from app.database import get_db  # noqa: E402
 from app.main import app  # noqa: E402
+from app.models.project_task import ProjectTask  # noqa: E402
 from app.services.face_scan_service import FaceScanResult  # noqa: E402
+from app.services.project_task_app_service import ProjectTaskAppService  # noqa: E402
 from app.services.unknown_face_clustering_service import UnknownFaceClusteringResult  # noqa: E402
 
 
@@ -173,6 +175,22 @@ CREATE TABLE ai_jobs (
   model_params TEXT,
   raw_model_output TEXT,
   parse_error TEXT,
+  started_at TEXT,
+  finished_at TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE project_tasks (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id INTEGER NOT NULL,
+  task_type TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'queued',
+  retry_count INTEGER NOT NULL DEFAULT 0,
+  request_params TEXT,
+  progress_payload TEXT,
+  result_payload TEXT,
+  error_message TEXT,
   started_at TEXT,
   finished_at TEXT,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -471,7 +489,10 @@ class ProjectFacesEndpointsTest(unittest.TestCase):
     payload = start.json()
     self.assertEqual(payload["project_id"], 1)
     self.assertEqual(payload["scope"], "missing")
-    self.assertEqual(payload["created_jobs"], 1)
+    self.assertEqual(payload["task_created"], True)
+    self.assertEqual(payload["task_status"], "queued")
+    self.assertIsNotNone(payload["task_id"])
+    self.assertEqual(payload["created_jobs"], 0)
     self.assertEqual(payload["skipped_active_jobs"], 0)
 
   def test_project_face_scan_jobs_selected_scope_queues_requested_photos(self) -> None:
@@ -482,7 +503,9 @@ class ProjectFacesEndpointsTest(unittest.TestCase):
     self.assertEqual(start.status_code, 200)
     payload = start.json()
     self.assertEqual(payload["scope"], "selected")
-    self.assertEqual(payload["created_jobs"], 2)
+    self.assertEqual(payload["task_created"], True)
+    self.assertEqual(payload["created_jobs"], 0)
+    self.assertEqual(payload["candidate_count"], 2)
 
   def test_project_face_scan_jobs_failed_scope_queues_failed_photos(self) -> None:
     start = self.client.post(
@@ -492,7 +515,9 @@ class ProjectFacesEndpointsTest(unittest.TestCase):
     self.assertEqual(start.status_code, 200)
     payload = start.json()
     self.assertEqual(payload["scope"], "failed")
-    self.assertEqual(payload["created_jobs"], 1)
+    self.assertEqual(payload["task_created"], True)
+    self.assertEqual(payload["created_jobs"], 0)
+    self.assertEqual(payload["candidate_count"], 1)
 
   def test_project_face_scan_jobs_stale_scope_respects_updated_settings(self) -> None:
     settings_update = self.client.put(
@@ -508,14 +533,17 @@ class ProjectFacesEndpointsTest(unittest.TestCase):
     self.assertEqual(start.status_code, 200)
     payload = start.json()
     self.assertEqual(payload["scope"], "stale")
-    self.assertEqual(payload["created_jobs"], 1)
+    self.assertEqual(payload["task_created"], True)
+    self.assertEqual(payload["created_jobs"], 0)
+    self.assertEqual(payload["candidate_count"], 1)
 
   def test_project_face_scan_jobs_can_be_enqueued_and_counted(self) -> None:
     start = self.client.post("/projects/1/face-scan-project/start")
     self.assertEqual(start.status_code, 200)
     payload = start.json()
     self.assertEqual(payload["project_id"], 1)
-    self.assertEqual(payload["created_jobs"], 1)
+    self.assertEqual(payload["task_created"], True)
+    self.assertEqual(payload["created_jobs"], 0)
     self.assertEqual(payload["skipped_active_jobs"], 0)
 
     status = self.client.get("/projects/1/face-scan-project/status")
@@ -524,11 +552,13 @@ class ProjectFacesEndpointsTest(unittest.TestCase):
     self.assertEqual(status_payload["queued"], 1)
     self.assertEqual(status_payload["failed"], 1)
     self.assertEqual(status_payload["total"], 2)
+    self.assertEqual(status_payload["task_status"], "queued")
 
     start_again = self.client.post("/projects/1/face-scan-project/start")
     self.assertEqual(start_again.status_code, 200)
     payload_again = start_again.json()
     self.assertEqual(payload_again["created_jobs"], 0)
+    self.assertEqual(payload_again["task_created"], False)
     self.assertEqual(payload_again["skipped_active_jobs"], 1)
 
   def test_project_face_scan_jobs_dry_run_returns_plan_without_enqueue(self) -> None:
@@ -592,3 +622,56 @@ class ProjectFacesEndpointsTest(unittest.TestCase):
         )
       ).fetchall()
     self.assertEqual([(row[0], row[1]) for row in rows], [(901, "failed"), (902, "queued")])
+
+  def test_retry_failed_face_scan_queues_project_task(self) -> None:
+    retry = self.client.post("/projects/1/ai/jobs/retry-failed?job_type=face_scan")
+    self.assertEqual(retry.status_code, 200)
+    payload = retry.json()
+    self.assertEqual(payload["retried_jobs"], 0)
+    self.assertEqual(payload["task_created"], True)
+    self.assertEqual(payload["task_status"], "queued")
+    self.assertIsNotNone(payload["task_id"])
+
+    with self._engine.begin() as conn:
+      job_row = conn.execute(
+        sa.text(
+          """
+          SELECT status FROM ai_jobs
+          WHERE project_id = 1 AND id = 901
+          """
+        )
+      ).first()
+      task_row = conn.execute(
+        sa.text(
+          """
+          SELECT task_type, status FROM project_tasks
+          WHERE project_id = 1
+          """
+        )
+      ).first()
+
+    self.assertEqual(job_row[0], "failed")
+    self.assertEqual((task_row[0], task_row[1]), ("face_scan_project", "queued"))
+
+  def test_face_scan_project_task_replaces_old_failed_jobs_on_retry_scope(self) -> None:
+    retry = self.client.post("/projects/1/ai/jobs/retry-failed?job_type=face_scan")
+    self.assertEqual(retry.status_code, 200)
+
+    db = self._SessionLocal()
+    task = db.query(ProjectTask).filter(ProjectTask.project_id == 1).first()
+    self.assertIsNotNone(task)
+    ProjectTaskAppService(db, session_factory=self._SessionLocal).process_task(task)
+    db.close()
+
+    with self._engine.begin() as conn:
+      rows = conn.execute(
+        sa.text(
+          """
+          SELECT status FROM ai_jobs
+          WHERE project_id = 1 AND photo_id = 103 AND job_type = 'face_scan'
+          ORDER BY id ASC
+          """
+        )
+      ).fetchall()
+
+    self.assertEqual([row[0] for row in rows], ["queued"])

@@ -15,6 +15,8 @@ from ..schemas.ai import (
     RetryFailedResponse,
     StartAnalysisResponse,
 )
+from .face_scan_batch_service import FaceScanBatchService
+from .project_task_service import enqueue_face_scan_project_task
 
 
 class ProjectAIJobsAppService:
@@ -172,6 +174,9 @@ class ProjectAIJobsAppService:
 
     def retry_failed(self, project_id: int, *, job_type: Optional[str]) -> RetryFailedResponse:
         job_types = _parse_job_types(job_type)
+        if job_types == ["face_scan"]:
+            return self._retry_failed_face_scan_jobs(project_id)
+
         count = self._uow.ai_jobs.retry_failed_for_project_with_limit(
             project_id,
             settings.ai_max_retries,
@@ -180,6 +185,48 @@ class ProjectAIJobsAppService:
 
         self._uow.commit()
         return RetryFailedResponse(retried_jobs=count, message="Failed jobs re-queued")
+
+    def _retry_failed_face_scan_jobs(self, project_id: int) -> RetryFailedResponse:
+        service = FaceScanBatchService(self._db)
+        plan = service.plan(
+            project_id,
+            scope="failed",
+            photo_ids=[],
+            force=False,
+        )
+        if not plan.candidate_photo_ids:
+            return RetryFailedResponse(
+                retried_jobs=0,
+                message="No failed face scan jobs to retry",
+            )
+
+        result = enqueue_face_scan_project_task(
+            self._db,
+            project_id=project_id,
+            request_params={
+                "scope": plan.scope,
+                "photo_ids": plan.candidate_photo_ids,
+                "force": False,
+                "total_photos": plan.total_photos,
+                "candidate_count": plan.candidate_count,
+                "skipped_active_jobs": plan.skipped_active,
+                "skipped_already_scanned": plan.skipped_already_scanned,
+                "skipped_other_project": plan.skipped_other_project,
+                "stale_count": plan.stale_count,
+                "failed_count": plan.failed_count,
+            },
+        )
+        return RetryFailedResponse(
+            retried_jobs=0,
+            message=(
+                "Failed face scan project task queued"
+                if result.created
+                else "Failed face scan project task already in progress"
+            ),
+            task_id=result.task.id,
+            task_created=result.created,
+            task_status=result.task.status,
+        )
 
     def clear_failed(self, project_id: int, *, job_type: Optional[str]) -> dict:
         job_types = _parse_job_types(job_type)

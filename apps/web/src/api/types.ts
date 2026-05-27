@@ -304,6 +304,7 @@ export interface SearchDebugPayload {
   embedding_dimension: number;
   keyword_candidates: number;
   concept_candidates?: number;
+  people_visual_candidates?: number;
   vector_candidates: number;
   merged_candidates: number;
   fallback_reason?: string;
@@ -330,8 +331,10 @@ export interface SearchDebugPayload {
     enabled: boolean;
     reason: string;
     concept_terms: string[];
+    concept_facets?: string[];
     entity_terms: string[];
     candidates: number;
+    top_scores?: number[];
   };
   trace?: SearchTraceStep[];
   settings_snapshot?: {
@@ -523,6 +526,9 @@ export interface FaceScanProjectStartRequest {
 
 export interface FaceScanProjectStartResponse {
   project_id: number;
+  task_id?: number | null;
+  task_created?: boolean;
+  task_status?: string | null;
   created_jobs: number;
   skipped_active_jobs: number;
   scope: "missing" | "failed" | "stale" | "all" | "selected";
@@ -542,6 +548,8 @@ export interface FaceScanProjectStatusResponse {
   success: number;
   failed: number;
   total: number;
+  task_id?: number | null;
+  task_status?: string | null;
 }
 
 export interface FaceClusterUnknownRequest {

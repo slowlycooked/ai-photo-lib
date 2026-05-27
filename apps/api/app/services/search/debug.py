@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import Optional
 
 from ..query_understanding_service import SearchQueryPlan
-from .concept_recall import derive_concept_query_terms
+from .concept_recall import derive_concept_query_context
 from .settings_resolver import SearchSettingsResolver
 from .types import EffectiveSearchSettings
 
@@ -42,7 +42,7 @@ def build_debug_payload(
     concept_debug: Optional[dict] = None,
 ) -> dict:
     """Build the debug payload that accompanies a search response."""
-    derived_concept_terms, derived_entity_terms = derive_concept_query_terms(query_plan)
+    derived_concept_terms, derived_entity_terms, derived_concept_facets = derive_concept_query_context(query_plan)
     payload_concept_terms = concept_terms if concept_terms is not None else derived_concept_terms
     payload_entity_terms = (
         concept_entity_terms if concept_entity_terms is not None else derived_entity_terms
@@ -111,8 +111,10 @@ def build_debug_payload(
             "enabled": True,
             "reason": "connected",
             "concept_terms": payload_concept_terms,
+            "concept_facets": derived_concept_facets,
             "entity_terms": payload_entity_terms,
             "candidates": concept_candidates,
+            "top_scores": [],
         },
         # Evidence / filter stats
         "filter_stats": {

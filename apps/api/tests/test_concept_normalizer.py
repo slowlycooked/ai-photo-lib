@@ -80,3 +80,22 @@ def test_attach_semantic_is_idempotent() -> None:
     assert twice["semantic"]["entities"] == ["猫"]
     assert twice["semantic"]["concepts"] == ["动物", "宠物", "小动物"]
     assert twice["semantic"]["version"] == CONCEPT_NORMALIZER_VERSION
+
+
+def test_concept_normalizer_people_count_two() -> None:
+    normalized = normalize_concepts_from_payload(people_count=2)
+
+    assert "人物" in normalized.semantic_concepts
+    assert "多人" in normalized.semantic_concepts
+    assert "合照" in normalized.semantic_concepts
+    assert "合影" in normalized.semantic_concepts
+    assert "people" in normalized.semantic_facets
+    assert "group_photo" in normalized.semantic_facets
+
+
+def test_concept_normalizer_people_count_three() -> None:
+    normalized = normalize_concepts_from_payload(people_count=3)
+
+    assert "集体照" in normalized.semantic_concepts
+    assert "people" in normalized.semantic_facets
+    assert "group_photo" in normalized.semantic_facets

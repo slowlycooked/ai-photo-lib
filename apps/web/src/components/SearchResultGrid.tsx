@@ -349,6 +349,7 @@ const STAGE_LABELS: Record<string, string> = {
   folder_filter: "④ 文件夹过滤",
   keyword_recall: "⑤ 关键词召回",
   concept_recall: "⑤.5 概念召回",
+  people_visual_recall: "⑤.7 人像结构召回",
   vector_recall: "⑥ 向量召回",
   rrf_merge: "⑦ RRF 融合",
   result: "⑧ 结果",
@@ -361,6 +362,7 @@ const STAGE_COLORS: Record<string, string> = {
   folder_filter: "text-teal-700 dark:text-teal-300",
   keyword_recall: "text-blue-700 dark:text-blue-300",
   concept_recall: "text-indigo-700 dark:text-indigo-300",
+  people_visual_recall: "text-fuchsia-700 dark:text-fuchsia-300",
   vector_recall: "text-purple-700 dark:text-purple-300",
   rrf_merge: "text-orange-700 dark:text-orange-300",
   result: "text-green-700 dark:text-green-300",
@@ -386,6 +388,7 @@ function TraceStepRow({ step }: { step: SearchTraceStep }) {
     if (stage === "folder_filter") return `folder_id=${rest.folder_id}  scope=${rest.scope}  photos=${rest.photo_ids_count ?? "?"}`;
     if (stage === "keyword_recall") return `candidates=${rest.candidates}  top=[${(rest.top_scores as number[])?.join(", ")}]`;
     if (stage === "concept_recall") return `concepts=[${(rest.concept_terms as string[])?.join(", ") || ""}] candidates=${rest.candidates}`;
+    if (stage === "people_visual_recall") return `candidates=${rest.candidates}  top=[${(rest.top_scores as number[])?.join(", ") || ""}]`;
     if (stage === "vector_recall") {
       if (rest.error) return `⚠ FALLBACK: ${rest.error}`;
       return `candidates=${rest.candidates}  model=${rest.embedding_model}  is_ocr=${rest.is_ocr}`;
@@ -459,6 +462,7 @@ function DebugPanel({ payload }: { payload: SearchDebugPayload }) {
         <span><span className="opacity-60">模式:</span> {payload.mode}</span>
         <span><span className="opacity-60">关键词候选:</span> {payload.keyword_candidates}</span>
         <span><span className="opacity-60">概念候选:</span> {payload.concept_candidates ?? 0}</span>
+        <span><span className="opacity-60">人像结构候选:</span> {payload.people_visual_candidates ?? 0}</span>
         <span><span className="opacity-60">向量候选:</span> {payload.vector_candidates}</span>
         <span><span className="opacity-60">合并后:</span> {payload.merged_candidates}</span>
         {payload.embedding_model && (
@@ -540,8 +544,10 @@ function DebugPanel({ payload }: { payload: SearchDebugPayload }) {
           <div><span className="opacity-60">enabled:</span> {String(payload.concept_debug.enabled)}</div>
           <div><span className="opacity-60">reason:</span> {payload.concept_debug.reason}</div>
           <div><span className="opacity-60">concept_terms:</span> {payload.concept_debug.concept_terms.join("、") || "—"}</div>
+          <div><span className="opacity-60">concept_facets:</span> {(payload.concept_debug.concept_facets ?? []).join("、") || "—"}</div>
           <div><span className="opacity-60">entity_terms:</span> {payload.concept_debug.entity_terms.join("、") || "—"}</div>
           <div><span className="opacity-60">candidates:</span> {payload.concept_debug.candidates}</div>
+          <div><span className="opacity-60">top_scores:</span> {(payload.concept_debug.top_scores ?? []).join("、") || "—"}</div>
         </div>
       )}
 

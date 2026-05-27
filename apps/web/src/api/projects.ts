@@ -123,7 +123,13 @@ export const projectsApi = {
     ),
 
   retryFailedAiJobs: (id: number, jobType?: string) =>
-    request<{ retried_jobs: number; message: string }>(
+    request<{
+      retried_jobs: number;
+      message: string;
+      task_id?: number | null;
+      task_created?: boolean;
+      task_status?: string | null;
+    }>(
       `/projects/${id}/ai/jobs/retry-failed${qs({ job_type: jobType })}`,
       { method: "POST" },
     ),
