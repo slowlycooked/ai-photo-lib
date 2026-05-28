@@ -7,6 +7,7 @@ import {
   type ProjectQueryPlannerSettings,
   type ProjectQueryPlannerSettingsUpdate,
 } from "@/api";
+import { ConfigTestResult } from "@/components/settings/ConfigTestResult";
 
 interface Props {
   projectId: number;
@@ -84,6 +85,18 @@ export default function ProjectQueryPlannerSettingsPanel({ projectId }: Props) {
     }
   }
 
+  const plannerDebug = (testResult?.planner_debug ?? {}) as Record<string, unknown>;
+  const usedFallback = Boolean(plannerDebug.used_fallback);
+  const fallbackReason =
+    typeof plannerDebug.fallback_reason === "string" ? plannerDebug.fallback_reason : "";
+  const plannerError =
+    typeof plannerDebug.error === "string" ? plannerDebug.error : null;
+  const latencyMs =
+    typeof plannerDebug.latency_ms === "number" ? plannerDebug.latency_ms : null;
+  const modelName =
+    typeof plannerDebug.model === "string" ? plannerDebug.model : null;
+  const rawOutput = plannerDebug.raw_output ?? plannerDebug.raw_output_preview ?? null;
+
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between">
@@ -132,7 +145,7 @@ export default function ProjectQueryPlannerSettingsPanel({ projectId }: Props) {
         </label>
       </section>
 
-      <section className="grid grid-cols-1 md:grid-cols-2 gap-3">
+      {effective.enabled && <section className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <label className="flex flex-col gap-1 text-xs">
           <span className="text-gray-600">Provider</span>
           <input
@@ -245,16 +258,16 @@ export default function ProjectQueryPlannerSettingsPanel({ projectId }: Props) {
             onChange={(e) => setField("prompt_template", e.target.value)}
           />
         </label>
-      </section>
+      </section>}
 
-      {updateMutation.isError && (
+      {effective.enabled && updateMutation.isError && (
         <p className="text-xs text-red-500 flex items-center gap-1">
           <AlertCircle className="w-3 h-3" />
           保存失败，请重试
         </p>
       )}
 
-      <section className="space-y-2 border-t border-gray-200 pt-4">
+      {effective.enabled && <section className="space-y-2 border-t border-gray-200 pt-4">
         <h4 className="text-sm font-semibold text-gray-700">测试 Query</h4>
         <div className="flex gap-2">
           <input
@@ -283,28 +296,31 @@ export default function ProjectQueryPlannerSettingsPanel({ projectId }: Props) {
           </p>
         )}
         {testResult && (
-          <div className="space-y-2">
-            <div className="rounded border border-gray-200 bg-gray-50 p-2 text-xs">
-              <div><span className="font-semibold">fallback:</span> {String(testResult.planner_debug?.used_fallback ?? false)}</div>
-              <div><span className="font-semibold">fallback_reason:</span> {String(testResult.planner_debug?.fallback_reason ?? "") || "—"}</div>
-              <div><span className="font-semibold">latency_ms:</span> {String(testResult.planner_debug?.latency_ms ?? "—")}</div>
-              <div><span className="font-semibold">model:</span> {String(testResult.planner_debug?.model ?? "") || "—"}</div>
-            </div>
-            <div>
-              <p className="text-xs font-medium text-gray-700 mb-1">LLM Raw Output</p>
-              <pre className="text-xs bg-slate-900 text-slate-100 rounded p-2 overflow-auto max-h-48 whitespace-pre-wrap break-words">
-{String(testResult.planner_debug?.raw_output ?? testResult.planner_debug?.raw_output_preview ?? "") || "(empty)"}
-              </pre>
-            </div>
-            <div>
-              <p className="text-xs font-medium text-gray-700 mb-1">Parsed Query Plan</p>
-              <pre className="text-xs bg-slate-900 text-slate-100 rounded p-2 overflow-auto max-h-64 whitespace-pre-wrap break-words">
-{JSON.stringify(testResult.parsed_query_plan, null, 2)}
-              </pre>
-            </div>
-          </div>
+          <ConfigTestResult
+            title="Planner 测试结果"
+            success={!usedFallback}
+            latencyMs={latencyMs}
+            model={modelName}
+            errorMessage={usedFallback && plannerError ? plannerError : null}
+            warningMessage={usedFallback ? `已触发 fallback${fallbackReason ? `：${fallbackReason}` : ""}` : null}
+            summary={[
+              { label: "Used Fallback", value: String(usedFallback) },
+              { label: "Fallback Reason", value: fallbackReason || "—" },
+              { label: "Parse Strategy", value: effective.json_parse_strategy ?? "—" },
+            ]}
+            requestPayload={{
+              query: testResult.query,
+              provider: effective.provider,
+              endpoint_url: effective.endpoint_url,
+              model_name: effective.model_name,
+              planner_version: effective.planner_version,
+              fallback_mode: effective.fallback_mode,
+            }}
+            rawOutput={rawOutput}
+            parsedOutput={testResult.parsed_query_plan}
+          />
         )}
-      </section>
+      </section>}
     </div>
   );
 }

@@ -136,3 +136,86 @@ def test_llm_query_planner_maps_output_and_merges_deterministic_metadata() -> No
     assert plan.metadata_filters.get("year") is not None
     assert plan.metadata_filters.get("month") == 12
     assert plan.metadata_filters.get("camera_make") == "Apple"
+
+
+def test_llm_query_planner_accepts_empty_list_for_scalar_filters() -> None:
+    settings = replace(
+        SearchSettingsResolver.defaults(),
+        query_planner_enabled=True,
+        query_planner_endpoint_url="http://127.0.0.1:18084/v1/chat/completions",
+        query_planner_model_name="qwen3-4b-query-planner",
+    )
+
+    llm_json = """
+    {
+      "intent": "search",
+      "search_mode": "semantic",
+      "normalized_query": "动物",
+      "semantic_query_text": "关于动物的图像内容",
+      "terms": {
+        "exact": ["动物"],
+        "expanded": ["宠物", "野生动物"],
+        "support": [],
+        "broad": [],
+        "negative": []
+      },
+      "facets": {
+        "object": ["动物"],
+        "scene": [],
+        "activity": [],
+        "people": [],
+        "weather": [],
+        "time": [],
+        "location": []
+      },
+      "filters": {
+        "has_animals": true,
+        "weather": [],
+        "time_of_day": []
+      },
+      "metadata_filters": {
+        "year": [],
+        "month": [],
+        "season": [],
+        "camera_make": [],
+        "camera_model": [],
+        "place_terms": [],
+        "matched_metadata_terms": []
+      },
+      "concept_terms": [],
+      "semantic_tags": ["动物"],
+      "core_facets": ["object"],
+      "core_facet_evidence": {
+        "positive_terms": ["动物"],
+        "negative_terms": []
+      },
+      "query_constraints": {
+        "requires_visual_evidence": true,
+        "allow_weak_only_match": false,
+        "min_evidence_level": "high",
+        "query_core_facets": ["object"]
+      },
+      "confidence": 0.95,
+      "fallback_reason": ""
+    }
+    """
+
+    with patch(
+        "app.services.search.query_planner.llm_query_planner.call_chat_completion",
+        return_value=llm_json,
+    ):
+        plan = resolve_query_plan_llm_first(
+            "动物",
+            project_id=1,
+            settings=settings,
+            understander=understand_query,
+        )
+
+    assert plan.planner_debug.get("used_fallback") is False
+    assert plan.filters.get("weather") is None
+    assert plan.filters.get("time_of_day") is None
+    assert plan.metadata_filters.get("year") is None
+    assert plan.metadata_filters.get("month") is None
+    assert plan.metadata_filters.get("season") is None
+    assert plan.metadata_filters.get("camera_make") is None
+    assert plan.metadata_filters.get("camera_model") is None

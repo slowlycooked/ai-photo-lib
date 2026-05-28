@@ -899,17 +899,43 @@ show_status() {
   echo ""
 }
 
+normalize_service_name() {
+  local raw="$1"
+  case "$raw" in
+    postgres|planner|ai|embed|api|worker|web|all)
+      echo "$raw"
+      ;;
+    llm-plan)
+      echo "planner"
+      ;;
+    llama-srv)
+      echo "ai"
+      ;;
+    llama-emb)
+      echo "embed"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 resolve_services() {
   if [ "$#" -eq 0 ]; then
     echo "postgres planner ai embed api worker web"
   else
     local expanded=()
-    local svc
+    local svc canonical
     for svc in "$@"; do
-      if [ "$svc" = "all" ]; then
+      if ! canonical="$(normalize_service_name "$svc")"; then
+        log_error "未知服务: $svc"
+        exit 1
+      fi
+
+      if [ "$canonical" = "all" ]; then
         expanded+=(postgres planner ai embed api worker web)
       else
-        expanded+=("$svc")
+        expanded+=("$canonical")
       fi
     done
     echo "${expanded[*]}"
@@ -967,9 +993,18 @@ do_stop() {
     fi
   done
 
+  local ordered_text=""
+  if [ "${#ordered[@]}" -gt 0 ]; then
+    ordered_text="${ordered[*]}"
+  fi
+
   echo ""
-  log_info "停止服务: ${ordered[*]}"
+  log_info "停止服务: ${ordered_text}"
   echo ""
+
+  if [ "${#ordered[@]}" -eq 0 ]; then
+    return 0
+  fi
 
   for svc in "${ordered[@]}"; do
     case "$svc" in

@@ -625,7 +625,7 @@ export function TasksPage() {
   if (tabParam === "ai-settings") {
     return (
       <Navigate
-        to={currentProjectId != null ? `/projects/${currentProjectId}/settings/ai` : "/photos"}
+        to={currentProjectId != null ? `/projects/${currentProjectId}/settings/vision-ai` : "/photos"}
         replace
       />
     );
@@ -663,7 +663,7 @@ export function TasksPage() {
           </p>
         </div>
         <Link
-          to={currentProjectId != null ? `/projects/${currentProjectId}/settings/ai` : "/photos"}
+          to={currentProjectId != null ? `/projects/${currentProjectId}/settings/vision-ai` : "/photos"}
           className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-hairline text-btn-sm hover:bg-surface-card transition-colors"
         >
           <Settings2 className="w-3.5 h-3.5" />

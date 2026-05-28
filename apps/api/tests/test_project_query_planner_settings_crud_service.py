@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import tempfile
+import unittest.mock
 
 import sqlalchemy as sa
 from sqlalchemy.orm import Session, sessionmaker
@@ -13,6 +14,8 @@ os.environ.setdefault("OPENAI_API_KEY", "test")
 os.environ.setdefault("OPENAI_BASE_URL", "http://127.0.0.1:9999/v1")
 os.environ.setdefault("OPENAI_MODEL", "test-model")
 os.environ.setdefault("OPENAI_VISION_MODEL", "test-model")
+os.environ.setdefault("QUERY_PLANNER_BASE_URL", "http://127.0.0.1:18084/v1")
+os.environ["QUERY_PLANNER_ALIAS"] = "qwen3-4b-query-planner"
 
 from app.services.project_query_planner_settings_service import (  # noqa: E402
     get_or_create_project_query_planner_settings,
@@ -76,18 +79,26 @@ def _make_session() -> Session:
 
 
 def test_get_or_create_project_query_planner_settings_defaults() -> None:
+    import app.services.project_query_planner_settings_service as _svc
     db = _make_session()
     try:
-        row = get_or_create_project_query_planner_settings(db, 1)
+        with unittest.mock.patch.object(_svc, "global_settings") as mock_settings:
+            mock_settings.query_planner_base_url = "http://127.0.0.1:18084/v1"
+            mock_settings.query_planner_alias = "qwen3-4b-query-planner"
+            mock_settings.openai_api_key = "test"
+            row = get_or_create_project_query_planner_settings(db, 1)
         assert row.project_id == 1
-        assert row.enabled is False
+        assert row.enabled is True
         assert row.provider == "llama-server"
+        assert row.endpoint_url == "http://127.0.0.1:18084/v1"
+        assert row.model_name == "qwen3-4b-query-planner"
         assert row.max_tokens == 700
     finally:
         db.close()
 
 
 def test_update_and_reset_project_query_planner_settings() -> None:
+    import app.services.project_query_planner_settings_service as _svc
     db = _make_session()
     try:
         updated = update_project_query_planner_settings(
@@ -106,10 +117,14 @@ def test_update_and_reset_project_query_planner_settings() -> None:
         assert updated.model_name == "qwen3-4b-query-planner"
         assert updated.max_tokens == 768
 
-        reset = reset_project_query_planner_settings(db, 1)
-        assert reset.enabled is False
-        assert (reset.model_name or "") == ""
-        assert (reset.endpoint_url or "") == ""
+        with unittest.mock.patch.object(_svc, "global_settings") as mock_settings:
+            mock_settings.query_planner_base_url = "http://127.0.0.1:18084/v1"
+            mock_settings.query_planner_alias = "qwen3-4b-query-planner"
+            mock_settings.openai_api_key = "test"
+            reset = reset_project_query_planner_settings(db, 1)
+        assert reset.enabled is True
+        assert reset.model_name == "qwen3-4b-query-planner"
+        assert reset.endpoint_url == "http://127.0.0.1:18084/v1"
         assert reset.max_tokens == 700
     finally:
         db.close()

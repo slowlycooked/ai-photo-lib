@@ -73,7 +73,7 @@ function renderPage(initialEntry = "/tasks?tab=scan") {
         <Routes>
           <Route path="/tasks" element={<TasksPage />} />
           <Route path="/photos" element={<div>Photos Page</div>} />
-          <Route path="/projects/:projectId/settings/ai" element={<div>Project AI Settings</div>} />
+          <Route path="/projects/:projectId/settings/*" element={<div>Project AI Settings</div>} />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
@@ -179,7 +179,7 @@ describe("TasksPage", () => {
 
     expect(screen.getByRole("link", { name: "打开项目 AI 配置" })).toHaveAttribute(
       "href",
-      "/projects/7/settings/ai",
+      "/projects/7/settings/vision-ai",
     );
     expect(screen.queryByRole("button", { name: "AI 配置" })).not.toBeInTheDocument();
   });

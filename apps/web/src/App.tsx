@@ -90,9 +90,9 @@ function AppRoutes() {
           <Route path="/people" element={<Navigate to="/photos" replace />} />
           <Route path="/tags" element={<TagsPage />} />
           <Route path="/tasks" element={<TasksPage />} />
-          <Route path="/settings" element={<SettingsPage />} />
-          {/* Canonical project AI settings route */}
-          <Route path="/projects/:projectId/settings/ai" element={<ProjectAISettingsPage />} />
+          <Route path="/settings/*" element={<SettingsPage />} />
+          {/* Project settings center (keeps /settings/ai compatibility inside page) */}
+          <Route path="/projects/:projectId/settings/*" element={<ProjectAISettingsPage />} />
           <Route path="/projects/:projectId/people" element={<PeoplePage />} />
           <Route path="/projects/:projectId/people/review" element={<PeopleReviewPage />} />
         </Routes>

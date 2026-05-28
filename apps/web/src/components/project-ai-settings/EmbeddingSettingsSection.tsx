@@ -2,22 +2,17 @@ import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { FlaskConical, Loader2, RefreshCw, RotateCcw, Save } from "lucide-react";
 
-import { api, type ProjectEmbeddingSettingsUpdate } from "@/api";
+import { api, type EmbeddingTestResponse, type ProjectEmbeddingSettingsUpdate } from "@/api";
 import { CapabilityMaturityBadge } from "@/components/common/CapabilityMaturityBadge";
+import { ConfigTestResult } from "@/components/settings/ConfigTestResult";
 import { CAPABILITY_MATURITY } from "@/lib/capabilityMaturity";
 import { Label, SettingsCard } from "./SettingsPrimitives";
 
 export function EmbeddingSettingsSection({ projectId }: { projectId: number }) {
   const queryClient = useQueryClient();
   const [form, setForm] = useState<ProjectEmbeddingSettingsUpdate>({});
-  const [testResult, setTestResult] = useState<{
-    success: boolean;
-    model_name: string;
-    embedding_dimension: number;
-    sample: number[];
-    duration_ms: number;
-    error: string | null;
-  } | null>(null);
+  const [testText, setTestText] = useState("test embedding connection");
+  const [testResult, setTestResult] = useState<EmbeddingTestResponse | null>(null);
   const [rebuildMsg, setRebuildMsg] = useState<string | null>(null);
 
   const { data: settings, isLoading } = useQuery({
@@ -68,9 +63,9 @@ export function EmbeddingSettingsSection({ projectId }: { projectId: number }) {
   });
 
   const testMut = useMutation({
-    mutationFn: () =>
+    mutationFn: (text: string) =>
       api.projects.testEmbeddingSettings(projectId, {
-        text: "test embedding connection",
+        text,
       }),
     onSuccess: (data) => setTestResult(data),
     onError: (error) =>
@@ -188,31 +183,52 @@ export function EmbeddingSettingsSection({ projectId }: { projectId: number }) {
           )}
           保存配置
         </button>
-        <button
-          onClick={() => testMut.mutate()}
-          disabled={testMut.isPending}
-          className="btn-secondary flex items-center gap-1.5 text-sm"
-        >
-          {testMut.isPending ? (
-            <Loader2 className="w-3.5 h-3.5 animate-spin" />
-          ) : (
-            <FlaskConical className="w-3.5 h-3.5" />
-          )}
-          测试 Embedding
-        </button>
       </div>
 
-      {testResult && (
-        <div
-          className={`rounded-md p-2 text-sm ${
-            testResult.success ? "bg-green-50 text-green-800" : "bg-red-50 text-red-800"
-          }`}
-        >
-          {testResult.success
-            ? `✓ 连接成功 · ${testResult.model_name} · ${testResult.embedding_dimension}d · ${testResult.duration_ms}ms`
-            : `✗ ${testResult.error}`}
+        <div>
+          <Label>测试文本</Label>
+          <div className="flex gap-2">
+            <input
+              className="input-base w-full"
+              value={testText}
+              onChange={(e) => setTestText(e.target.value)}
+              placeholder="例如：去年 1 月 iPhone 拍的照片"
+            />
+            <button
+              onClick={() => testMut.mutate(testText.trim())}
+              disabled={testMut.isPending || !testText.trim()}
+              className="btn-secondary flex items-center gap-1.5 text-sm whitespace-nowrap"
+            >
+              {testMut.isPending ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <FlaskConical className="w-3.5 h-3.5" />
+              )}
+              运行测试
+            </button>
+          </div>
         </div>
-      )}
+
+        {testResult && (
+          <ConfigTestResult
+            title="Embedding 测试结果"
+            success={testResult.success}
+            latencyMs={testResult.duration_ms}
+            model={testResult.model_name}
+            errorMessage={testResult.error}
+            summary={[
+              { label: "Dimension", value: String(testResult.embedding_dimension) },
+              { label: "Sample Length", value: String(testResult.sample?.length ?? 0) },
+            ]}
+            requestPayload={{ text: testText.trim() }}
+            rawOutput={testResult.sample}
+            parsedOutput={{
+              success: testResult.success,
+              model_name: testResult.model_name,
+              embedding_dimension: testResult.embedding_dimension,
+            }}
+          />
+        )}
 
       <div className="border-t border-hairline pt-3 space-y-2">
         <div className="flex items-center justify-between">

@@ -100,6 +100,8 @@ class Settings(BaseSettings):
     search_tag_vector_weight: float = 0.25
     search_caption_vector_weight: float = 0.20
     search_ocr_vector_weight: float = 0.05
+    query_planner_base_url: str = ""
+    query_planner_alias: str = ""
     # ── Reverse geocoding / location enrichment ────────────────────────────
     location_resolver_provider: str = "none"
     location_resolver_endpoint: str = "https://nominatim.openstreetmap.org/reverse"

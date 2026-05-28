@@ -25,6 +25,7 @@ def system_health_check(db: Session = Depends(get_db)):
         _path_check("thumbnail_path writable", settings.thumbnail_path, writable=True),
         _path_check("photo_library_path readable", settings.photo_library_path, readable=True),
         _configured_check("llama vision endpoint configured", settings.openai_base_url),
+        _configured_check("query planner endpoint configured", settings.query_planner_base_url),
         _configured_check("embedding endpoint configured", settings.embedding_base_url),
         _file_check("YuNet model path", settings.face_detector_model_path),
         _file_check("SFace model path", settings.face_embedding_model_path),

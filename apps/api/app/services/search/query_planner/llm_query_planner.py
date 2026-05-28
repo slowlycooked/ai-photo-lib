@@ -45,6 +45,30 @@ query_constraints(requires_visual_evidence, allow_weak_only_match, min_evidence_
 confidence, fallback_reason。
 """
 
+_FILTER_SCALAR_FIELDS = {
+    "people_count_min",
+    "people_count_max",
+    "has_people",
+    "has_animals",
+    "indoor_outdoor",
+    "weather",
+    "time_of_day",
+}
+
+_METADATA_FILTER_SCALAR_FIELDS = {
+    "year",
+    "month",
+    "date_from",
+    "date_to",
+    "season",
+    "has_gps",
+    "camera_make",
+    "camera_model",
+    "iso_min",
+    "iso_max",
+    "metadata_only",
+}
+
 
 def _extract_json_object(raw_text: str) -> dict:
     """Extract first valid JSON object from model text output."""
@@ -103,6 +127,35 @@ def _render_prompt(template: str, *, query: str, project_id: Optional[int]) -> s
 def _sanitize_preview(raw_text: str) -> str:
     compact = re.sub(r"\s+", " ", raw_text).strip()
     return compact[:320]
+
+
+def _normalize_empty_list_scalars(raw_json: dict) -> dict:
+    """Normalize LLM placeholder [] into null for scalar filter fields.
+
+    Some small models emit [] for nullable scalar fields. We normalize these
+    placeholders before strict schema validation.
+    """
+    normalized = dict(raw_json)
+
+    filters = normalized.get("filters")
+    if isinstance(filters, dict):
+        normalized_filters = dict(filters)
+        for key in _FILTER_SCALAR_FIELDS:
+            value = normalized_filters.get(key)
+            if isinstance(value, list) and len(value) == 0:
+                normalized_filters[key] = None
+        normalized["filters"] = normalized_filters
+
+    metadata_filters = normalized.get("metadata_filters")
+    if isinstance(metadata_filters, dict):
+        normalized_metadata_filters = dict(metadata_filters)
+        for key in _METADATA_FILTER_SCALAR_FIELDS:
+            value = normalized_metadata_filters.get(key)
+            if isinstance(value, list) and len(value) == 0:
+                normalized_metadata_filters[key] = None
+        normalized["metadata_filters"] = normalized_metadata_filters
+
+    return normalized
 
 
 def resolve_query_plan_llm_first(
@@ -183,6 +236,7 @@ def resolve_query_plan_llm_first(
             planner_debug["raw_output"] = raw_text
 
         raw_json = _extract_json_object(raw_text)
+        raw_json = _normalize_empty_list_scalars(raw_json)
         parsed = LLMQueryPlannerOutput.model_validate(raw_json)
 
         planner_debug["parsed"] = True

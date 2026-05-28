@@ -15,6 +15,14 @@ from ..models.ai import ProjectQueryPlannerSettings
 logger = logging.getLogger(__name__)
 
 
+def _default_query_planner_endpoint_url() -> str:
+    return _as_text(global_settings.query_planner_base_url)
+
+
+def _default_query_planner_model_name() -> str:
+    return _as_text(global_settings.query_planner_alias)
+
+
 def _as_bool(value: Any, default: bool) -> bool:
     if value is None:
         return default
@@ -82,11 +90,11 @@ def get_or_create_project_query_planner_settings(
 
     row = ProjectQueryPlannerSettings(
         project_id=project_id,
-        enabled=False,
+        enabled=True,
         provider="llama-server",
-        endpoint_url="",
+        endpoint_url=_default_query_planner_endpoint_url(),
         api_key=global_settings.openai_api_key,
-        model_name="",
+        model_name=_default_query_planner_model_name(),
         temperature=0.0,
         top_p=0.8,
         max_tokens=700,
@@ -167,14 +175,14 @@ def resolve_query_planner_settings(
     Priority:
     1. project_query_planner_settings table
     2. project_search_settings.search_quality_settings (legacy compatibility)
-    3. hard defaults (planner disabled)
+    3. global .env defaults
     """
     defaults = {
-        "enabled": False,
+        "enabled": True,
         "provider": "llama-server",
-        "endpoint_url": "",
+        "endpoint_url": _default_query_planner_endpoint_url(),
         "api_key": "",
-        "model_name": "",
+        "model_name": _default_query_planner_model_name(),
         "temperature": 0.0,
         "top_p": 0.8,
         "max_tokens": 700,
@@ -191,9 +199,9 @@ def resolve_query_planner_settings(
         return {
             "enabled": bool(row.enabled),
             "provider": _as_text(row.provider, defaults["provider"]),
-            "endpoint_url": _as_text(row.endpoint_url, defaults["endpoint_url"]),
+            "endpoint_url": _as_text(row.endpoint_url),
             "api_key": _as_text(row.api_key, defaults["api_key"]),
-            "model_name": _as_text(row.model_name, defaults["model_name"]),
+            "model_name": _as_text(row.model_name),
             "temperature": _as_float(row.temperature, defaults["temperature"]),
             "top_p": _as_float(row.top_p, defaults["top_p"]),
             "max_tokens": _as_int(row.max_tokens, defaults["max_tokens"]),

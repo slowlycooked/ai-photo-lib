@@ -75,13 +75,20 @@ def call_chat_completion(
     }
 
     with httpx.Client(timeout=float(max(1, timeout_seconds))) as client:
-        response = client.post(url, json=payload, headers=headers)
-        if response.status_code == 400:
-            body = response.text.lower()
-            if "response_format" in body:
-                compat_payload = dict(payload)
-                compat_payload.pop("response_format", None)
-                response = client.post(url, json=compat_payload, headers=headers)
+        try:
+            response = client.post(url, json=payload, headers=headers)
+            if response.status_code == 400:
+                body = response.text.lower()
+                if "response_format" in body:
+                    compat_payload = dict(payload)
+                    compat_payload.pop("response_format", None)
+                    response = client.post(url, json=compat_payload, headers=headers)
+        except httpx.TimeoutException as exc:
+            raise QueryPlannerClientError(
+                f"Query planner request timed out after {max(1, timeout_seconds)}s"
+            ) from exc
+        except httpx.RequestError as exc:
+            raise QueryPlannerClientError(f"Query planner request failed: {exc}") from exc
         try:
             response.raise_for_status()
         except httpx.HTTPStatusError as exc:

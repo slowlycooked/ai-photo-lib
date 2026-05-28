@@ -156,7 +156,7 @@ class ProjectQueryPlannerSettings(Base):
         nullable=False,
         index=True,
     )
-    enabled: Mapped[bool] = mapped_column(Boolean, server_default="false", nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, server_default="true", nullable=False)
     provider: Mapped[str] = mapped_column(Text, server_default="llama-server", nullable=False)
     endpoint_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     api_key: Mapped[Optional[str]] = mapped_column(Text, nullable=True)

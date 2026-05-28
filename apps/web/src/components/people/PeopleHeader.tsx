@@ -29,7 +29,7 @@ export function PeopleHeader({
           未命名 {unnamedCount}
         </span>
         <Link
-          to={`/projects/${projectId}/settings/ai`}
+          to={`/projects/${projectId}/settings/vision-ai`}
           className="px-3 py-1.5 rounded-md border border-hairline text-body-sm text-ink hover:bg-surface-card"
         >
           打开 AI / Face 配置

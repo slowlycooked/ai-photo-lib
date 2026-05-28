@@ -1,11 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, NavLink, Navigate, useLocation } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Loader2,
   AlertCircle,
   Settings,
-  Bug,
   Save,
   FolderOpen,
   Plus,
@@ -165,9 +164,9 @@ function resolveReadinessFixPath(projectId: number, checkName: string): string {
     return "/tasks?tab=scan";
   }
   if (checkName === "ai_runtime" || checkName === "embedding_runtime") {
-    return `/projects/${projectId}/settings/ai`;
+    return `/projects/${projectId}/settings/vision-ai`;
   }
-  return "/settings";
+  return "/settings/general";
 }
 
 // ─── Library form (shared by add & edit) ─────────────────────────────────────
@@ -800,7 +799,7 @@ export function SystemHealthCard() {
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export function SettingsPage() {
-  const [activeTab, setActiveTab] = useState<"general" | "health" | "debug">("general");
+  const location = useLocation();
   const { currentProjectId } = useProjectContext();
   const { data, isLoading, isError } = useQuery({
     queryKey: queryKeys.settings(),
@@ -808,119 +807,187 @@ export function SettingsPage() {
     staleTime: 60_000,
   });
 
+  const section = location.pathname.split("/")[2] ?? "";
+  const activeSection = section === "" ? "general" : section;
+  const knownSections = new Set(["general", "monitoring", "debug"]);
+
+  if (section === "") {
+    return <Navigate to="/settings/general" replace />;
+  }
+
+  if (!knownSections.has(activeSection)) {
+    return <Navigate to="/settings/general" replace />;
+  }
+
+  const currentProjectSettingsBase =
+    currentProjectId != null ? `/projects/${currentProjectId}/settings` : null;
+
+  const globalNavItems = [
+    { key: "general", label: "常规配置", to: "/settings/general" },
+    { key: "monitoring", label: "系统监控", to: "/settings/monitoring" },
+    { key: "debug", label: "Debug / 日志", to: "/settings/debug" },
+  ] as const;
+
+  const projectNavItems = [
+    { key: "vision-ai", label: "视觉 AI", suffix: "vision-ai" },
+    { key: "embedding-ai", label: "Embedding AI", suffix: "embedding-ai" },
+    { key: "planner-ai", label: "Planner AI", suffix: "planner-ai" },
+    { key: "advanced", label: "高级搜索参数", suffix: "advanced" },
+  ] as const;
+
   return (
-    <main className="max-w-2xl mx-auto px-4 sm:px-6 py-6 space-y-6">
+    <main className="max-w-7xl mx-auto px-4 sm:px-6 py-6 space-y-6">
       <div className="flex items-center gap-2">
         <Settings className="w-5 h-5 text-ink" />
         <h1 className="text-heading-md font-semibold text-ink">系统设置</h1>
       </div>
 
-      <div className="flex items-center gap-2 border-b border-hairline pb-2">
-        <button
-          type="button"
-          onClick={() => setActiveTab("general")}
-          className={`px-3 py-1.5 rounded-md text-body-sm border transition-colors ${
-            activeTab === "general"
-              ? "border-primary text-primary bg-primary/10"
-              : "border-hairline text-ink hover:bg-secondary-bg"
-          }`}
-        >
-          <span className="inline-flex items-center gap-1.5">
-            <Settings className="w-3.5 h-3.5" />
-            常规设置
-          </span>
-        </button>
-        <button
-          type="button"
-          onClick={() => setActiveTab("health")}
-          className={`px-3 py-1.5 rounded-md text-body-sm border transition-colors ${
-            activeTab === "health"
-              ? "border-primary text-primary bg-primary/10"
-              : "border-hairline text-ink hover:bg-secondary-bg"
-          }`}
-        >
-          <span className="inline-flex items-center gap-1.5">
-            <Activity className="w-3.5 h-3.5" />
-            运行状态
-          </span>
-        </button>
-        <button
-          type="button"
-          onClick={() => setActiveTab("debug")}
-          className={`px-3 py-1.5 rounded-md text-body-sm border transition-colors ${
-            activeTab === "debug"
-              ? "border-primary text-primary bg-primary/10"
-              : "border-hairline text-ink hover:bg-secondary-bg"
-          }`}
-        >
-          <span className="inline-flex items-center gap-1.5">
-            <Bug className="w-3.5 h-3.5" />
-            Debug 与日志
-          </span>
-        </button>
+      <div className="rounded-md border border-hairline bg-canvas px-4 py-3 flex flex-wrap items-center gap-3 text-body-sm">
+        <span className="text-mute">当前项目</span>
+        <span className="font-medium text-ink">{currentProjectId != null ? `#${currentProjectId}` : "未选择"}</span>
+        {currentProjectId != null && (
+          <Link
+            to={`/projects/${currentProjectId}/settings/vision-ai`}
+            className="ml-auto px-3 py-1.5 rounded-md border border-hairline hover:bg-surface-card"
+          >
+            打开项目设置
+          </Link>
+        )}
       </div>
 
-      {activeTab === "debug" && <DebugLogSettingsCard />}
-      {activeTab === "health" && <SystemHealthCard />}
+      <div className="grid grid-cols-1 lg:grid-cols-[220px_minmax(0,1fr)] gap-6">
+        <aside className="bg-canvas border border-hairline rounded-md p-2 h-fit space-y-3">
+          <div>
+            <p className="px-2 py-1 text-caption-sm text-mute">基础</p>
+            <nav className="space-y-1 mt-1">
+              {globalNavItems.map((item) => (
+                <NavLink
+                  key={item.key}
+                  to={item.to}
+                  className={({ isActive }) =>
+                    [
+                      "flex items-center gap-2 px-2.5 py-2 rounded-md text-body-sm border transition-colors",
+                      isActive
+                        ? "border-primary text-primary bg-primary/10"
+                        : "border-transparent text-ink hover:bg-surface-card",
+                    ].join(" ")
+                  }
+                >
+                  {item.label}
+                </NavLink>
+              ))}
+            </nav>
+          </div>
 
-      {activeTab === "general" && (
-        <>
-          <LibraryManagementCard />
+          <div>
+            <p className="px-2 py-1 text-caption-sm text-mute">AI 能力（项目级）</p>
+            <nav className="space-y-1 mt-1">
+              {projectNavItems.map((item) => {
+                const target =
+                  currentProjectSettingsBase != null
+                    ? `${currentProjectSettingsBase}/${item.suffix}`
+                    : null;
+                if (!target) {
+                  return (
+                    <span
+                      key={item.key}
+                      className="flex items-center gap-2 px-2.5 py-2 rounded-md text-body-sm text-mute border border-transparent"
+                    >
+                      {item.label}
+                    </span>
+                  );
+                }
+                return (
+                  <NavLink
+                    key={item.key}
+                    to={target}
+                    className="flex items-center gap-2 px-2.5 py-2 rounded-md text-body-sm border border-transparent text-ink hover:bg-surface-card"
+                  >
+                    {item.label}
+                  </NavLink>
+                );
+              })}
+            </nav>
+          </div>
+        </aside>
 
-          {currentProjectId != null && (
+        <section className="space-y-6">
+          {activeSection === "general" && (
             <>
-              <ProjectReadinessCard projectId={currentProjectId} />
-              <SettingsCard title="项目 AI 设置">
+              <LibraryManagementCard />
+
+              {currentProjectId != null ? (
+                <SettingsCard title="当前项目状态摘要">
+                  <div className="py-3 flex items-center justify-between gap-3">
+                    <p className="text-body-sm text-mute">
+                      项目级 AI、Embedding、Planner 配置已迁移到独立设置分区。
+                    </p>
+                    <Link
+                      to={`/projects/${currentProjectId}/settings/vision-ai`}
+                      className="px-3 py-1.5 text-body-sm rounded-md border border-hairline text-ink hover:bg-secondary-bg transition-colors"
+                    >
+                      打开项目设置
+                    </Link>
+                  </div>
+                </SettingsCard>
+              ) : (
+                <SettingsCard title="当前项目状态摘要">
+                  <div className="py-3 text-body-sm text-mute">
+                    请先选择项目后查看项目级配置与就绪状态。
+                  </div>
+                </SettingsCard>
+              )}
+
+              {isLoading && (
+                <div className="flex items-center gap-2 text-mute py-12 justify-center">
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                  <span className="text-body-sm">加载中…</span>
+                </div>
+              )}
+
+              {isError && (
+                <div className="flex items-center gap-2 text-mute py-12 justify-center">
+                  <AlertCircle className="w-5 h-5" />
+                  <span className="text-body-sm">无法加载设置，请检查 API 服务</span>
+                </div>
+              )}
+
+              {data && (
+                <div className="space-y-4">
+                  <SettingsCard title="路径映射与系统配置">
+                    <SettingRow label="Host Path" value={data.host_photo_library_path} />
+                    <SettingRow label="Container Path" value={data.photo_library_path} />
+                  </SettingsCard>
+
+                  <SettingsCard title="Worker 配置">
+                    <SettingRow label="最大重试次数" value={data.ai_max_retries} />
+                  </SettingsCard>
+                </div>
+              )}
+            </>
+          )}
+
+          {activeSection === "monitoring" && (
+            <>
+              <SystemHealthCard />
+              {currentProjectId != null && <ProjectReadinessCard projectId={currentProjectId} />}
+              <SettingsCard title="日志入口">
                 <div className="py-3 flex items-center justify-between gap-3">
-                  <p className="text-body-sm text-mute">进入当前项目的模型配置、Prompt 版本与测试区。</p>
+                  <p className="text-body-sm text-mute">需要查看详细日志级别和实时 debug 配置，请进入 Debug 页。</p>
                   <Link
-                    to={`/projects/${currentProjectId}/settings/ai`}
+                    to="/settings/debug"
                     className="px-3 py-1.5 text-body-sm rounded-md border border-hairline text-ink hover:bg-secondary-bg transition-colors"
                   >
-                    打开项目 AI 配置
+                    打开 Debug / 日志
                   </Link>
                 </div>
               </SettingsCard>
             </>
           )}
 
-          {currentProjectId == null && (
-            <SettingsCard title="项目 AI 设置">
-              <div className="py-3 text-body-sm text-mute">
-                请先选择项目后查看项目级配置与就绪状态。
-              </div>
-            </SettingsCard>
-          )}
-
-          {isLoading && (
-            <div className="flex items-center gap-2 text-mute py-12 justify-center">
-              <Loader2 className="w-5 h-5 animate-spin" />
-              <span className="text-body-sm">加载中…</span>
-            </div>
-          )}
-
-          {isError && (
-            <div className="flex items-center gap-2 text-mute py-12 justify-center">
-              <AlertCircle className="w-5 h-5" />
-              <span className="text-body-sm">无法加载设置，请检查 API 服务</span>
-            </div>
-          )}
-
-          {data && (
-            <div className="space-y-4">
-              <SettingsCard title="AI 模型 (llama-server)">
-                <SettingRow label="API Base URL" value={data.openai_base_url} />
-                <SettingRow label="文本模型" value={data.openai_model} />
-                <SettingRow label="视觉模型" value={data.openai_vision_model} />
-              </SettingsCard>
-
-              <SettingsCard title="Worker 配置">
-                <SettingRow label="最大重试次数" value={data.ai_max_retries} />
-              </SettingsCard>
-            </div>
-          )}
-        </>
-      )}
+          {activeSection === "debug" && <DebugLogSettingsCard />}
+        </section>
+      </div>
     </main>
   );
 }

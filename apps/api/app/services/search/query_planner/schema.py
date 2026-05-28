@@ -1,9 +1,29 @@
 """Pydantic schema for LLM query planner output."""
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, Dict, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+
+def _coerce_empty_list_to_none(cls: Any, data: Any) -> Any:
+    """Replace empty list values with None for Optional scalar fields.
+
+    LLMs sometimes output [] instead of null for nullable str/int/bool fields.
+    Only coerces fields whose declared annotation is NOT a list type.
+    """
+    if not isinstance(data, dict):
+        return data
+    result = dict(data)
+    for field_name, field_info in cls.model_fields.items():
+        val = result.get(field_name)
+        if isinstance(val, list) and len(val) == 0:
+            ann = field_info.annotation
+            origin = getattr(ann, "__origin__", None)
+            # Keep as empty list only if the field is itself a list type
+            if origin is not list:
+                result[field_name] = None
+    return result
 
 
 class PlannerTerms(BaseModel):
@@ -39,6 +59,11 @@ class PlannerFilters(BaseModel):
     weather: Optional[str] = None
     time_of_day: Optional[str] = None
 
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_lists(cls, data: Any) -> Any:
+        return _coerce_empty_list_to_none(cls, data)
+
 
 class PlannerMetadataFilters(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -56,6 +81,11 @@ class PlannerMetadataFilters(BaseModel):
     place_terms: list[str] = Field(default_factory=list)
     metadata_only: bool = False
     matched_metadata_terms: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_lists(cls, data: Any) -> Any:
+        return _coerce_empty_list_to_none(cls, data)
 
 
 class PlannerCoreFacetEvidence(BaseModel):

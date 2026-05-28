@@ -8,6 +8,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Dict, List, Literal, Optional
 
+from ...config import settings as global_settings
+
 SearchMode = Literal["keyword", "vector", "hybrid"]
 
 # ── Default weight constants ───────────────────────────────────────────────────
@@ -120,11 +122,11 @@ class EffectiveSearchSettings:
     query_understanding_base_pack: str = "lifestyle_default"
     query_understanding_extension_packs: List[str] = field(default_factory=list)
     # LLM query planner controls (configured via search_quality_settings JSONB).
-    query_planner_enabled: bool = False
+    query_planner_enabled: bool = True
     query_planner_provider: str = "llama-server"
-    query_planner_endpoint_url: str = ""
+    query_planner_endpoint_url: str = global_settings.query_planner_base_url
     query_planner_api_key: str = ""
-    query_planner_model_name: str = ""
+    query_planner_model_name: str = global_settings.query_planner_alias
     query_planner_temperature: float = 0.0
     query_planner_top_p: float = 0.8
     query_planner_max_tokens: int = 700

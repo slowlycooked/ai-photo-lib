@@ -250,6 +250,80 @@ class ProjectQueryPlannerTestEndpointE2ETest(unittest.TestCase):
         self.assertTrue(str(body["planner_debug"].get("fallback_reason", "")).startswith("planner_error:"))
         self.assertIn("intent", body["parsed_query_plan"])
 
+    def test_query_planner_test_endpoint_normalizes_empty_list_scalars(self) -> None:
+        llm_json = """
+        {
+          "intent": "search",
+          "search_mode": "semantic",
+          "normalized_query": "动物",
+          "semantic_query_text": "关于动物的图像内容",
+          "terms": {
+            "exact": ["动物"],
+            "expanded": ["宠物", "野生动物"],
+            "support": [],
+            "broad": [],
+            "negative": []
+          },
+          "facets": {
+            "object": ["动物"],
+            "scene": [],
+            "activity": [],
+            "people": [],
+            "weather": [],
+            "time": [],
+            "location": []
+          },
+          "filters": {
+            "has_animals": true,
+            "weather": [],
+            "time_of_day": []
+          },
+          "metadata_filters": {
+            "year": [],
+            "month": [],
+            "season": [],
+            "camera_make": [],
+            "camera_model": [],
+            "place_terms": [],
+            "matched_metadata_terms": []
+          },
+          "concept_terms": ["动物"],
+          "semantic_tags": ["动物"],
+          "core_facets": ["object"],
+          "core_facet_evidence": {
+            "positive_terms": ["动物"],
+            "negative_terms": []
+          },
+          "query_constraints": {
+            "requires_visual_evidence": true,
+            "allow_weak_only_match": false,
+            "min_evidence_level": "high",
+            "query_core_facets": ["object"]
+          },
+          "confidence": 0.95,
+          "fallback_reason": ""
+        }
+        """
+        with patch(
+            "app.services.search.query_planner.llm_query_planner.call_chat_completion",
+            return_value=llm_json,
+        ):
+            res = self.client.post(
+                "/projects/1/query-planner-settings/test",
+                json={"query": "动物"},
+            )
+
+        self.assertEqual(res.status_code, 200)
+        body = res.json()
+        self.assertFalse(body["planner_debug"].get("used_fallback"))
+        self.assertEqual(body["parsed_query_plan"]["filters"].get("weather"), None)
+        self.assertEqual(body["parsed_query_plan"]["filters"].get("time_of_day"), None)
+        self.assertEqual(body["parsed_query_plan"]["metadata_filters"].get("year"), None)
+        self.assertEqual(body["parsed_query_plan"]["metadata_filters"].get("month"), None)
+        self.assertEqual(body["parsed_query_plan"]["metadata_filters"].get("season"), None)
+        self.assertEqual(body["parsed_query_plan"]["metadata_filters"].get("camera_make"), None)
+        self.assertEqual(body["parsed_query_plan"]["metadata_filters"].get("camera_model"), None)
+
     def test_query_planner_test_endpoint_fallback_on_missing_config(self) -> None:
         with self._engine.begin() as conn:
             conn.execute(
