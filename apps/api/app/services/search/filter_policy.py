@@ -21,19 +21,6 @@ from .types import (
 # Normal vector threshold for support-assisted C (below vector_strict_score)
 _VECTOR_NORMAL_THRESHOLD = 0.32
 
-# For queries with time/lighting core facets (e.g. "夜景", "夜晚"),
-# require at least one of these positive evidence terms in AI tags/caption.
-_NIGHT_CORE_POSITIVE: frozenset[str] = frozenset({
-    "夜晚", "夜色", "夜景", "晚上", "夜间", "黑夜",
-    "灯光", "霓虹", "路灯", "暗光", "长曝光",
-    "night", "nighttime", "evening", "dark",
-})
-# Negative evidence terms that indicate daytime/bright conditions
-_NIGHT_CORE_NEGATIVE: frozenset[str] = frozenset({
-    "白天", "日间", "阳光", "晴天", "蓝天", "日照",
-    "sunlight", "daytime", "sunny", "bright",
-})
-
 _INDOOR_CORE_POSITIVE: frozenset[str] = frozenset({
     "室内", "屋内", "室内场景", "房间", "客厅", "卧室", "厨房", "餐厅",
     "家具", "沙发", "床", "椅子", "桌子", "书架", "柜子", "台灯",
@@ -334,11 +321,18 @@ def core_facet_passes(
     if "time" not in core_facets and "lighting" not in core_facets:
         return True, ""
 
-    is_night_query = any(
-        k in {"夜景", "夜晚", "晚上", "黑夜", "夜间", "夜色"}
-        for k in query_plan.matched_keys
+    core_facet_evidence = query_plan.core_facet_evidence or {}
+    positive_terms = frozenset(
+        str(term).lower().strip()
+        for term in (core_facet_evidence.get("positive_terms") or [])
+        if str(term).strip()
     )
-    if not is_night_query:
+    negative_terms = frozenset(
+        str(term).lower().strip()
+        for term in (core_facet_evidence.get("negative_terms") or [])
+        if str(term).strip()
+    )
+    if not positive_terms and not negative_terms:
         return True, ""
 
     require_core = getattr(settings, "require_core_facet_match", False)
@@ -365,8 +359,8 @@ def core_facet_passes(
         all_text.extend(tag.lower() for tag in tags)
     combined_text = " ".join(all_text)
 
-    has_positive = any(term in combined_text for term in _NIGHT_CORE_POSITIVE)
-    has_negative = any(term in combined_text for term in _NIGHT_CORE_NEGATIVE)
+    has_positive = any(term in combined_text for term in positive_terms)
+    has_negative = any(term in combined_text for term in negative_terms)
 
     if allow_vector_only and candidate.vector_score >= settings.vector_strict_score:
         if has_negative and not has_positive:

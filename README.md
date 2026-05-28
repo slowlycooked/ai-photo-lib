@@ -49,12 +49,12 @@ People Recognition 已经从“只读调试阶段”进入“人工纠错闭环�
 - 人工确认 / 排除 / 移动 / 合并 / 拆分 / 代表头像设置
 - 待确认队列与批量操作
 - 搜索页的人物过滤、多人共现搜索，以及合照/单人照/待确认/未命名人物筛选
+- 任务中心的暂停 / 取消 / 子任务错误照片明细查看（项目级任务）
 - 照片详情页的人脸调试区块
 - `/projects/:projectId/people` 人物页与 `/projects/:projectId/people/review` 复核页
 
 当前还没有完成：
 
-- 任务中心的暂停 / 取消 / 子任务错误照片明细查看
 - 人脸重匹配的自动触发策略与更细粒度范围控制
 - People 模块后端与前端的大文件拆分收敛
 - 前端 People / Search / Tasks 主路径自动化测试补齐
@@ -72,6 +72,7 @@ People Recognition 已经从“只读调试阶段”进入“人工纠错闭环�
 | Face clustering | 稳定 | 聚类任务已纳入项目级队列、状态跟踪与 Review Pending 主链路。 |
 | Face rematch unknown | 稳定 | 未知人脸重匹配已纳入项目级队列，并保留人工确认结果。 |
 | Search face filters | 稳定 | 合照、单人照、待确认和未命名人物筛选已接入搜索主链路。 |
+| Task controls | 稳定 | 任务中心已支持项目级暂停、取消与失败明细查看。 |
 | System health check | 稳定 | `/health/system` 与设置页“运行状态”可用于部署检查和排错。 |
 | Prompt 测试 | 稳定 | Prompt 测试支持项目模板、测试图片、解析结果与本地历史回看。 |
 | Embedding rebuild | 稳定 | 已支持项目级状态检查、按范围重建与任务入队。 |
@@ -120,9 +121,9 @@ People Recognition 已经从“只读调试阶段”进入“人工纠错闭环�
    - 前端 `/scan` 已是 legacy redirect，后端仍保留 legacy embedding rebuild endpoint。
    - 建议给 legacy endpoint 加明确 sunset 版本，并在 release checklist 中检查“主流程不调用 legacy API”。
 
-4. 任务体系补齐暂停 / 取消 / 错误明细
-   - README 已明确任务中心还缺暂停、取消、子任务错误照片明细。
-   - 建议优先补 ProjectTask 状态机和错误明细读模型，再做前端交互；这会直接提升长任务可运维性。
+4. 任务体系体验继续收敛
+   - 任务中心已具备暂停、取消、失败明细三项核心能力。
+   - 建议下一步补齐按任务类型筛选、批量操作与告警联动，提升长任务运维效率。
 
 5. 前端瘦身和页面拆分
    - `SettingsPage.tsx`、`SearchResultGrid.tsx`、`PersonDetailPanel.tsx`、`TasksPage.tsx`、`PhotoCard.tsx` 体积偏大。

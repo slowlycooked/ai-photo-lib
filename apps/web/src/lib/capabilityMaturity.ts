@@ -5,6 +5,7 @@ export interface CapabilityMaturityItem {
     | "face_clustering"
     | "face_rematch_unknown"
     | "search_face_filters"
+    | "task_controls"
     | "system_health_check"
     | "prompt_testing"
     | "embedding_rebuild";
@@ -36,12 +37,19 @@ export const CAPABILITY_MATURITY: Record<CapabilityMaturityItem["key"], Capabili
     levelLabel: "稳定",
     hint: "合照、单人照、待确认和未命名人物筛选已接入搜索主链路。",
   },
+  task_controls: {
+    key: "task_controls",
+    capability: "Task controls",
+    level: "stable",
+    levelLabel: "稳定",
+    hint: "任务中心已支持项目级暂停、取消与失败明细查看。",
+  },
   system_health_check: {
     key: "system_health_check",
     capability: "System health check",
     level: "stable",
     levelLabel: "稳定",
-    hint: "运行状态检查覆盖 DB、migration、路径、模型配置和 auth 配置。",
+    hint: "/health/system 与设置页“运行状态”可用于部署检查和排错。",
   },
   prompt_testing: {
     key: "prompt_testing",
@@ -63,6 +71,7 @@ export const CAPABILITY_MATURITY_LIST: CapabilityMaturityItem[] = [
   CAPABILITY_MATURITY.face_clustering,
   CAPABILITY_MATURITY.face_rematch_unknown,
   CAPABILITY_MATURITY.search_face_filters,
+  CAPABILITY_MATURITY.task_controls,
   CAPABILITY_MATURITY.system_health_check,
   CAPABILITY_MATURITY.prompt_testing,
   CAPABILITY_MATURITY.embedding_rebuild,

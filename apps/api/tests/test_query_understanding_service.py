@@ -254,3 +254,40 @@ def test_query_understanding_behavior_contract_folder_filter_agnostic():
     plan = understand_query("夜景")
     assert plan.filters.get("location") is None
     assert plan.search_mode == "hybrid"
+
+
+def test_query_understanding_architecture_base_pack_changes_rule_domain():
+    default_plan = understand_query("立面")
+    architecture_plan = understand_query(
+        "立面",
+        rule_base_pack_id="architecture_default",
+    )
+
+    assert default_plan.intent == "semantic_photo_search"
+    assert architecture_plan.intent in {"activity_search", "location_search"}
+    assert "立面" in architecture_plan.matched_keys
+
+
+def test_query_understanding_extension_pack_expands_terms():
+    plan = understand_query(
+        "trail",
+        rule_extension_pack_ids=["travel_outdoor_extension"],
+    )
+
+    expanded = {term.lower() for term in plan.expanded_terms}
+    assert plan.intent == "activity_search"
+    assert "trail" in plan.matched_keys
+    assert "步道" in expanded
+
+
+def test_query_understanding_unknown_rule_pack_fails_explicitly():
+    with pytest.raises(ValueError, match="Unknown query understanding pack"):
+        understand_query("dog", rule_base_pack_id="missing_pack")
+
+
+def test_query_understanding_night_query_emits_pack_driven_core_facet_evidence():
+    plan = understand_query("夜景")
+
+    assert "night" not in plan.core_facet_evidence  # shape guard: plain dict payload only
+    assert "灯光" in plan.core_facet_evidence["positive_terms"]
+    assert "白天" in plan.core_facet_evidence["negative_terms"]

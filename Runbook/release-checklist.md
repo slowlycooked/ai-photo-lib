@@ -7,6 +7,7 @@
 | Face clustering | 稳定 | 聚类任务已纳入项目级队列、状态跟踪与 Review Pending 主链路。 |
 | Face rematch unknown | 稳定 | 未知人脸重匹配已纳入项目级队列，并保留人工确认结果。 |
 | Search face filters | 稳定 | 合照、单人照、待确认和未命名人物筛选已接入搜索主链路。 |
+| Task controls | 稳定 | 任务中心已支持项目级暂停、取消与失败明细查看。 |
 | System health check | 稳定 | `/health/system` 与设置页“运行状态”可用于部署检查和排错。 |
 | Prompt 测试 | 稳定 | Prompt 测试支持项目模板、测试图片、解析结果与本地历史回看。 |
 | Embedding rebuild | 稳定 | 已支持项目级状态检查、按范围重建与任务入队。 |
@@ -30,7 +31,7 @@
 
 ## 4. 产品化主链路验收
 
-- Tasks：项目级 scan / face scan / unknown clustering / unknown rematch 可入队、可查询状态。
+- Tasks：项目级 scan / face scan / unknown clustering / unknown rematch 可入队、可查询状态，并支持暂停、取消与失败明细查看。
 - People：人工确认/排除/移动后 prototype rebuild 保持有效；unknown rematch 不覆盖人工确认结果。
 - Search：人脸筛选入口可用，结果返回 `face_count`，普通搜索在缺少人脸表时可降级。
 - Settings：运行状态页能展示 DB、migration、路径、模型配置、auth 配置等检查结果。

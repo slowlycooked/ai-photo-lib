@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from ...config import settings as global_settings
 from ...models.ai import ProjectEmbeddingSettings
 from ...models.project_search_settings import ProjectSearchSettings
+from ..query_understanding_rule_packs import DEFAULT_BASE_PACK_ID, normalise_extension_pack_ids
 from .types import (
     DEFAULT_KEYWORD_FIELD_WEIGHTS,
     DEFAULT_OCR_VECTOR_FIELD_WEIGHTS,
@@ -48,6 +49,11 @@ def _normalise_concept_taxonomy(raw: object) -> list[dict]:
                 "children": [
                     str(v).strip()
                     for v in (item.get("children") or [])
+                    if str(v).strip()
+                ],
+                "child_negative_contexts": [
+                    str(v).strip()
+                    for v in (item.get("child_negative_contexts") or [])
                     if str(v).strip()
                 ],
                 "aliases": [
@@ -95,6 +101,8 @@ class SearchSettingsResolver:
             enable_structured_filters=False,
             enable_semantic_tag_boost=False,
             concept_taxonomy=[],
+            query_understanding_base_pack=DEFAULT_BASE_PACK_ID,
+            query_understanding_extension_packs=[],
         )
 
     # ── Main resolver ─────────────────────────────────────────────────────────
@@ -142,6 +150,14 @@ class SearchSettingsResolver:
                 require_core_facet_match=bool(_q.get("require_core_facet_match", False)),
                 allow_vector_only_for_facet_query=bool(_q.get("allow_vector_only_for_facet_query", True)),
                 concept_taxonomy=_normalise_concept_taxonomy(_q.get("concept_taxonomy")),
+                query_understanding_base_pack=str(
+                    _q.get("query_understanding_base_pack") or DEFAULT_BASE_PACK_ID
+                ).strip(),
+                query_understanding_extension_packs=list(
+                    normalise_extension_pack_ids(
+                        _q.get("query_understanding_extension_packs")
+                    )
+                ),
             )
 
         # 2. project_embedding_settings (partial fallback — vector weights only)
@@ -181,6 +197,8 @@ class SearchSettingsResolver:
             enable_structured_filters=False,
             enable_semantic_tag_boost=False,
             concept_taxonomy=[],
+            query_understanding_base_pack=DEFAULT_BASE_PACK_ID,
+            query_understanding_extension_packs=[],
         )
 
 

@@ -20,6 +20,8 @@ def resolve_search_query_plan(
             query,
             project_id=project_id,
             concept_taxonomy=settings.concept_taxonomy,
+            rule_base_pack_id=settings.query_understanding_base_pack,
+            rule_extension_pack_ids=settings.query_understanding_extension_packs,
         )
 
     return SearchQueryPlan(

@@ -43,6 +43,7 @@ class ReleaseChecklistConsistencyTest(unittest.TestCase):
                 "Face clustering",
                 "Face rematch unknown",
                 "Search face filters",
+                "Task controls",
                 "System health check",
                 "Prompt 测试",
                 "Embedding rebuild",
@@ -53,7 +54,7 @@ class ReleaseChecklistConsistencyTest(unittest.TestCase):
     def test_release_docs_and_frontend_maturity_catalog_are_consistent(self) -> None:
         catalog_path = _REPO_ROOT / "apps/web/src/lib/capabilityMaturity.ts"
         readme_path = _REPO_ROOT / "README.md"
-        checklist_path = _REPO_ROOT / "Design-document/release-checklist.md"
+        checklist_path = _REPO_ROOT / "Runbook/release-checklist.md"
 
         catalog = self._parse_maturity_from_ts(catalog_path.read_text(encoding="utf-8"))
         readme = self._parse_maturity_from_markdown(readme_path.read_text(encoding="utf-8"))
@@ -63,6 +64,7 @@ class ReleaseChecklistConsistencyTest(unittest.TestCase):
             "Face clustering": "稳定",
             "Face rematch unknown": "稳定",
             "Search face filters": "稳定",
+            "Task controls": "稳定",
             "System health check": "稳定",
             "Prompt 测试": "稳定",
             "Embedding rebuild": "稳定",

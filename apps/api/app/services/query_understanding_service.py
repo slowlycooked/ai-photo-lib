@@ -35,12 +35,14 @@ import calendar
 import re
 from dataclasses import dataclass, field
 from datetime import date
-from typing import Any, Dict, Literal, Optional, TypedDict
+from typing import Any, Dict, Literal, Optional
 
-from .query_understanding_dictionaries import ANIMAL_TERMS_TIERED, WEATHER_TERMS_TIERED
-
-_WEATHER_TERMS_TIERED = WEATHER_TERMS_TIERED
-_ANIMAL_TERMS_TIERED = ANIMAL_TERMS_TIERED
+from .query_understanding_rule_packs import (
+    DEFAULT_BASE_PACK_ID,
+    QueryUnderstandingRuleSet,
+    build_rule_set,
+    normalise_extension_pack_ids,
+)
 
 # ── Chinese query noise cleaning ──────────────────────────────────────────────
 #
@@ -106,28 +108,12 @@ _ANIMAL_CATEGORY_TERMS: frozenset[str] = frozenset({
     "动物", "宠物", "野生动物", "动物园", "小动物", "animal",
 })
 
-_DEFAULT_CONCEPT_TAXONOMY: list[dict[str, object]] = [
-    {
-        "concept": "动物",
-        "children": ["猫", "狗", "鸟", "马", "鹿", "兔子", "鱼"],
-        # 这些复合词/短语包含子词字符但语义是活动而非动物，跳过 child_matched 判断
-        "child_negative_contexts": [
-            "钓鱼", "垂钓", "捕鱼", "捞鱼", "摸鱼",  # 含"鱼"但是活动
-            "骑马", "赛马", "驯马", "马术", "马路", "马上",  # 含"马"但非马实体
-            "斗鸡", "放鸟", "牧羊",
-        ],
-        "aliases": ["animal", "小动物", "宠物"],
-        "positive_fields": ["object_tags", "search_keywords", "raw_result.animals"],
-        "negative_terms": [],
-        "recall_policy": "expand_children",
-        "evidence_policy": "require_child_entity_or_high_vector",
-    }
-]
-
-
-def _normalise_concept_taxonomy(raw: Optional[list[dict]]) -> list[dict[str, object]]:
+def _normalise_concept_taxonomy(
+    raw: Optional[list[dict]],
+    default_taxonomy: list[dict[str, object]],
+) -> list[dict[str, object]]:
     if not raw:
-        return list(_DEFAULT_CONCEPT_TAXONOMY)
+        return list(default_taxonomy)
 
     normalized: list[dict[str, object]] = []
     for item in raw:
@@ -168,7 +154,7 @@ def _normalise_concept_taxonomy(raw: Optional[list[dict]]) -> list[dict[str, obj
                 "evidence_policy": str(item.get("evidence_policy") or "").strip(),
             }
         )
-    return normalized or list(_DEFAULT_CONCEPT_TAXONOMY)
+    return normalized or list(default_taxonomy)
 
 
 def _child_matches_with_context(
@@ -475,454 +461,26 @@ def _parse_metadata_filters(original_query: str) -> dict:
     return result
 
 
-# ── Tiered expansion dictionaries ─────────────────────────────────────────────
-#
-# Each entry may contain these keys (all optional except expanded/broad):
-#   expanded  — strong synonyms that can independently recall (scored × 0.7)
-#   support   — context clues that need combination (scored × 0.5, no recall)
-#   broad     — weak category terms, boost-only (scored × 0.3, no recall)
-#   negative  — conflicting terms; photos matching these are penalised
-#   facets    — list of primary intent facets (e.g. ["time", "lighting"])
+@dataclass(frozen=True)
+class _RuleRuntime:
+    outdoor_terms_tiered: Dict[str, Any]
+    weather_terms_tiered: Dict[str, Any]
+    animal_terms_tiered: Dict[str, Any]
+    people_terms_tiered: Dict[str, Any]
+    food_terms_tiered: Dict[str, Any]
+    travel_terms_tiered: Dict[str, Any]
+    indoor_terms_tiered: Dict[str, Any]
+    outdoor_keys: set[str]
+    weather_keys: set[str]
+    animal_keys: set[str]
+    people_keys: set[str]
+    food_keys: set[str]
+    travel_keys: set[str]
+    indoor_keys: set[str]
+    activity_phrase_overrides: frozenset[str]
+    all_tiered_dicts_with_facets: list[tuple[str, Dict[str, Any]]]
 
-class _TieredTerms(TypedDict, total=False):
-    expanded: list
-    support: list
-    broad: list
-    negative: list
-    facets: list
 
-
-_OUTDOOR_TERMS_TIERED: Dict[str, Any] = {
-    "爬山": {
-        "expanded": ["登山", "徒步", "山路"],
-        "support": ["山顶", "山峰", "登山杖", "背包"],
-        "broad": ["户外", "自然"],
-        "negative": ["室内", "城市", "海边"],
-        "facets": ["activity", "scene"],
-    },
-    "登山": {
-        "expanded": ["爬山", "徒步", "山路"],
-        "support": ["山顶", "山峰", "背包"],
-        "broad": ["户外", "自然"],
-        "negative": ["室内", "城市"],
-        "facets": ["activity", "scene"],
-    },
-    "徒步": {
-        "expanded": ["登山", "山路", "步道"],
-        "support": ["背包", "登山杖"],
-        "broad": ["户外", "自然"],
-        "facets": ["activity"],
-    },
-    "户外": {
-        "expanded": ["自然", "山地", "步道", "草地", "树林"],
-        "broad": [],
-        "facets": ["scene"],
-    },
-    "山顶": {
-        "expanded": ["山峰", "登山", "爬山"],
-        "broad": ["远眺"],
-        "facets": ["scene"],
-    },
-    "山峰": {
-        "expanded": ["山顶", "登山", "爬山"],
-        "broad": ["壮观"],
-        "facets": ["scene"],
-    },
-    "步道": {
-        "expanded": ["徒步", "山路", "登山"],
-        "broad": ["户外"],
-        "facets": ["activity"],
-    },
-    "远足": {
-        "expanded": ["徒步", "户外", "山路"],
-        "broad": ["背包"],
-        "facets": ["activity"],
-    },
-    "hiking": {
-        "expanded": ["徒步", "登山"],
-        "support": ["背包", "登山杖"],
-        "broad": ["户外", "山路"],
-        "facets": ["activity"],
-    },
-    "山": {
-        "expanded": ["山地", "山峰", "山顶"],
-        "broad": ["户外", "自然"],
-        "facets": ["scene"],
-    },
-    # ── 水上/户外活动 ─────────────────────────────────────────────────────
-    "钓鱼": {
-        "expanded": ["垂钓", "钓竿", "鱼竿", "渔夫", "渔船", "海钓"],
-        "support": ["湖边", "河边", "水边", "码头", "钓场", "鱼线"],
-        "broad": ["户外", "水"],
-        "negative": [],
-        "facets": ["activity", "scene"],
-    },
-    "垂钓": {
-        "expanded": ["钓鱼", "钓竿", "鱼竿"],
-        "support": ["湖边", "河边", "水边"],
-        "broad": ["户外"],
-        "facets": ["activity"],
-    },
-    "露营": {
-        "expanded": ["野营", "帐篷", "营地", "篝火"],
-        "support": ["户外", "野外", "背包", "炊具"],
-        "broad": ["自然"],
-        "negative": [],
-        "facets": ["activity", "scene"],
-    },
-    "骑行": {
-        "expanded": ["骑车", "自行车", "单车", "公路车", "山地车"],
-        "support": ["头盔", "车道", "自行车道"],
-        "broad": ["户外", "运动"],
-        "negative": [],
-        "facets": ["activity"],
-    },
-    "滑雪": {
-        "expanded": ["雪地", "雪场", "滑雪场", "滑板"],
-        "support": ["雪坡", "雪橇", "雪地靴", "滑雪板"],
-        "broad": ["冬季", "户外"],
-        "negative": [],
-        "facets": ["activity", "scene"],
-    },
-    "打球": {
-        "expanded": ["篮球", "足球", "羽毛球", "网球", "乒乓球", "排球"],
-        "support": ["球场", "球队", "运动场"],
-        "broad": ["户外", "运动"],
-        "negative": [],
-        "facets": ["activity"],
-    },
-    "游泳": {
-        "expanded": ["游泳池", "泳池", "泳装", "潜水"],
-        "support": ["水下", "蛙泳", "自由泳"],
-        "broad": ["户外", "运动"],
-        "negative": [],
-        "facets": ["activity"],
-    },
-    "摸鱼": {
-        # 网络用语：指偷懒/划水，非真实钓鱼，不应触发 animal_search
-        "expanded": ["划水", "偷懒", "摆烂", "摸鱼人"],
-        "support": [],
-        "broad": ["工作", "办公"],
-        "negative": ["垂钓", "钓竿", "渔船", "钓鱼"],
-        "facets": ["activity"],
-    },
-    "骑马": {
-        "expanded": ["马术", "赛马", "骑手", "马场"],
-        "support": ["马背", "马鞍"],
-        "broad": ["户外", "运动"],
-        "negative": [],
-        "facets": ["activity"],
-    },
-}
-
-_PEOPLE_TERMS_TIERED: Dict[str, Any] = {
-    "爸爸": {
-        "expanded": ["父亲", "家庭", "亲子", "合影"],
-        "broad": ["人物", "生活"],
-        "facets": ["people"],
-    },
-    "父亲": {
-        "expanded": ["爸爸", "家庭", "亲子", "合影"],
-        "broad": ["人物", "生活"],
-        "facets": ["people"],
-    },
-    "妈妈": {
-        "expanded": ["母亲", "家庭", "亲子", "合影"],
-        "broad": ["人物", "生活"],
-        "facets": ["people"],
-    },
-    "母亲": {
-        "expanded": ["妈妈", "家庭", "亲子", "合影"],
-        "broad": ["人物", "生活"],
-        "facets": ["people"],
-    },
-    "女儿": {
-        "expanded": ["孩子", "儿童", "亲子", "家庭"],
-        "broad": ["人物", "生活"],
-        "facets": ["people"],
-    },
-    "儿子": {
-        "expanded": ["孩子", "儿童", "亲子", "家庭"],
-        "broad": ["人物", "生活"],
-        "facets": ["people"],
-    },
-    "亲子": {
-        "expanded": ["家庭", "父母", "孩子", "合影"],
-        "broad": ["人物", "生活"],
-        "facets": ["people"],
-    },
-    "一家人": {
-        "expanded": ["家庭", "亲子", "合影", "多人"],
-        "broad": ["人物", "生活"],
-        "facets": ["people"],
-    },
-    "孩子": {
-        "expanded": ["小孩", "儿童", "玩耍"],
-        "broad": ["童年", "幼儿"],
-        "facets": ["people"],
-    },
-    "儿童": {
-        "expanded": ["孩子", "小孩", "玩耍"],
-        "broad": [],
-        "facets": ["people"],
-    },
-    "小孩": {
-        "expanded": ["孩子", "儿童", "玩耍"],
-        "broad": [],
-        "facets": ["people"],
-    },
-    "婴儿": {
-        "expanded": ["宝宝", "小孩"],
-        "broad": ["孩子"],
-        "facets": ["people"],
-    },
-    "老人": {
-        "expanded": ["长辈", "老年人"],
-        "broad": [],
-        "facets": ["people"],
-    },
-    "全家福": {
-        "expanded": ["家庭", "合影", "多人"],
-        "broad": [],
-        "facets": ["people", "group_photo"],
-    },
-    "自拍": {
-        "expanded": ["selfie", "单人"],
-        "broad": [],
-        "facets": ["people"],
-    },
-    "合照": {
-        "expanded": ["合影", "集体照", "多人", "多人合照", "人物"],
-        "broad": ["集体"],
-        "facets": ["people", "group_photo"],
-    },
-    "合影": {
-        "expanded": ["合照", "集体照", "多人", "多人合影"],
-        "broad": ["集体"],
-        "facets": ["people", "group_photo"],
-    },
-    "集体照": {
-        "expanded": ["合照", "合影", "多人", "集体"],
-        "broad": ["人物"],
-        "facets": ["people", "group_photo"],
-    },
-    "多人": {
-        "expanded": ["合照", "合影", "集体照", "多人合照", "多人合影"],
-        "broad": ["人物", "集体"],
-        "facets": ["people", "group_photo"],
-    },
-    "多人合照": {
-        "expanded": ["合照", "合影", "多人", "集体照"],
-        "broad": ["人物", "集体"],
-        "facets": ["people", "group_photo"],
-    },
-    "多人合影": {
-        "expanded": ["合影", "合照", "多人", "集体照"],
-        "broad": ["人物", "集体"],
-        "facets": ["people", "group_photo"],
-    },
-    "group photo": {
-        "expanded": ["合照", "合影", "集体照", "多人"],
-        "broad": ["人物"],
-        "facets": ["people", "group_photo"],
-    },
-}
-
-_FOOD_TERMS_TIERED: Dict[str, Any] = {
-    "食物": {
-        "expanded": ["美食", "饭菜", "料理"],
-        "broad": ["餐厅"],
-        "facets": ["object"],
-    },
-    "美食": {
-        "expanded": ["食物", "料理", "饭菜"],
-        "broad": [],
-        "facets": ["object"],
-    },
-    "餐厅": {
-        "expanded": ["饭馆", "美食", "食物"],
-        "broad": [],
-        "facets": ["scene", "object"],
-    },
-    "咖啡": {
-        "expanded": ["coffee", "咖啡馆"],
-        "broad": ["饮品"],
-        "facets": ["object"],
-    },
-    "甜点": {
-        "expanded": ["蛋糕", "甜食"],
-        "broad": ["美食"],
-        "facets": ["object"],
-    },
-}
-
-_TRAVEL_TERMS_TIERED: Dict[str, Any] = {
-    "旅行": {
-        "expanded": ["旅游", "出行"],
-        "broad": ["风景", "景点"],
-        "facets": ["activity", "scene"],
-    },
-    "旅游": {
-        "expanded": ["旅行", "出行"],
-        "broad": ["风景", "景点"],
-        "facets": ["activity", "scene"],
-    },
-    "海边": {
-        "expanded": ["海滩", "海岸", "海浪", "大海", "沙滩"],
-        "broad": [],
-        "negative": ["室内", "山地"],
-        "facets": ["scene", "location"],
-    },
-    "沙滩": {
-        "expanded": ["海边", "海滩", "海浪"],
-        "broad": ["大海"],
-        "facets": ["scene", "location"],
-    },
-    "大海": {
-        "expanded": ["海洋", "海边", "海浪"],
-        "broad": ["海景"],
-        "facets": ["scene", "location"],
-    },
-    "海洋": {
-        "expanded": ["大海", "海边", "海浪"],
-        "broad": [],
-        "facets": ["scene"],
-    },
-    "城市": {
-        "expanded": ["街道", "建筑", "都市"],
-        "support": ["地标", "广场", "商业区"],
-        "broad": ["行人"],
-        "facets": ["scene", "location"],
-    },
-    "建筑": {
-        "expanded": ["楼房", "高楼", "城市"],
-        "broad": ["结构"],
-        "facets": ["scene", "object"],
-    },
-    "风景": {
-        "expanded": ["自然", "景色"],
-        "broad": ["户外"],
-        "facets": ["scene"],
-    },
-    # Time / lighting terms — core facets: time + lighting
-    "日落": {
-        "expanded": ["黄昏", "夕阳", "晚霞"],
-        "support": ["橙色天空", "暖色调"],
-        "broad": ["天空"],
-        "negative": ["夜晚", "夜色", "黑暗"],
-        "facets": ["time", "lighting"],
-    },
-    "日出": {
-        "expanded": ["清晨", "朝霞", "晨光"],
-        "support": ["橙色天空", "暖色调"],
-        "broad": ["天空"],
-        "negative": ["夜晚", "夜色", "黑暗"],
-        "facets": ["time", "lighting"],
-    },
-    "夜景": {
-        "expanded": ["夜晚", "夜色", "晚上", "夜间"],
-        "support": ["灯光", "霓虹", "路灯", "暗光", "长曝光"],
-        "broad": ["城市", "建筑", "街道", "地标"],
-        "negative": ["白天", "日间", "阳光", "晴天"],
-        "facets": ["time", "lighting"],
-    },
-    "夜晚": {
-        "expanded": ["夜景", "夜色", "晚上", "夜间", "黑夜"],
-        "support": ["灯光", "霓虹", "路灯", "暗光", "长曝光"],
-        "broad": ["城市", "建筑", "街道"],
-        "negative": ["白天", "日间", "阳光", "晴天"],
-        "facets": ["time", "lighting"],
-    },
-    "晚上": {
-        "expanded": ["夜晚", "夜景", "夜色", "夜间"],
-        "support": ["灯光", "霓虹", "路灯", "暗光"],
-        "broad": ["城市", "街道"],
-        "negative": ["白天", "日间", "阳光", "晴天"],
-        "facets": ["time", "lighting"],
-    },
-    "黑夜": {
-        "expanded": ["夜晚", "夜景", "夜色"],
-        "support": ["灯光", "暗光", "路灯"],
-        "broad": ["城市"],
-        "negative": ["白天", "阳光", "晴天"],
-        "facets": ["time", "lighting"],
-    },
-    "夜间": {
-        "expanded": ["夜晚", "夜景", "夜色", "晚上"],
-        "support": ["灯光", "霓虹", "路灯", "暗光"],
-        "broad": ["城市", "建筑"],
-        "negative": ["白天", "日间", "阳光", "晴天"],
-        "facets": ["time", "lighting"],
-    },
-    "sunset": {
-        "expanded": ["日落", "黄昏", "夕阳", "晚霞"],
-        "broad": [],
-        "negative": ["夜晚", "黑暗"],
-        "facets": ["time", "lighting"],
-    },
-    "sunrise": {
-        "expanded": ["日出", "清晨", "朝霞"],
-        "broad": [],
-        "negative": ["夜晚", "黑暗"],
-        "facets": ["time", "lighting"],
-    },
-}
-
-_INDOOR_TERMS_TIERED: Dict[str, Any] = {
-    "室内": {
-        "expanded": ["客厅", "卧室", "厨房", "房间", "家具"],
-        "support": ["家", "家庭", "屋内"],
-        "broad": [],
-        "negative": ["户外", "自然", "海边"],
-        "facets": ["scene"],
-    },
-    "家": {
-        "expanded": ["室内", "客厅", "卧室"],
-        "support": ["家庭", "生活"],
-        "broad": ["家具"],
-        "facets": ["scene"],
-    },
-    "客厅": {
-        "expanded": ["沙发", "室内"],
-        "broad": ["家"],
-        "facets": ["scene"],
-    },
-    "卧室": {
-        "expanded": ["床", "室内"],
-        "broad": ["家"],
-        "facets": ["scene"],
-    },
-    "厨房": {
-        "expanded": ["烹饪", "室内"],
-        "broad": ["家"],
-        "facets": ["scene"],
-    },
-    "图书馆": {
-        "expanded": ["书架", "阅读"],
-        "broad": ["室内"],
-        "facets": ["scene"],
-    },
-    "博物馆": {
-        "expanded": ["展览", "展品"],
-        "broad": ["室内"],
-        "facets": ["scene"],
-    },
-}
-
-_OUTDOOR_KEYS = set(_OUTDOOR_TERMS_TIERED.keys())
-_WEATHER_KEYS = set(_WEATHER_TERMS_TIERED.keys())
-_ANIMAL_KEYS = set(_ANIMAL_TERMS_TIERED.keys())
-
-# 复合词优先保护集：包含动物字符但语义是活动，不应触发 animal_search
-# 所有条目已在 _OUTDOOR_TERMS_TIERED 中定义，此处仅作为显式白名单使用
-_ACTIVITY_PHRASE_OVERRIDES: frozenset[str] = frozenset({
-    "钓鱼", "垂钓", "捕鱼", "捞鱼",  # 钓鱼活动（含"鱼"）
-    "摸鱼",                             # 网络用语：偷懒（含"鱼"）
-    "骑马", "赛马", "驯马", "马术",    # 马术活动（含"马"）
-    "斗鸡", "放鸟", "牧羊",            # 其他活动（含动物字）
-    "骑行", "骑车",                     # 骑行（"骑"字不含动物，保险起见加入）
-})
-_PEOPLE_KEYS = set(_PEOPLE_TERMS_TIERED.keys())
 _GROUP_PHOTO_KEYS: set[str] = {
     "合照",
     "合影",
@@ -933,23 +491,44 @@ _GROUP_PHOTO_KEYS: set[str] = {
     "group photo",
     "全家福",
 }
-_FOOD_KEYS = set(_FOOD_TERMS_TIERED.keys())
-_TRAVEL_KEYS = set(_TRAVEL_TERMS_TIERED.keys())
-_INDOOR_KEYS = set(_INDOOR_TERMS_TIERED.keys())
 
-# (primary_facet, dict) — used to derive intent_facets in understand_query
-_ALL_TIERED_DICTS_WITH_FACETS: list = [
-    ("activity", _OUTDOOR_TERMS_TIERED),
-    ("weather", _WEATHER_TERMS_TIERED),
-    ("object", _ANIMAL_TERMS_TIERED),
-    ("people", _PEOPLE_TERMS_TIERED),
-    ("object", _FOOD_TERMS_TIERED),
-    ("scene", _TRAVEL_TERMS_TIERED),
-    ("scene", _INDOOR_TERMS_TIERED),
-]
 
-# Backward-compat tuple (order preserved)
-_ALL_TIERED_DICTS: tuple = tuple(d for _, d in _ALL_TIERED_DICTS_WITH_FACETS)
+def _build_rule_runtime(rule_set: QueryUnderstandingRuleSet) -> _RuleRuntime:
+    tiered_terms = rule_set.tiered_terms
+    outdoor_terms_tiered = dict(tiered_terms.get("outdoor") or {})
+    weather_terms_tiered = dict(tiered_terms.get("weather") or {})
+    animal_terms_tiered = dict(tiered_terms.get("animal") or {})
+    people_terms_tiered = dict(tiered_terms.get("people") or {})
+    food_terms_tiered = dict(tiered_terms.get("food") or {})
+    travel_terms_tiered = dict(tiered_terms.get("travel") or {})
+    indoor_terms_tiered = dict(tiered_terms.get("indoor") or {})
+
+    return _RuleRuntime(
+        outdoor_terms_tiered=outdoor_terms_tiered,
+        weather_terms_tiered=weather_terms_tiered,
+        animal_terms_tiered=animal_terms_tiered,
+        people_terms_tiered=people_terms_tiered,
+        food_terms_tiered=food_terms_tiered,
+        travel_terms_tiered=travel_terms_tiered,
+        indoor_terms_tiered=indoor_terms_tiered,
+        outdoor_keys=set(outdoor_terms_tiered.keys()),
+        weather_keys=set(weather_terms_tiered.keys()),
+        animal_keys=set(animal_terms_tiered.keys()),
+        people_keys=set(people_terms_tiered.keys()),
+        food_keys=set(food_terms_tiered.keys()),
+        travel_keys=set(travel_terms_tiered.keys()),
+        indoor_keys=set(indoor_terms_tiered.keys()),
+        activity_phrase_overrides=rule_set.activity_phrase_overrides,
+        all_tiered_dicts_with_facets=[
+            ("activity", outdoor_terms_tiered),
+            ("weather", weather_terms_tiered),
+            ("object", animal_terms_tiered),
+            ("people", people_terms_tiered),
+            ("object", food_terms_tiered),
+            ("scene", travel_terms_tiered),
+            ("scene", indoor_terms_tiered),
+        ],
+    )
 
 
 # ── Penalize tags for semantic_tag_boost (per weather sub-type) ──────────────
@@ -1000,7 +579,7 @@ def _is_ocr_intent(query: str) -> bool:
     return False
 
 
-def _classify_intent(query: str) -> str:
+def _classify_intent(query: str, runtime_rules: _RuleRuntime) -> str:
     if _is_ocr_intent(query):
         return "ocr_text_search"
     q_lower = query.lower()
@@ -1009,24 +588,24 @@ def _classify_intent(query: str) -> str:
     # 必须在 animal 之前：防止"钓鱼/骑马/摸鱼"等复合词因包含"鱼/马"单字
     # 而被误判为 animal_search。
     # 先检查显式活动短语保护集（含动物字的复合活动词）
-    if any(phrase in q_lower for phrase in _ACTIVITY_PHRASE_OVERRIDES):
+    if any(phrase in q_lower for phrase in runtime_rules.activity_phrase_overrides):
         return "activity_search"
-    for key in _OUTDOOR_KEYS:
+    for key in runtime_rules.outdoor_keys:
         if key in q_lower:
             return "activity_search"
-    for key in _ANIMAL_KEYS:
+    for key in runtime_rules.animal_keys:
         if key in q_lower:
             return "animal_search"
-    for key in _WEATHER_KEYS:
+    for key in runtime_rules.weather_keys:
         if key in q_lower:
             return "weather_search"
     if any(k in q_lower for k in _GROUP_PHOTO_KEYS):
         return "group_photo_search"
-    if any(k in q_lower for k in _PEOPLE_KEYS):
+    if any(k in q_lower for k in runtime_rules.people_keys):
         return "people_search"
-    if any(k in q_lower for k in _FOOD_KEYS):
+    if any(k in q_lower for k in runtime_rules.food_keys):
         return "food_search"
-    if any(k in q_lower for k in _TRAVEL_KEYS):
+    if any(k in q_lower for k in runtime_rules.travel_keys):
         return "location_search"
     return "semantic_photo_search"
 
@@ -1044,7 +623,7 @@ def _recommended_profile(intent: str) -> str:
 
 # ── Filter inference ──────────────────────────────────────────────────────────
 
-def _infer_filters(query: str, intent: str) -> dict:
+def _infer_filters(query: str, intent: str, runtime_rules: _RuleRuntime) -> dict:
     filters: dict = {
         "people_count_min": None,
         "people_count_max": None,
@@ -1072,9 +651,9 @@ def _infer_filters(query: str, intent: str) -> dict:
                 filters["weather"] = "snow"
                 break
 
-    if any(k in q_lower for k in _OUTDOOR_KEYS):
+    if any(k in q_lower for k in runtime_rules.outdoor_keys):
         filters["indoor_outdoor"] = "outdoor"
-    elif any(k in q_lower for k in _INDOOR_KEYS):
+    elif any(k in q_lower for k in runtime_rules.indoor_keys):
         filters["indoor_outdoor"] = "indoor"
 
     if any(k in q_lower for k in ("日落", "sunset", "黄昏", "夕阳")):
@@ -1152,6 +731,8 @@ class SearchQueryPlan:
     concept_terms: list[str] = field(default_factory=list)
     # facets that are "core" (derived from exact/strong match to a tiered key)
     core_facets: list[str] = field(default_factory=list)
+    # Pack-derived positive / negative evidence terms consumed by filter policy.
+    core_facet_evidence: dict = field(default_factory=dict)
     # ── EXIF / Photo metadata filters (parsed from query) ─────────────────────
     metadata_filters: dict = field(default_factory=dict)
 
@@ -1213,6 +794,8 @@ def understand_query(
     query: str,
     project_id: Optional[int] = None,
     concept_taxonomy: Optional[list[dict]] = None,
+    rule_base_pack_id: Optional[str] = None,
+    rule_extension_pack_ids: Optional[list[str]] = None,
 ) -> SearchQueryPlan:
     """Analyse a user search query and return a structured plan (rule engine)."""
     original_query = query.strip()
@@ -1223,10 +806,17 @@ def understand_query(
     # spurious exact_terms (e.g. "的照片" should not end up in exact_terms).
     query = _clean_chinese_query(original_query)
 
+    extension_pack_ids = normalise_extension_pack_ids(rule_extension_pack_ids)
+    rule_set = build_rule_set(
+        str(rule_base_pack_id or DEFAULT_BASE_PACK_ID).strip(),
+        extension_pack_ids,
+    )
+    runtime_rules = _build_rule_runtime(rule_set)
+
     search_mode: Literal["keyword", "vector", "hybrid"] = (
         "keyword" if _is_ocr_intent(query) else "hybrid"
     )
-    intent = _classify_intent(query)
+    intent = _classify_intent(query, runtime_rules)
     profile = _recommended_profile(intent)
     q_lower = query.lower()
 
@@ -1243,8 +833,10 @@ def understand_query(
     # intent_facets: facet → list of associated terms from the query
     facet_terms: dict[str, list[str]] = {}  # facet → terms
     matched_keys_set: list[str] = []  # tiered dict keys found in cleaned query
+    core_facet_positive_set: set[str] = set()
+    core_facet_negative_set: set[str] = set()
 
-    for primary_facet, tiered_dict in _ALL_TIERED_DICTS_WITH_FACETS:
+    for primary_facet, tiered_dict in runtime_rules.all_tiered_dicts_with_facets:
         for key, tiers in tiered_dict.items():
             if key not in q_lower:
                 continue
@@ -1283,9 +875,18 @@ def understand_query(
                 tl = t.lower()
                 if tl not in exact_lower:
                     negative_set.add(t)
+            for t in tiers.get("core_facet_positive", []):
+                if str(t).strip():
+                    core_facet_positive_set.add(str(t).strip())
+            for t in tiers.get("core_facet_negative", []):
+                if str(t).strip():
+                    core_facet_negative_set.add(str(t).strip())
 
     # Apply project-level concept taxonomy after built-in dictionaries.
-    normalized_concept_taxonomy = _normalise_concept_taxonomy(concept_taxonomy)
+    normalized_concept_taxonomy = _normalise_concept_taxonomy(
+        concept_taxonomy,
+        default_taxonomy=list(rule_set.concept_taxonomy),
+    )
     concept_terms = _apply_concept_taxonomy(
         query_lower=q_lower,
         exact_lower=exact_lower,
@@ -1337,13 +938,20 @@ def understand_query(
     core_facets: list[str] = []
     if intent_facets:
         # facets from entries whose key appears in exact_terms are "core"
-        for primary_facet, tiered_dict in _ALL_TIERED_DICTS_WITH_FACETS:
+        for primary_facet, tiered_dict in runtime_rules.all_tiered_dicts_with_facets:
             for key, tiers in tiered_dict.items():
                 if key in q_lower:
                     entry_facets_core = tiers.get("facets", [primary_facet])
                     for fct in entry_facets_core:
                         if fct not in core_facets:
                             core_facets.append(fct)
+
+    core_facet_evidence: dict = {}
+    if core_facet_positive_set or core_facet_negative_set:
+        core_facet_evidence = {
+            "positive_terms": sorted(core_facet_positive_set),
+            "negative_terms": sorted(core_facet_negative_set),
+        }
 
     # Normalised query = all terms joined (for vector embedding)
     all_for_norm: list[str] = exact_terms + expanded_terms + support_terms + broad_terms
@@ -1372,7 +980,7 @@ def understand_query(
         "location_search": ["地点", "旅行", "风景"],
     }.get(intent, [])
 
-    filters = _infer_filters(query, intent)
+    filters = _infer_filters(query, intent, runtime_rules)
     penalize_tags = _build_penalize_tags(intent, filters)
 
     # query_constraints: per-query evidence requirements (can be project-overridden later)
@@ -1407,6 +1015,7 @@ def understand_query(
         matched_keys=matched_keys_set,
         concept_terms=concept_terms,
         core_facets=core_facets,
+        core_facet_evidence=core_facet_evidence,
         metadata_filters=metadata_filters,
     )
 

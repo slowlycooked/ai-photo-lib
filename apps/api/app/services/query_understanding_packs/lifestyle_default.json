@@ -1,0 +1,124 @@
+{
+  "pack_id": "lifestyle_default",
+  "description": "Default rule pack for daily-life photo libraries.",
+  "activity_phrase_overrides": [
+    "钓鱼",
+    "垂钓",
+    "捕鱼",
+    "捞鱼",
+    "摸鱼",
+    "骑马",
+    "赛马",
+    "驯马",
+    "马术",
+    "斗鸡",
+    "放鸟",
+    "牧羊",
+    "骑行",
+    "骑车"
+  ],
+  "tiered_terms": {
+    "outdoor": {
+      "爬山": {"expanded": ["登山", "徒步", "山路"], "support": ["山顶", "山峰", "登山杖", "背包"], "broad": ["户外", "自然"], "negative": ["室内", "城市", "海边"], "facets": ["activity", "scene"]},
+      "登山": {"expanded": ["爬山", "徒步", "山路"], "support": ["山顶", "山峰", "背包"], "broad": ["户外", "自然"], "negative": ["室内", "城市"], "facets": ["activity", "scene"]},
+      "徒步": {"expanded": ["登山", "山路", "步道"], "support": ["背包", "登山杖"], "broad": ["户外", "自然"], "facets": ["activity"]},
+      "户外": {"expanded": ["自然", "山地", "步道", "草地", "树林"], "broad": [], "facets": ["scene"]},
+      "步道": {"expanded": ["徒步", "山路", "登山"], "broad": ["户外"], "facets": ["activity"]},
+      "hiking": {"expanded": ["徒步", "登山"], "support": ["背包", "登山杖"], "broad": ["户外", "山路"], "facets": ["activity"]},
+      "钓鱼": {"expanded": ["垂钓", "钓竿", "鱼竿", "渔夫", "渔船", "海钓"], "support": ["湖边", "河边", "水边", "码头", "钓场", "鱼线"], "broad": ["户外", "水"], "facets": ["activity", "scene"]},
+      "垂钓": {"expanded": ["钓鱼", "钓竿", "鱼竿"], "support": ["湖边", "河边", "水边"], "broad": ["户外"], "facets": ["activity"]},
+      "露营": {"expanded": ["野营", "帐篷", "营地", "篝火"], "support": ["户外", "野外", "背包", "炊具"], "broad": ["自然"], "facets": ["activity", "scene"]},
+      "骑行": {"expanded": ["骑车", "自行车", "单车", "公路车", "山地车"], "support": ["头盔", "车道", "自行车道"], "broad": ["户外", "运动"], "facets": ["activity"]},
+      "摸鱼": {"expanded": ["划水", "偷懒", "摆烂", "摸鱼人"], "support": [], "broad": ["工作", "办公"], "negative": ["垂钓", "钓竿", "渔船", "钓鱼"], "facets": ["activity"]},
+      "骑马": {"expanded": ["马术", "赛马", "骑手", "马场"], "support": ["马背", "马鞍"], "broad": ["户外", "运动"], "facets": ["activity"]}
+    },
+    "weather": {
+      "下雨": {"expanded": ["雨天", "雨滴", "雨中"], "support": ["雨伞", "雨衣", "积水", "湿地面", "淋湿"], "broad": ["阴天", "多云", "潮湿"], "negative": ["晴天", "阳光", "干燥", "沙地"], "facets": ["weather"]},
+      "下雨天": {"expanded": ["下雨", "雨天", "雨滴", "雨中"], "support": ["雨伞", "雨衣", "积水", "湿地面", "淋湿"], "broad": ["阴天", "多云", "灰蒙蒙", "潮湿"], "negative": ["晴天", "阳光", "沙地", "干燥"], "facets": ["weather"]},
+      "雨天": {"expanded": ["下雨", "雨滴", "雨中"], "support": ["雨伞", "雨衣", "积水", "湿地面", "淋湿"], "broad": ["阴天", "多云", "潮湿"], "negative": ["晴天", "阳光"], "facets": ["weather"]},
+      "下雪": {"expanded": ["雪天", "雪地", "雪花", "积雪"], "broad": ["寒冷", "冬天"], "negative": ["晴天", "阳光", "海边", "夏天"], "facets": ["weather"]},
+      "雪天": {"expanded": ["下雪", "雪地", "积雪", "雪花"], "broad": ["寒冷", "冬天"], "negative": ["晴天", "阳光", "海边", "夏天"], "facets": ["weather"]},
+      "晴天": {"expanded": ["阳光", "蓝天", "白云"], "broad": ["户外"], "negative": ["阴天", "多云", "雨天", "雨伞", "积水"], "facets": ["weather", "lighting"]},
+      "rain": {"expanded": ["下雨", "雨天", "雨滴", "雨中"], "support": ["雨伞", "雨衣", "积水", "湿地面", "淋湿"], "broad": ["阴天", "多云", "潮湿", "灰蒙蒙"], "negative": ["晴天", "阳光", "沙地"], "facets": ["weather"]},
+      "snow": {"expanded": ["下雪", "雪天", "雪地", "积雪", "雪花"], "broad": ["寒冷", "冬天"], "negative": ["晴天", "阳光", "海边", "夏天"], "facets": ["weather"]},
+      "sunny": {"expanded": ["晴天", "阳光", "蓝天", "白云"], "broad": ["户外"], "negative": ["阴天", "多云", "雨天"], "facets": ["weather", "lighting"]}
+    },
+    "animal": {
+      "猫": {"expanded": ["小猫", "猫咪"], "broad": ["宠物", "动物"], "negative": ["狗", "小狗", "狗狗", "兔子"], "facets": ["object"]},
+      "狗": {"expanded": ["小狗", "狗狗"], "broad": ["宠物", "动物"], "negative": ["猫", "小猫", "猫咪"], "facets": ["object"]},
+      "鸟": {"expanded": ["小鸟", "飞鸟", "禽鸟"], "broad": ["动物"], "facets": ["object"]},
+      "动物": {"expanded": ["猫", "狗", "鸟", "马", "鹿", "兔子", "鱼"], "broad": ["宠物", "野生动物", "动物园"], "facets": ["object"]},
+      "宠物": {"expanded": ["猫", "狗", "兔子"], "broad": ["动物"], "facets": ["object"]},
+      "小动物": {"expanded": ["猫", "狗", "兔子", "鸟"], "broad": ["宠物", "动物"], "facets": ["object"]},
+      "野生动物": {"expanded": ["动物", "野外"], "broad": ["自然", "户外"], "facets": ["object", "scene"]},
+      "动物园": {"expanded": ["动物", "野生动物"], "broad": [], "facets": ["scene", "object"]},
+      "马": {"expanded": ["骏马", "骑马"], "broad": ["动物"], "facets": ["object"]},
+      "鹿": {"expanded": ["梅花鹿", "野鹿"], "broad": ["动物"], "facets": ["object"]},
+      "兔子": {"expanded": ["小兔"], "broad": ["宠物", "动物"], "negative": ["猫", "狗"], "facets": ["object"]},
+      "鱼": {"expanded": ["水族"], "broad": ["海洋", "动物"], "facets": ["object"]},
+      "animal": {"expanded": ["动物", "猫", "狗", "鸟"], "broad": ["宠物", "野生动物"], "facets": ["object"]},
+      "cat": {"expanded": ["猫", "小猫"], "broad": ["宠物", "动物"], "negative": ["狗", "dog"], "facets": ["object"]},
+      "dog": {"expanded": ["狗", "小狗"], "broad": ["宠物", "动物"], "negative": ["猫", "cat"], "facets": ["object"]}
+    },
+    "people": {
+      "爸爸": {"expanded": ["父亲", "家庭", "亲子", "合影"], "broad": ["人物", "生活"], "facets": ["people"]},
+      "父亲": {"expanded": ["爸爸", "家庭", "亲子", "合影"], "broad": ["人物", "生活"], "facets": ["people"]},
+      "妈妈": {"expanded": ["母亲", "家庭", "亲子", "合影"], "broad": ["人物", "生活"], "facets": ["people"]},
+      "母亲": {"expanded": ["妈妈", "家庭", "亲子", "合影"], "broad": ["人物", "生活"], "facets": ["people"]},
+      "女儿": {"expanded": ["孩子", "儿童", "亲子", "家庭"], "broad": ["人物", "生活"], "facets": ["people"]},
+      "儿子": {"expanded": ["孩子", "儿童", "亲子", "家庭"], "broad": ["人物", "生活"], "facets": ["people"]},
+      "合照": {"expanded": ["合影", "集体照", "多人", "多人合照", "人物"], "broad": ["集体"], "facets": ["people", "group_photo"]},
+      "合影": {"expanded": ["合照", "集体照", "多人", "多人合影"], "broad": ["集体"], "facets": ["people", "group_photo"]},
+      "集体照": {"expanded": ["合照", "合影", "多人", "集体"], "broad": ["人物"], "facets": ["people", "group_photo"]},
+      "多人": {"expanded": ["合照", "合影", "集体照", "多人合照", "多人合影"], "broad": ["人物", "集体"], "facets": ["people", "group_photo"]},
+      "多人合照": {"expanded": ["合照", "合影", "多人", "集体照"], "broad": ["人物", "集体"], "facets": ["people", "group_photo"]},
+      "多人合影": {"expanded": ["合影", "合照", "多人", "集体照"], "broad": ["人物", "集体"], "facets": ["people", "group_photo"]},
+      "group photo": {"expanded": ["合照", "合影", "集体照", "多人"], "broad": ["人物"], "facets": ["people", "group_photo"]},
+      "全家福": {"expanded": ["家庭", "合影", "多人"], "broad": [], "facets": ["people", "group_photo"]}
+    },
+    "food": {
+      "食物": {"expanded": ["美食", "饭菜", "料理"], "broad": ["餐厅"], "facets": ["object"]},
+      "美食": {"expanded": ["食物", "料理", "饭菜"], "broad": [], "facets": ["object"]},
+      "餐厅": {"expanded": ["饭馆", "美食", "食物"], "broad": [], "facets": ["scene", "object"]},
+      "咖啡": {"expanded": ["coffee", "咖啡馆"], "broad": ["饮品"], "facets": ["object"]},
+      "甜点": {"expanded": ["蛋糕", "甜食"], "broad": ["美食"], "facets": ["object"]}
+    },
+    "travel": {
+      "旅行": {"expanded": ["旅游", "出行"], "broad": ["风景", "景点"], "facets": ["activity", "scene"]},
+      "旅游": {"expanded": ["旅行", "出行"], "broad": ["风景", "景点"], "facets": ["activity", "scene"]},
+      "海边": {"expanded": ["海滩", "海岸", "海浪", "大海", "沙滩"], "broad": [], "negative": ["室内", "山地"], "facets": ["scene", "location"]},
+      "沙滩": {"expanded": ["海边", "海滩", "海浪"], "broad": ["大海"], "facets": ["scene", "location"]},
+      "大海": {"expanded": ["海洋", "海边", "海浪"], "broad": ["海景"], "facets": ["scene", "location"]},
+      "城市": {"expanded": ["街道", "建筑", "都市"], "support": ["地标", "广场", "商业区"], "broad": ["行人"], "facets": ["scene", "location"]},
+      "建筑": {"expanded": ["楼房", "高楼", "城市"], "broad": ["结构"], "facets": ["scene", "object"]},
+      "风景": {"expanded": ["自然", "景色"], "broad": ["户外"], "facets": ["scene"]},
+      "日落": {"expanded": ["黄昏", "夕阳", "晚霞"], "support": ["橙色天空", "暖色调"], "broad": ["天空"], "negative": ["夜晚", "夜色", "黑暗"], "facets": ["time", "lighting"]},
+      "日出": {"expanded": ["清晨", "朝霞", "晨光"], "support": ["橙色天空", "暖色调"], "broad": ["天空"], "negative": ["夜晚", "夜色", "黑暗"], "facets": ["time", "lighting"]},
+      "夜景": {"expanded": ["夜晚", "夜色", "晚上", "夜间"], "support": ["灯光", "霓虹", "路灯", "暗光", "长曝光"], "broad": ["城市", "建筑", "街道", "地标"], "negative": ["白天", "日间", "阳光", "晴天"], "facets": ["time", "lighting"], "core_facet_positive": ["夜晚", "夜色", "夜景", "晚上", "夜间", "黑夜", "灯光", "霓虹", "路灯", "暗光", "长曝光", "night", "nighttime", "evening", "dark"], "core_facet_negative": ["白天", "日间", "阳光", "晴天", "蓝天", "日照", "sunlight", "daytime", "sunny", "bright"]},
+      "夜晚": {"expanded": ["夜景", "夜色", "晚上", "夜间", "黑夜"], "support": ["灯光", "霓虹", "路灯", "暗光", "长曝光"], "broad": ["城市", "建筑", "街道"], "negative": ["白天", "日间", "阳光", "晴天"], "facets": ["time", "lighting"], "core_facet_positive": ["夜晚", "夜色", "夜景", "晚上", "夜间", "黑夜", "灯光", "霓虹", "路灯", "暗光", "长曝光", "night", "nighttime", "evening", "dark"], "core_facet_negative": ["白天", "日间", "阳光", "晴天", "蓝天", "日照", "sunlight", "daytime", "sunny", "bright"]},
+      "sunset": {"expanded": ["日落", "黄昏", "夕阳", "晚霞"], "broad": [], "negative": ["夜晚", "黑暗"], "facets": ["time", "lighting"]},
+      "sunrise": {"expanded": ["日出", "清晨", "朝霞"], "broad": [], "negative": ["夜晚", "黑暗"], "facets": ["time", "lighting"]}
+    },
+    "indoor": {
+      "室内": {"expanded": ["客厅", "卧室", "厨房", "房间", "家具"], "support": ["家", "家庭", "屋内"], "broad": [], "negative": ["户外", "自然", "海边"], "facets": ["scene"]},
+      "家": {"expanded": ["室内", "客厅", "卧室"], "support": ["家庭", "生活"], "broad": ["家具"], "facets": ["scene"]},
+      "客厅": {"expanded": ["沙发", "室内"], "broad": ["家"], "facets": ["scene"]},
+      "卧室": {"expanded": ["床", "室内"], "broad": ["家"], "facets": ["scene"]},
+      "厨房": {"expanded": ["烹饪", "室内"], "broad": ["家"], "facets": ["scene"]},
+      "图书馆": {"expanded": ["书架", "阅读"], "broad": ["室内"], "facets": ["scene"]},
+      "博物馆": {"expanded": ["展览", "展品"], "broad": ["室内"], "facets": ["scene"]}
+    }
+  },
+  "concept_taxonomy": [
+    {
+      "concept": "动物",
+      "children": ["猫", "狗", "鸟", "马", "鹿", "兔子", "鱼"],
+      "child_negative_contexts": ["钓鱼", "垂钓", "捕鱼", "捞鱼", "摸鱼", "骑马", "赛马", "驯马", "马术", "马路", "马上", "斗鸡", "放鸟", "牧羊"],
+      "aliases": ["animal", "小动物", "宠物"],
+      "positive_fields": ["object_tags", "search_keywords", "raw_result.animals"],
+      "negative_terms": [],
+      "recall_policy": "expand_children",
+      "evidence_policy": "require_child_entity_or_high_vector"
+    }
+  ]
+}

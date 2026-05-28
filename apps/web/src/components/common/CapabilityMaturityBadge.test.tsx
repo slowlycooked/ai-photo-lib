@@ -17,12 +17,13 @@ describe("CapabilityMaturityBadge", () => {
       </div>
     );
 
-    expect(screen.getByText("Face clustering · 实验")).toBeInTheDocument();
-    expect(screen.getByText("Prompt 测试 · 待收敛")).toBeInTheDocument();
+    expect(screen.getByText("Face clustering · 稳定")).toBeInTheDocument();
+    expect(screen.getByText("Task controls · 稳定")).toBeInTheDocument();
+    expect(screen.getByText("Prompt 测试 · 稳定")).toBeInTheDocument();
     expect(screen.getByText("Embedding rebuild · 稳定")).toBeInTheDocument();
 
-    expect(screen.getByText(/算法和参数仍在持续打磨/)).toBeInTheDocument();
-    expect(screen.getByText(/关键链路可用/)).toBeInTheDocument();
+    expect(screen.getByText(/状态跟踪与 Review Pending 主链路/)).toBeInTheDocument();
+    expect(screen.getByText(/暂停、取消与失败明细查看/)).toBeInTheDocument();
     expect(screen.getByText(/支持项目级重建与状态跟踪/)).toBeInTheDocument();
   });
 });

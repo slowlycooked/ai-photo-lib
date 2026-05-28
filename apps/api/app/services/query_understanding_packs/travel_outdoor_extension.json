@@ -1,0 +1,30 @@
+{
+  "pack_id": "travel_outdoor_extension",
+  "description": "Optional extension pack for stronger travel and outdoor recall.",
+  "tiered_terms": {
+    "outdoor": {
+      "trail": {"expanded": ["步道", "徒步", "山路"], "support": ["登山杖", "背包", "补给"], "broad": ["户外", "自然"], "facets": ["activity", "scene"]},
+      "露营车": {"expanded": ["房车", "营地", "露营"], "support": ["野外", "篝火"], "broad": ["旅行"], "facets": ["activity", "scene"]}
+    },
+    "weather": {},
+    "animal": {},
+    "people": {},
+    "food": {},
+    "travel": {
+      "公路旅行": {"expanded": ["自驾", "road trip", "沿途"], "support": ["车窗", "公路", "风景"], "broad": ["旅行"], "facets": ["activity", "scene"]},
+      "露营": {"expanded": ["野营", "营地", "帐篷"], "support": ["篝火", "户外", "山地"], "broad": ["旅行", "自然"], "facets": ["activity", "scene"]}
+    },
+    "indoor": {}
+  },
+  "concept_taxonomy": [
+    {
+      "concept": "旅行",
+      "children": ["海边", "沙滩", "山地", "步道", "营地", "公路", "地标"],
+      "aliases": ["travel", "trip", "tour"],
+      "positive_fields": ["scene_tags", "search_keywords", "location_clues"],
+      "negative_terms": [],
+      "recall_policy": "expand_children",
+      "evidence_policy": "require_child_entity_or_high_vector"
+    }
+  ]
+}
