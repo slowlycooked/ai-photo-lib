@@ -65,6 +65,8 @@ export type {
   ProjectFaceSettings,
   ProjectFaceSettingsUpdate,
   ProjectListResponse,
+  ProjectReadinessCheck,
+  ProjectReadinessResponse,
   ProjectSearchSettings,
   ProjectSearchSettingsUpdate,
   ProjectUpdate,

@@ -28,7 +28,7 @@ function renderPage(initialEntry = "/tasks?tab=scan") {
     <MemoryRouter initialEntries={[initialEntry]}>
       <Routes>
         <Route path="/tasks" element={<TasksPage />} />
-        <Route path="/settings" element={<div>System Settings</div>} />
+        <Route path="/photos" element={<div>Photos Page</div>} />
         <Route path="/projects/:projectId/settings/ai" element={<div>Project AI Settings</div>} />
       </Routes>
     </MemoryRouter>,
@@ -74,7 +74,7 @@ describe("TasksPage", () => {
     expect(screen.getByText("Project AI Settings")).toBeInTheDocument();
   });
 
-  it("falls back to system settings when legacy ai-settings links open without a current project", () => {
+  it("falls back to photos page when legacy ai-settings links open without a current project", () => {
     useProjectContextMock.mockReturnValue({
       currentProjectId: null,
       currentProject: null,
@@ -82,6 +82,6 @@ describe("TasksPage", () => {
 
     renderPage("/tasks?tab=ai-settings");
 
-    expect(screen.getByText("System Settings")).toBeInTheDocument();
+    expect(screen.getByText("Photos Page")).toBeInTheDocument();
   });
 });

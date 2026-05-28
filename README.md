@@ -104,6 +104,7 @@ People Recognition 已经从“只读调试阶段”进入“人工纠错闭环�
 关键点：
 
 - `.env` 不要在两台机器之间直接复用，路径和暴露地址通常不同。
+- API 启动会检查 `.env` 中的受管配置键（如 `OPENAI_*`、`EMBEDDING_*`、`PHOTO_*`、`THUMBNAIL_*` 等）；若出现未知键会直接启动失败。非 API 受管范围（如 `WEB_*`）不在该失败策略内。
 - `PHOTO_LIBRARY_PATH`、`THUMBNAIL_PATH`、`POSTGRES_DATA_DIR` 都建议写绝对路径。
 - 如果未来切到第二台 Mac mini，只要新机器重新准备这些目录并填写新的 `.env` 即可。
 - `LOCATION_RESOLVER_PROVIDER=none` 表示只保存 GPS，不做地点名反查；需要地点搜索时再开启 provider。
@@ -435,6 +436,7 @@ curl -X POST "http://127.0.0.1:8000/projects/1/scan/reindex?scope=all"
 更详细的操作步骤见：
 
 - `Design-document/location-backfill-runbook.md`
+- `Design-document/scanner-failfast-runbook.md`
 
 ## 9. 当前保留的 Docker 文件
 

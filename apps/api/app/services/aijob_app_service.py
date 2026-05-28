@@ -34,11 +34,11 @@ from ..services.json_parser import parse_model_json_output
 from ..services.project_ai_service import (
     TASK_IMAGE_ANALYSIS,
     analyze_and_parse_with_strict_json_retry,
-    get_active_prompt_template,
-    get_or_create_project_ai_settings,
+    get_active_prompt_template_strict,
+    get_project_ai_settings_strict,
     render_analysis_prompt_parts,
 )
-from ..services.project_embedding_settings_service import resolve_embedding_settings
+from ..services.project_embedding_settings_service import resolve_embedding_settings_strict
 from ..services.thumbnail import generate_thumbnail
 from ..services.vlm_client import VLMRequestError, analyze_image
 from ..face.providers import FaceRecognitionProviderUnavailableError
@@ -62,6 +62,45 @@ def _merge_unique_str_list(*values: object) -> list[str]:
             text = str(item).strip()
             if text and text not in merged:
                 merged.append(text)
+    return merged
+
+
+def _merge_gps_into_location_clues(ai_clues: list[str], photo: Photo) -> list[str]:
+    """Merge GPS-derived location fields into AI location_clues.
+
+    The reverse-geocoded location (city, district, admin1, admin2, country_name)
+    represents ground-truth GPS data and must be included in keyword-searchable
+    location_clues so that photos are always findable by their actual location,
+    regardless of what the VLM identified visually.
+    """
+    merged = list(ai_clues)
+    seen = {t.strip() for t in merged if t.strip()}
+    for field_val in (
+        photo.city,
+        photo.district,
+        photo.admin2,
+        photo.admin1,
+        photo.country_name,
+    ):
+        if field_val:
+            token = field_val.strip()
+            if token and token not in seen:
+                merged.append(token)
+                seen.add(token)
+    return merged
+
+
+def _merge_location_into_search_keywords(
+    ai_keywords: list[str], location_clues: list[str]
+) -> list[str]:
+    """Ensure all location_clues tokens also appear in search_keywords."""
+    merged = list(ai_keywords)
+    seen = {t.strip() for t in merged if t.strip()}
+    for token in location_clues:
+        t = token.strip()
+        if t and t not in seen:
+            merged.append(t)
+            seen.add(t)
     return merged
 
 
@@ -185,8 +224,8 @@ class AIJobAppService:
         self, job: AIJob, photo: Photo, project_id: int
     ) -> None:
         try:
-            ai_settings = get_or_create_project_ai_settings(self._db, project_id)
-            prompt_template = get_active_prompt_template(
+            ai_settings = get_project_ai_settings_strict(self._db, project_id)
+            prompt_template = get_active_prompt_template_strict(
                 self._db,
                 project_id,
                 task_type=TASK_IMAGE_ANALYSIS,
@@ -269,8 +308,13 @@ class AIJobAppService:
                 object_tags=parsed.get("object_tags", []),
                 activity_tags=parsed.get("activity_tags", []),
                 quality_tags=parsed.get("quality_tags", []),
-                location_clues=parsed.get("location_clues", []),
-                search_keywords=parsed.get("search_keywords", []),
+                location_clues=_merge_gps_into_location_clues(
+                    parsed.get("location_clues", []), photo
+                ),
+                search_keywords=_merge_location_into_search_keywords(
+                    parsed.get("search_keywords", []),
+                    _merge_gps_into_location_clues(parsed.get("location_clues", []), photo),
+                ),
                 semantic_concepts=semantic_concepts,
                 people_count=parsed.get("people_count", 0),
                 confidence=parsed.get("confidence", 0.0),
@@ -280,19 +324,12 @@ class AIJobAppService:
             self._db.flush()
 
             try:
-                try:
-                    embed_cfg = resolve_embedding_settings(self._db, project_id)
-                    embed_endpoint = embed_cfg["endpoint_url"]
-                    embed_api_key = embed_cfg.get("api_key")
-                    embed_model = embed_cfg["model_name"]
-                    embed_timeout = embed_cfg.get("timeout_seconds")
-                    embed_document_prefix = embed_cfg.get("input_prefix_document")
-                except RuntimeError:
-                    embed_endpoint = ai_settings.endpoint_url
-                    embed_api_key = None
-                    embed_model = None
-                    embed_timeout = None
-                    embed_document_prefix = None
+                embed_cfg = resolve_embedding_settings_strict(self._db, project_id)
+                embed_endpoint = embed_cfg["endpoint_url"]
+                embed_api_key = embed_cfg.get("api_key")
+                embed_model = embed_cfg["model_name"]
+                embed_timeout = embed_cfg.get("timeout_seconds")
+                embed_document_prefix = embed_cfg.get("input_prefix_document")
                 upsert_photo_embeddings(
                     self._db,
                     project_id=project_id,
@@ -355,20 +392,12 @@ class AIJobAppService:
             return
 
         try:
-            try:
-                embed_cfg = resolve_embedding_settings(self._db, project_id)
-                embed_endpoint = embed_cfg["endpoint_url"]
-                embed_api_key = embed_cfg.get("api_key")
-                embed_model = embed_cfg["model_name"]
-                embed_timeout = embed_cfg.get("timeout_seconds")
-                embed_document_prefix = embed_cfg.get("input_prefix_document")
-            except RuntimeError:
-                ai_settings_for_embed = get_or_create_project_ai_settings(self._db, project_id)
-                embed_endpoint = ai_settings_for_embed.endpoint_url
-                embed_api_key = None
-                embed_model = None
-                embed_timeout = None
-                embed_document_prefix = None
+            embed_cfg = resolve_embedding_settings_strict(self._db, project_id)
+            embed_endpoint = embed_cfg["endpoint_url"]
+            embed_api_key = embed_cfg.get("api_key")
+            embed_model = embed_cfg["model_name"]
+            embed_timeout = embed_cfg.get("timeout_seconds")
+            embed_document_prefix = embed_cfg.get("input_prefix_document")
             upsert_photo_embeddings(
                 self._db,
                 project_id=project_id,

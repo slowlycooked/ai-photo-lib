@@ -27,7 +27,9 @@ from ..services.project_ai_service import (
     build_default_template,
     default_output_schema,
     get_active_prompt_template,
+    get_active_prompt_template_strict,
     get_or_create_project_ai_settings,
+    get_project_ai_settings_strict,
     render_analysis_prompt_parts,
 )
 from ..services.vlm_client import VLMRequestError, analyze_image
@@ -252,13 +254,16 @@ def test_project_prompt_template(
     if not photo:
         raise HTTPException(status_code=404, detail="Photo not found in project")
 
-    settings_row = get_or_create_project_ai_settings(db, project_id)
-    template = get_active_prompt_template(
-        db,
-        project_id,
-        task_type=TASK_IMAGE_ANALYSIS,
-        template_id=body.prompt_template_id,
-    )
+    try:
+        settings_row = get_project_ai_settings_strict(db, project_id)
+        template = get_active_prompt_template_strict(
+            db,
+            project_id,
+            task_type=TASK_IMAGE_ANALYSIS,
+            template_id=body.prompt_template_id,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     system_text, user_text = render_analysis_prompt_parts(
         photo=photo,

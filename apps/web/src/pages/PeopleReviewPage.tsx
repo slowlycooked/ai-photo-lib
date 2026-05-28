@@ -28,7 +28,7 @@ export function PeopleReviewPage() {
   } = usePeopleReviewPage();
 
   if (!Number.isFinite(routeProjectId) || routeProjectId <= 0) {
-    return <Navigate to="/people" replace />;
+    return <Navigate to="/photos" replace />;
   }
 
   return (

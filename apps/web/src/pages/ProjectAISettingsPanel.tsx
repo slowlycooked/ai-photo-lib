@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2, Save } from "lucide-react";
 import {
+  ApiError,
   api,
   type ProjectAISettingsUpdate,
 } from "@/api";
@@ -56,11 +57,23 @@ export function ProjectAISettingsPanel({ projectId }: { projectId: number }) {
   const [message, setMessage] = useState<string | null>(null);
   const [modelForm, setModelForm] = useState<ModelForm>(DEFAULT_MODEL_FORM);
 
-  const { data: settingsData, isLoading: settingsLoading } = useQuery({
+  const { data: settingsData, isLoading: settingsLoading, error: settingsError } = useQuery({
     queryKey: ["project-ai-settings", projectId],
     queryFn: () => api.projects.getAiSettings(projectId),
     staleTime: 30_000,
   });
+
+  const initSettingsMutation = useMutation({
+    mutationFn: () => api.projects.initAiSettings(projectId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["project-ai-settings", projectId] });
+      setMessage("已初始化项目 AI 配置，请继续完善模型参数并保存。");
+    },
+    onError: (err: Error) => setMessage(`初始化失败：${err.message}`),
+  });
+
+  const needsInitialization =
+    settingsError instanceof ApiError && settingsError.status === 422;
 
   useEffect(() => {
     if (!settingsData) return;
@@ -95,9 +108,33 @@ export function ProjectAISettingsPanel({ projectId }: { projectId: number }) {
         </div>
       )}
 
+      {needsInitialization && (
+        <SettingsCard title="项目 AI 配置尚未初始化">
+          <div className="space-y-3 text-body-sm text-mute">
+            <p>
+              当前项目缺少 AI 配置与默认 Prompt 模板。请先初始化，再继续编辑模型参数。
+            </p>
+            <button
+              onClick={() => initSettingsMutation.mutate()}
+              disabled={initSettingsMutation.isPending}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-primary text-white text-btn-sm font-bold disabled:bg-stone"
+            >
+              {initSettingsMutation.isPending ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <Save className="w-3.5 h-3.5" />
+              )}
+              初始化项目 AI 配置
+            </button>
+          </div>
+        </SettingsCard>
+      )}
+
       <SettingsCard title="1. 模型服务配置">
         {settingsLoading ? (
           <div className="flex items-center gap-2 text-mute"><Loader2 className="w-4 h-4 animate-spin" />加载中…</div>
+        ) : !settingsData ? (
+          <div className="text-body-sm text-mute">等待项目 AI 配置初始化后再编辑。</div>
         ) : (
           <>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">

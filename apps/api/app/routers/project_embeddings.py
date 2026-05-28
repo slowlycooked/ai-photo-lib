@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel
 from sqlalchemy import and_, func
 from sqlalchemy.orm import Session
@@ -14,7 +14,7 @@ from ..models.ai import AIJob, PhotoAIAnalysis, PhotoEmbedding
 from ..models.photo import Photo
 from ..models.project import Project
 from ..services.embedding_service import EMBEDDING_INPUT_VERSION, is_embedding_stale
-from ..services.project_embedding_settings_service import resolve_embedding_settings
+from ..services.project_embedding_settings_service import resolve_embedding_settings_strict
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +81,7 @@ def get_embedding_status(
 ):
     """Return embedding coverage statistics for a project."""
     try:
-        embed_cfg = resolve_embedding_settings(db, project_id)
+        embed_cfg = resolve_embedding_settings_strict(db, project_id)
         resolved_model = embed_cfg["model_name"]
         resolved_dim = embed_cfg["embedding_dimension"]
         resolved_document_prefix = embed_cfg.get("input_prefix_document")
@@ -198,7 +198,7 @@ def rebuild_project_embeddings(
         )
 
     try:
-        embed_cfg = resolve_embedding_settings(db, project_id)
+        embed_cfg = resolve_embedding_settings_strict(db, project_id)
         resolved_model = embed_cfg["model_name"]
         resolved_dim = embed_cfg["embedding_dimension"]
         resolved_document_prefix = embed_cfg.get("input_prefix_document")
@@ -311,12 +311,23 @@ def rebuild_project_embeddings(
 @router.post("/{project_id}/ai/embeddings/rebuild", response_model=dict)
 def rebuild_project_embeddings_legacy(
     project_id: int,
+    response: Response,
     force: bool = False,
     only_failed: bool = False,
     project: Project = Depends(require_project),
     db: Session = Depends(get_db),
 ):
     """Legacy rebuild endpoint. Prefer POST /projects/{id}/embeddings/rebuild."""
+    logger.warning(
+        "Deprecated endpoint called: /projects/%s/ai/embeddings/rebuild. "
+        "Use /projects/%s/embeddings/rebuild instead.",
+        project_id,
+        project_id,
+    )
+    response.headers["Deprecation"] = "true"
+    response.headers["Sunset"] = "Wed, 31 Dec 2026 00:00:00 GMT"
+    response.headers["Link"] = f'</projects/{project_id}/embeddings/rebuild>; rel="successor-version"'
+
     scope = "failed" if only_failed else "stale"
     req = RebuildRequest(scope=scope, force=force)
     result = rebuild_project_embeddings(project_id, req, project, db)

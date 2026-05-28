@@ -23,6 +23,9 @@ os.environ.setdefault("OPENAI_VISION_MODEL", "test-model")
 
 from app.database import get_db  # noqa: E402
 from app.main import app  # noqa: E402
+from app.models.project_task import ProjectTask  # noqa: E402
+from app.services.project_task_app_service import ProjectTaskAppService  # noqa: E402
+from app.services.project_task_service import TASK_TYPE_LIBRARY_SCAN  # noqa: E402
 from app.services.scanner import scan_project  # noqa: E402
 
 
@@ -94,6 +97,30 @@ CREATE TABLE photos (
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   deleted_at TEXT
 );
+
+CREATE TABLE project_tasks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id INTEGER NOT NULL,
+    task_type TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'queued',
+    retry_count INTEGER NOT NULL DEFAULT 0,
+    request_params TEXT,
+    progress_payload TEXT,
+    result_payload TEXT,
+    error_message TEXT,
+    started_at TEXT,
+    finished_at TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX ix_project_tasks_project_type_status
+    ON project_tasks (project_id, task_type, status);
+
+CREATE UNIQUE INDEX uq_project_tasks_one_active_scan
+    ON project_tasks (project_id)
+    WHERE task_type IN ('library_scan', 'library_reindex')
+        AND status IN ('queued', 'running');
 """
 
 
@@ -223,6 +250,39 @@ class PhotoDeleteEndpointTest(unittest.TestCase):
         self.assertEqual(self._count_photo(101), 0)
         self.assertTrue(self._original.exists())
         self.assertFalse(self._thumb.exists())
+
+    def test_scan_start_and_status_expose_fail_fast_config_error(self) -> None:
+        with self._engine.begin() as conn:
+            conn.execute(
+                sa.text("UPDATE projects SET thumbnail_path = '' WHERE id = 1"),
+            )
+
+        start_res = self.client.post("/projects/1/scan/start")
+        self.assertEqual(start_res.status_code, 200)
+
+        db = self._SessionLocal()
+        try:
+            task = (
+                db.query(ProjectTask)
+                .filter(
+                    ProjectTask.project_id == 1,
+                    ProjectTask.task_type == TASK_TYPE_LIBRARY_SCAN,
+                )
+                .order_by(ProjectTask.id.desc())
+                .first()
+            )
+            self.assertIsNotNone(task)
+            assert task is not None
+            ProjectTaskAppService(db, session_factory=self._SessionLocal).process_task(task)
+        finally:
+            db.close()
+
+        status_res = self.client.get("/projects/1/scan/status")
+        self.assertEqual(status_res.status_code, 200)
+        status_body = status_res.json()
+        self.assertFalse(status_body["running"])
+        self.assertGreaterEqual(int(status_body.get("errors") or 0), 1)
+        self.assertIn("Missing required project thumbnail_path", status_body.get("message", ""))
 
 
 class ScanCleanupTest(unittest.TestCase):

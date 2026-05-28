@@ -555,22 +555,22 @@ export function PhotoCard({ photo }: PhotoCardProps) {
           style={{ background: "linear-gradient(to bottom, transparent 50%, rgba(0,0,0,0.35) 100%)" }}
         />
 
-        {/* Date pill overlay — bottom-left, visible on hover */}
+        {/* Date pill overlay — top-left, visible on hover */}
         {photo.taken_at && (
-          <div className="absolute left-2 bottom-2 opacity-0 group-hover:opacity-100 transition-opacity duration-150">
+          <div className="absolute left-2 top-2 opacity-0 group-hover:opacity-100 transition-opacity duration-150">
             <span className="bg-canvas text-ink text-btn-sm font-bold px-3 py-1 rounded-full shadow-sm whitespace-nowrap">
               {new Date(photo.taken_at).toLocaleDateString("zh-CN", { month: "short", year: "numeric" })}
             </span>
           </div>
         )}
         {(locationSummary || gpsFallback) && (
-          <div className="absolute right-2 bottom-2 max-w-[62%] opacity-95 group-hover:opacity-100 transition-opacity duration-150">
+          <div className="absolute right-2 bottom-2 max-w-[62%] opacity-95 group-hover:opacity-100 transition-opacity duration-150 overflow-hidden">
             <span
-              className="inline-flex items-center gap-1.5 bg-black/72 text-white text-[11px] font-medium px-3 py-1 rounded-full shadow-sm truncate border border-white/12 backdrop-blur-sm"
+              className="flex items-center gap-1.5 bg-black/72 text-white text-[11px] font-medium px-3 py-1 rounded-full shadow-sm overflow-hidden border border-white/12 backdrop-blur-sm"
               title={locationAddress ?? locationSummary ?? gpsFallback ?? ""}
             >
               <MapPin className="w-3.5 h-3.5 shrink-0" />
-              <span className="truncate">{locationSummary ?? gpsFallback}</span>
+              <span className="truncate min-w-0">{locationSummary ?? gpsFallback}</span>
             </span>
           </div>
         )}

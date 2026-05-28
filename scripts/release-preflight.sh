@@ -24,11 +24,14 @@ echo "[preflight] 1/3 backend release guard and core regressions"
 cd "$API_DIR"
 AUTH_ENABLED=0 "$PYTHON_BIN" -m pytest \
   tests/test_release_audit_guards.py \
+  tests/test_auth.py \
   tests/test_project_isolation_endpoints.py \
   tests/test_project_task_app_service.py \
   tests/test_project_faces_endpoints.py \
   tests/test_project_people_endpoints.py \
   tests/test_people_learning_service.py \
+  tests/test_runtime_settings_service.py \
+  tests/test_prompt_render_and_retry.py \
   tests/test_search_hybrid.py \
   -q
 
@@ -38,6 +41,8 @@ npm test -- \
   src/components/common/CapabilityMaturityBadge.test.tsx \
   src/components/project-ai-settings/PromptSettingsSection.test.tsx \
   src/components/tasks/FailedJobsSection.test.tsx \
+  src/pages/PeoplePage.test.tsx \
+  src/pages/PeopleReviewPage.test.tsx \
   src/pages/SettingsPage.test.tsx \
   src/pages/TasksPage.test.tsx
 

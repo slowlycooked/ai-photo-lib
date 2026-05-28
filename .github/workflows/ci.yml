@@ -1,0 +1,148 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  schedule:
+    - cron: "0 2 * * *"
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    env:
+      AUTH_ENABLED: "0"
+      DATABASE_URL: "sqlite:///ci.db"
+      PHOTO_LIBRARY_PATH: "/tmp"
+      THUMBNAIL_PATH: "/tmp"
+      OPENAI_API_KEY: "test"
+      OPENAI_BASE_URL: "http://127.0.0.1:9999/v1"
+      OPENAI_MODEL: "test-model"
+      OPENAI_VISION_MODEL: "test-model"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.9"
+
+      - name: Install backend dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r apps/api/requirements.txt
+
+      - name: Run backend release guard suite
+        run: |
+          cd apps/api
+          python -m pytest \
+            tests/test_release_audit_guards.py \
+            tests/test_auth.py \
+            tests/test_project_isolation_endpoints.py \
+            tests/test_project_task_app_service.py \
+            tests/test_project_faces_endpoints.py \
+            tests/test_project_people_endpoints.py \
+            tests/test_people_learning_service.py \
+            tests/test_runtime_settings_service.py \
+            tests/test_prompt_render_and_retry.py \
+            tests/test_search_hybrid.py \
+            -q
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+
+      - name: Install frontend dependencies
+        run: |
+          cd apps/web
+          npm ci
+
+      - name: Run frontend targeted tests
+        run: |
+          cd apps/web
+          npm test -- \
+            src/components/common/CapabilityMaturityBadge.test.tsx \
+            src/components/project-ai-settings/PromptSettingsSection.test.tsx \
+            src/components/tasks/FailedJobsSection.test.tsx \
+            src/pages/PeoplePage.test.tsx \
+            src/pages/PeopleReviewPage.test.tsx \
+            src/pages/SettingsPage.test.tsx \
+            src/pages/TasksPage.test.tsx
+
+      - name: Typecheck and build
+        run: |
+          cd apps/web
+          npm run typecheck
+          npm run build
+
+  nightly-backend-full:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    env:
+      AUTH_ENABLED: "0"
+      DATABASE_URL: "sqlite:///ci.db"
+      PHOTO_LIBRARY_PATH: "/tmp"
+      THUMBNAIL_PATH: "/tmp"
+      OPENAI_API_KEY: "test"
+      OPENAI_BASE_URL: "http://127.0.0.1:9999/v1"
+      OPENAI_MODEL: "test-model"
+      OPENAI_VISION_MODEL: "test-model"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.9"
+
+      - name: Install backend dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r apps/api/requirements.txt
+
+      - name: Run full backend tests
+        run: |
+          cd apps/api
+          python -m pytest -q
+
+  nightly-frontend-full:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+
+      - name: Install frontend dependencies
+        run: |
+          cd apps/web
+          npm ci
+
+      - name: Run full frontend tests
+        run: |
+          cd apps/web
+          npm test
+
+      - name: Typecheck and build
+        run: |
+          cd apps/web
+          npm run typecheck
+          npm run build

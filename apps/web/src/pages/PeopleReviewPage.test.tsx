@@ -211,7 +211,7 @@ function renderPage(initialEntry = "/projects/1/people/review") {
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={[initialEntry]}>
         <Routes>
-          <Route path="/people" element={<div>People Landing</div>} />
+          <Route path="/photos" element={<div>Photos Landing</div>} />
           <Route path="/projects/:projectId/people/review" element={<PeopleReviewPage />} />
         </Routes>
       </MemoryRouter>
@@ -330,9 +330,9 @@ describe("PeopleReviewPage", () => {
     expect(await screen.findByText(/批量移动成功：updated=2/)).toBeInTheDocument();
   });
 
-  it("redirects invalid project routes back to /people", async () => {
+  it("redirects invalid project routes back to /photos", async () => {
     renderPage("/projects/not-a-number/people/review");
 
-    expect(await screen.findByText("People Landing")).toBeInTheDocument();
+    expect(await screen.findByText("Photos Landing")).toBeInTheDocument();
   });
 });

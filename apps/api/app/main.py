@@ -13,7 +13,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.exc import OperationalError
 
 from ._version import APP_VERSION
-from .config import settings
+from .config import settings, warn_unknown_config_keys, enforce_managed_config_keys
 from .database import SessionLocal, engine
 from .logging_config import (
     _NOISY_PATH_RE,
@@ -65,6 +65,9 @@ setup_logging(build_default_debug_config())
 
 
 def load_runtime_debug_config() -> None:
+    warn_unknown_config_keys()
+    enforce_managed_config_keys()
+
     try:
         validate_required_tables(engine)
         validate_required_columns(engine)

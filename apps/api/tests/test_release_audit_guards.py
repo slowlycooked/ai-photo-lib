@@ -3,6 +3,7 @@ from __future__ import annotations
 import ast
 import os
 import re
+import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -10,7 +11,7 @@ from unittest.mock import patch
 
 from pydantic import ValidationError
 
-from app.config import Settings
+from app.config import Settings, enforce_managed_config_keys, get_unknown_config_keys
 from app.services.aijob_app_service import AIJobAppService
 
 
@@ -90,6 +91,56 @@ class ConfigurationGuardTest(unittest.TestCase):
         with patch.dict(os.environ, {}, clear=True):
             with self.assertRaises(ValidationError):
                 Settings(_env_file=None)
+
+    def test_unknown_config_keys_detected_from_env_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            env_path = Path(tmp_dir) / ".env"
+            env_path.write_text(
+                "DATABASE_URL=sqlite:///tmp.db\n"
+                "PHOTO_LIBRARY_PATH=/tmp\n"
+                "THUMBNAIL_PATH=/tmp\n"
+                "OPENAI_API_KEY=test\n"
+                "OPENAI_BASE_URL=http://127.0.0.1:9999/v1\n"
+                "OPENAI_MODEL=test-model\n"
+                "OPENAI_VISION_MODEL=test-model\n"
+                "UNEXPECTED_FLAG=1\n",
+                encoding="utf-8",
+            )
+            unknown = get_unknown_config_keys(env_path)
+        self.assertEqual(unknown, ["UNEXPECTED_FLAG"])
+
+    def test_unknown_managed_config_keys_fail_explicitly(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            env_path = Path(tmp_dir) / ".env"
+            env_path.write_text(
+                "DATABASE_URL=sqlite:///tmp.db\n"
+                "PHOTO_LIBRARY_PATH=/tmp\n"
+                "THUMBNAIL_PATH=/tmp\n"
+                "OPENAI_API_KEY=test\n"
+                "OPENAI_BASE_URL=http://127.0.0.1:9999/v1\n"
+                "OPENAI_MODEL=test-model\n"
+                "OPENAI_VISION_MODEL=test-model\n"
+                "OPENAI_MODEL_ALIAS=demo\n",
+                encoding="utf-8",
+            )
+            with self.assertRaises(RuntimeError):
+                enforce_managed_config_keys(env_path)
+
+    def test_non_managed_unknown_keys_do_not_fail_enforcement(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            env_path = Path(tmp_dir) / ".env"
+            env_path.write_text(
+                "DATABASE_URL=sqlite:///tmp.db\n"
+                "PHOTO_LIBRARY_PATH=/tmp\n"
+                "THUMBNAIL_PATH=/tmp\n"
+                "OPENAI_API_KEY=test\n"
+                "OPENAI_BASE_URL=http://127.0.0.1:9999/v1\n"
+                "OPENAI_MODEL=test-model\n"
+                "OPENAI_VISION_MODEL=test-model\n"
+                "WEB_PORT=8088\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(get_unknown_config_keys(env_path, managed_only=True), [])
 
 
 class WorkerProjectIdGuardTest(unittest.TestCase):
@@ -254,6 +305,32 @@ class StaticQualityGuardTest(unittest.TestCase):
                 self._file_uses_pep604_union_annotation(path),
                 f"Found PEP 604 union annotation in {path}; use typing.Optional/typing.Union for py3.9 compatibility",
             )
+
+    def test_vector_recall_does_not_fallback_to_global_embedding_settings(self) -> None:
+        path = _API_ROOT / "app/services/search/vector_recall.py"
+        text = path.read_text(encoding="utf-8")
+        self.assertIn("resolve_embedding_settings_strict", text)
+        self.assertNotIn("global_settings.embedding_base_url or global_settings.openai_base_url", text)
+
+    def test_aijob_embedding_does_not_fallback_to_ai_endpoint(self) -> None:
+        path = _API_ROOT / "app/services/aijob_app_service.py"
+        text = path.read_text(encoding="utf-8")
+        self.assertIn("resolve_embedding_settings_strict", text)
+        self.assertNotIn("embed_endpoint = ai_settings.endpoint_url", text)
+
+    def test_aijob_analysis_uses_strict_project_ai_settings(self) -> None:
+        path = _API_ROOT / "app/services/aijob_app_service.py"
+        text = path.read_text(encoding="utf-8")
+        self.assertIn("get_project_ai_settings_strict", text)
+        self.assertIn("get_active_prompt_template_strict", text)
+        self.assertNotIn("get_or_create_project_ai_settings", text)
+
+    def test_scanner_no_default_project_path_fallback(self) -> None:
+        path = _API_ROOT / "app/services/scanner.py"
+        text = path.read_text(encoding="utf-8")
+        self.assertNotIn("fallback to settings.photo_library_path", text)
+        self.assertNotIn("fallback to settings.host_photo_library_path", text)
+        self.assertNotIn("fallback to settings.thumbnail_path", text)
 
 
 if __name__ == "__main__":

@@ -36,6 +36,14 @@ logger = logging.getLogger(__name__)
 
 _ANIMAL_SCORE_FLOOR = 0.65
 
+# 这些短语包含动物字符但语义是活动，不应触发 animal_search 的分数兜底
+# 与 query_understanding_service._ACTIVITY_PHRASE_OVERRIDES 保持同步
+_ANIMAL_FLOOR_ACTIVITY_EXCLUSIONS: frozenset[str] = frozenset({
+    "钓鱼", "垂钓", "捕鱼", "捞鱼", "摸鱼",
+    "骑马", "赛马", "驯马", "马术",
+    "斗鸡", "放鸟", "牧羊",
+})
+
 
 def _build_any_match_filter(terms: list[str]):
     """Build OR filter matching any term across all keyword fields."""
@@ -189,7 +197,11 @@ def _score_result(
     if query_plan.intent == "animal_search" and term_level_hits["strong"]:
         strong_entity_fields = {"caption", "object_tags", "search_keywords"}
         if any(field in field_explain for field in strong_entity_fields):
-            score = max(score, _ANIMAL_SCORE_FLOOR)
+            # 仅当 exact_terms 中不包含活动短语时才应用分数兜底
+            # 防止因 intent 在之前的分类器中被错误分类时误抬高分数
+            exact_lower_set = {t.lower() for t in query_plan.exact_terms}
+            if not any(t in _ANIMAL_FLOOR_ACTIVITY_EXCLUSIONS for t in exact_lower_set):
+                score = max(score, _ANIMAL_SCORE_FLOOR)
 
     return score, sorted(matched), field_explain, hit_tiers, term_level_hits
 

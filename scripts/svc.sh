@@ -40,7 +40,7 @@ POSTGRES_DATA_DIR="${POSTGRES_DATA_DIR:-}"
 
 API_HOST="${API_HOST:-127.0.0.1}"
 API_PORT="${API_PORT:-8000}"
-API_RELOAD="${API_RELOAD:-0}"
+API_RELOAD="${SVC_RELOAD:-0}"
 
 WEB_HOST="${WEB_HOST:-127.0.0.1}"
 WEB_PORT="${WEB_PORT:-8088}"
@@ -451,7 +451,7 @@ start_api() {
   local py_bin
   py_bin="$(api_python_bin)"
 
-  log_info "启动 API (host=$API_HOST, port=$API_PORT, reload=$API_RELOAD)..."
+  log_info "启动 API (host=$API_HOST, port=$API_PORT, reload=$SVC_RELOAD)..."
   cd "$ROOT/apps/api"
   local uvicorn_args=(
     -m uvicorn
@@ -460,7 +460,7 @@ start_api() {
     --port "$API_PORT"
     --no-access-log
   )
-  if [ "$API_RELOAD" = "1" ] || [ "$API_RELOAD" = "true" ]; then
+  if [ "$SVC_RELOAD" = "1" ] || [ "$SVC_RELOAD" = "true" ]; then
     uvicorn_args+=(--reload)
   fi
 

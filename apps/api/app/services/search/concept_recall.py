@@ -265,6 +265,50 @@ class ConceptRecallService:
                 entity_terms=entity_terms,
             )
             matched = _dedupe_preserve_order(concept_hits + entity_hits + facet_hits)
+
+            # ── Entity evidence enforcement for animal_search ──────────────
+            # When a specific entity is expected (entity_terms is non-empty) but this
+            # photo only matched a broad concept ("动物") without any entity evidence,
+            # the match is too weak.  Downgrade hit_tiers so the evidence filter
+            # (min_display_evidence_level) can suppress these spurious results.
+            is_pure_concept_only_animal = (
+                query_plan.intent == "animal_search"
+                and entity_terms  # specific animal entities are expected
+                and not entity_hits  # this photo has no matching entity evidence
+                and concept_hits  # it only passed the broad concept filter
+            )
+            if is_pure_concept_only_animal:
+                effective_score = round(score * 0.3, 6)
+                candidates.append(
+                    SearchCandidate(
+                        photo_id=ai.photo_id,
+                        keyword_score=effective_score,
+                        matched_tags=matched,
+                        match_source=["concept"],
+                        field_scores={"concept": effective_score},
+                        keyword_explain={
+                            "semantic_concepts": concept_hits,
+                            "semantic_entities": entity_hits,
+                            "semantic_facets": facet_hits,
+                            "concept_only_downgraded": True,
+                            "concept_term_coverage": round(
+                                _coverage_score(concept_hits, concept_terms),
+                                6,
+                            ),
+                            "entity_term_coverage": 0.0,
+                        },
+                        hit_tiers={"weak"},
+                        term_level_hits={
+                            "exact": [],
+                            "strong": [],
+                            "support": [],
+                            "weak": matched,
+                            "negative": [],
+                        },
+                    )
+                )
+                continue
+
             candidates.append(
                 SearchCandidate(
                     photo_id=ai.photo_id,

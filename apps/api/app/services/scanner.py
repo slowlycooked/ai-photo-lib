@@ -15,7 +15,6 @@ import exifread
 from PIL import Image, UnidentifiedImageError
 from sqlalchemy.orm import Session
 
-from ..config import settings
 from ..models.photo import Photo
 from .thumbnail import SUPPORTED_SUFFIXES, generate_thumbnail
 from .path_utils import build_relative_paths
@@ -252,8 +251,8 @@ def _extract_exif(path: str) -> StructuredExif:
             except ValueError:
                 pass
 
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("Failed to extract EXIF from %s: %s", path, exc)
     return result
 
 
@@ -261,7 +260,8 @@ def _image_size(path: str) -> Tuple[Optional[int], Optional[int]]:
     try:
         with Image.open(path) as img:
             return img.width, img.height
-    except (UnidentifiedImageError, Exception):
+    except (UnidentifiedImageError, OSError) as exc:
+        logger.warning("Failed to read image size for %s: %s", path, exc)
         return None, None
 
 
@@ -272,7 +272,7 @@ def _is_writable_directory(path: Path) -> bool:
         with tempfile.NamedTemporaryFile(dir=path, delete=True):
             pass
         return True
-    except Exception:
+    except (OSError, PermissionError):
         return False
 
 
@@ -446,61 +446,29 @@ def scan_project(
     _emit_progress(state, progress_callback)
 
     library = Path(project.photo_library_path)
-    resolved_library = False
-    if not library.exists() and project.is_default:
-        # Compatibility fallback for older records that still store `/photos`
-        # while the native runtime is configured with a host path.
-        configured_default = Path(settings.photo_library_path)
-        if configured_default.exists():
-            logger.warning(
-                "Project %d library path %s not found; fallback to settings.photo_library_path=%s",
-                project_id,
-                library,
-                configured_default,
-            )
-            library = configured_default
-            resolved_library = True
-
-    if not library.exists() and project.is_default:
-        configured_host = Path(settings.host_photo_library_path)
-        if configured_host.exists():
-            logger.warning(
-                "Project %d library path %s not found; fallback to settings.host_photo_library_path=%s",
-                project_id,
-                library,
-                configured_host,
-            )
-            library = configured_host
-            resolved_library = True
-
-    if resolved_library and str(library) != project.photo_library_path:
-        # Persist the resolved path so future scans do not rely on fallback.
-        project.photo_library_path = str(library)
-        project.updated_at = datetime.now()
-        db.commit()
 
     if not library.exists():
-        state.update(running=False, message=f"Directory not found: {library}")
+        state.update(running=False, message=f"Directory not found: {library}", errors=1)
+        _push_scan_error(state, f"Directory not found: {library}")
         logger.error("Project library path does not exist: %s", library)
         _emit_progress(state, progress_callback)
         return _snapshot_state(state)
 
-    thumb_path = project.thumbnail_path or settings.thumbnail_path
+    thumb_path = (project.thumbnail_path or "").strip()
+    if not thumb_path:
+        state.update(running=False, message="Missing required project thumbnail_path", errors=1)
+        _push_scan_error(state, "Missing required project thumbnail_path")
+        logger.error("Project %d scan aborted: missing thumbnail_path", project_id)
+        _emit_progress(state, progress_callback)
+        return _snapshot_state(state)
+
     thumb_root = Path(thumb_path).resolve()
-    if project.is_default and not _is_writable_directory(thumb_root):
-        configured_thumb = Path(settings.thumbnail_path).resolve()
-        if _is_writable_directory(configured_thumb):
-            logger.warning(
-                "Project %d thumbnail path %s is not writable; fallback to settings.thumbnail_path=%s",
-                project_id,
-                thumb_root,
-                configured_thumb,
-            )
-            thumb_root = configured_thumb
-            if str(configured_thumb) != (project.thumbnail_path or ""):
-                project.thumbnail_path = str(configured_thumb)
-                project.updated_at = datetime.now()
-                db.commit()
+    if not _is_writable_directory(thumb_root):
+        state.update(running=False, message=f"Thumbnail path is not writable: {thumb_root}", errors=1)
+        _push_scan_error(state, f"Thumbnail path is not writable: {thumb_root}")
+        logger.error("Project %d scan aborted: thumbnail path not writable: %s", project_id, thumb_root)
+        _emit_progress(state, progress_callback)
+        return _snapshot_state(state)
 
     pending_writes = 0
     commit_count = 0

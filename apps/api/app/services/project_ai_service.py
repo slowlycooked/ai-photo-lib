@@ -150,7 +150,6 @@ def get_or_create_project_ai_settings(db: Session, project_id: int) -> ProjectAI
         .first()
     )
     if settings_row:
-        _maybe_upgrade_legacy_endpoint(settings_row)
         if not (settings_row.output_language or "").lower().startswith("zh"):
             settings_row.output_language = "zh-CN"
             settings_row.updated_at = datetime.now(timezone.utc)
@@ -175,6 +174,26 @@ def get_or_create_project_ai_settings(db: Session, project_id: int) -> ProjectAI
     )
     db.add(settings_row)
     db.flush()
+    return settings_row
+
+
+def get_project_ai_settings_strict(db: Session, project_id: int) -> ProjectAISettings:
+    """Return project AI settings without creating defaults or auto-upgrading."""
+    settings_row = (
+        db.query(ProjectAISettings)
+        .filter(ProjectAISettings.project_id == project_id)
+        .first()
+    )
+    if settings_row is None:
+        raise RuntimeError(
+            f"AI settings are not configured for project_id={project_id}. "
+            "Configure them via /projects/{id}/ai-settings before running analysis tasks."
+        )
+    if not (settings_row.endpoint_url or "").strip() or not (settings_row.model_name or "").strip():
+        raise RuntimeError(
+            f"AI settings for project_id={project_id} are incomplete. "
+            "endpoint_url and model_name are required."
+        )
     return settings_row
 
 
@@ -209,12 +228,90 @@ def get_active_prompt_template(
         .first()
     )
     if template:
-        _maybe_upgrade_legacy_template(template)
         return template
 
     template = build_default_template(project_id)
     db.add(template)
     db.flush()
+    return template
+
+
+def migrate_legacy_project_ai_defaults(db: Session, project_id: int) -> dict[str, bool]:
+    """Apply one-time legacy default upgrades for a project.
+
+    This function is intentionally opt-in. Runtime request handling must not
+    mutate project settings/templates implicitly.
+    """
+    changed = {
+        "endpoint_upgraded": False,
+        "template_upgraded": False,
+    }
+
+    settings_row = (
+        db.query(ProjectAISettings)
+        .filter(ProjectAISettings.project_id == project_id)
+        .first()
+    )
+    if settings_row is not None:
+        before = (settings_row.endpoint_url or "").strip()
+        _maybe_upgrade_legacy_endpoint(settings_row)
+        after = (settings_row.endpoint_url or "").strip()
+        changed["endpoint_upgraded"] = before != after
+
+    template = (
+        db.query(ProjectPromptTemplate)
+        .filter(
+            ProjectPromptTemplate.project_id == project_id,
+            ProjectPromptTemplate.task_type == TASK_IMAGE_ANALYSIS,
+            ProjectPromptTemplate.is_active.is_(True),
+        )
+        .order_by(ProjectPromptTemplate.version.desc(), ProjectPromptTemplate.id.desc())
+        .first()
+    )
+    if template is not None:
+        before_prompt = template.user_prompt
+        _maybe_upgrade_legacy_template(template)
+        changed["template_upgraded"] = before_prompt != template.user_prompt
+
+    return changed
+
+
+def get_active_prompt_template_strict(
+    db: Session,
+    project_id: int,
+    *,
+    task_type: str = TASK_IMAGE_ANALYSIS,
+    template_id: int | None = None,
+) -> ProjectPromptTemplate:
+    """Return existing active prompt template without creating defaults."""
+    if template_id is not None:
+        template = (
+            db.query(ProjectPromptTemplate)
+            .filter(
+                ProjectPromptTemplate.project_id == project_id,
+                ProjectPromptTemplate.id == template_id,
+                ProjectPromptTemplate.task_type == task_type,
+            )
+            .first()
+        )
+        if template is not None:
+            return template
+
+    template = (
+        db.query(ProjectPromptTemplate)
+        .filter(
+            ProjectPromptTemplate.project_id == project_id,
+            ProjectPromptTemplate.task_type == task_type,
+            ProjectPromptTemplate.is_active.is_(True),
+        )
+        .order_by(ProjectPromptTemplate.version.desc(), ProjectPromptTemplate.id.desc())
+        .first()
+    )
+    if template is None:
+        raise RuntimeError(
+            f"Prompt template is not configured for project_id={project_id}. "
+            "Create and activate one via /projects/{id}/prompt-templates before running analysis tasks."
+        )
     return template
 
 

@@ -147,35 +147,16 @@ def resolve_embedding_settings(
     db: Session,
     project_id: int,
 ) -> dict[str, Any]:
-    """Return a resolved dict of embedding parameters for this project.
+    """Compatibility resolver.
 
-    Merges project-level row with global config fallbacks so callers
-    always have a fully-resolved set of parameters.
+    Prefer ``resolve_embedding_settings_strict`` for runtime paths that must
+    fail explicitly when project-level settings are missing.
     """
-    row = get_project_embedding_settings(db, project_id)
-
-    if row is not None and row.enabled:
-        return {
-            "endpoint_url": row.endpoint_url,
-            "api_key": row.api_key or settings.embedding_api_key or settings.openai_api_key,
-            "model_name": row.model_name,
-            "embedding_dimension": row.embedding_dimension,
-            "timeout_seconds": row.timeout_seconds,
-            "input_prefix_query": _resolved_prefix(
-                row.input_prefix_query,
-                DEFAULT_INPUT_PREFIX_QUERY,
-            ),
-            "input_prefix_document": _resolved_prefix(
-                row.input_prefix_document,
-                DEFAULT_INPUT_PREFIX_DOCUMENT,
-            ),
-            "search_field_weights": {
-                "content_embedding": row.search_content_vector_weight,
-                "tag_embedding": row.search_tag_vector_weight,
-                "caption_embedding": row.search_caption_vector_weight,
-                "ocr_embedding": row.search_ocr_vector_weight,
-            },
-        }
+    try:
+        return resolve_embedding_settings_strict(db, project_id)
+    except RuntimeError:
+        # Compatibility fallback for legacy call sites only.
+        pass
 
     # Fallback to global config; raise if nothing usable is found
     base_url = (settings.embedding_base_url or settings.openai_base_url or "").strip()
@@ -200,5 +181,54 @@ def resolve_embedding_settings(
             "tag_embedding": settings.search_tag_vector_weight,
             "caption_embedding": settings.search_caption_vector_weight,
             "ocr_embedding": settings.search_ocr_vector_weight,
+        },
+    }
+
+
+def resolve_embedding_settings_strict(
+    db: Session,
+    project_id: int,
+) -> dict[str, Any]:
+    """Return project-level embedding parameters without global fallback."""
+    row = get_project_embedding_settings(db, project_id)
+
+    if row is None:
+        raise RuntimeError(
+            f"Embedding is not configured for project_id={project_id}. "
+            "Create project embedding settings via PUT /projects/{id}/embedding-settings."
+        )
+    if not row.enabled:
+        raise RuntimeError(
+            f"Embedding is disabled for project_id={project_id}. "
+            "Enable it via PUT /projects/{id}/embedding-settings."
+        )
+
+    endpoint_url = (row.endpoint_url or "").strip()
+    model_name = (row.model_name or "").strip()
+    if not endpoint_url or not model_name:
+        raise RuntimeError(
+            f"Embedding settings for project_id={project_id} are incomplete. "
+            "Both endpoint_url and model_name are required."
+        )
+
+    return {
+        "endpoint_url": endpoint_url,
+        "api_key": row.api_key,
+        "model_name": model_name,
+        "embedding_dimension": row.embedding_dimension,
+        "timeout_seconds": row.timeout_seconds,
+        "input_prefix_query": _resolved_prefix(
+            row.input_prefix_query,
+            DEFAULT_INPUT_PREFIX_QUERY,
+        ),
+        "input_prefix_document": _resolved_prefix(
+            row.input_prefix_document,
+            DEFAULT_INPUT_PREFIX_DOCUMENT,
+        ),
+        "search_field_weights": {
+            "content_embedding": row.search_content_vector_weight,
+            "tag_embedding": row.search_tag_vector_weight,
+            "caption_embedding": row.search_caption_vector_weight,
+            "ocr_embedding": row.search_ocr_vector_weight,
         },
     }

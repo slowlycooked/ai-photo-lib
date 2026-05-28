@@ -110,6 +110,12 @@ _DEFAULT_CONCEPT_TAXONOMY: list[dict[str, object]] = [
     {
         "concept": "动物",
         "children": ["猫", "狗", "鸟", "马", "鹿", "兔子", "鱼"],
+        # 这些复合词/短语包含子词字符但语义是活动而非动物，跳过 child_matched 判断
+        "child_negative_contexts": [
+            "钓鱼", "垂钓", "捕鱼", "捞鱼", "摸鱼",  # 含"鱼"但是活动
+            "骑马", "赛马", "驯马", "马术", "马路", "马上",  # 含"马"但非马实体
+            "斗鸡", "放鸟", "牧羊",
+        ],
         "aliases": ["animal", "小动物", "宠物"],
         "positive_fields": ["object_tags", "search_keywords", "raw_result.animals"],
         "negative_terms": [],
@@ -138,6 +144,11 @@ def _normalise_concept_taxonomy(raw: Optional[list[dict]]) -> list[dict[str, obj
                     for v in (item.get("children") or [])
                     if str(v).strip()
                 ],
+                "child_negative_contexts": [
+                    str(v).strip()
+                    for v in (item.get("child_negative_contexts") or [])
+                    if str(v).strip()
+                ],
                 "aliases": [
                     str(v).strip()
                     for v in (item.get("aliases") or [])
@@ -160,6 +171,26 @@ def _normalise_concept_taxonomy(raw: Optional[list[dict]]) -> list[dict[str, obj
     return normalized or list(_DEFAULT_CONCEPT_TAXONOMY)
 
 
+def _child_matches_with_context(
+    child: str,
+    query_lower: str,
+    child_negative_contexts: list[str],
+) -> bool:
+    """Return True if *child* appears in *query_lower* and is NOT inside a negative-context phrase.
+
+    Prevents single-char animal words (e.g. "鱼") from matching compound activity
+    phrases (e.g. "钓鱼") and triggering an animal concept incorrectly.
+    """
+    if child.lower() not in query_lower:
+        return False
+    # If any negative-context phrase is present in the query, this child match
+    # is embedded in an activity compound word — treat as not matched.
+    for neg_ctx in child_negative_contexts:
+        if neg_ctx.lower() in query_lower:
+            return False
+    return True
+
+
 def _apply_concept_taxonomy(
     *,
     query_lower: str,
@@ -178,11 +209,17 @@ def _apply_concept_taxonomy(
             continue
         aliases = [str(v).strip() for v in (entry.get("aliases") or []) if str(v).strip()]
         children = [str(v).strip() for v in (entry.get("children") or []) if str(v).strip()]
+        child_negative_contexts = [
+            str(v).strip() for v in (entry.get("child_negative_contexts") or []) if str(v).strip()
+        ]
         recall_policy = str(entry.get("recall_policy") or "expand_children").strip()
 
         concept_matched = concept.lower() in query_lower
         alias_matched = any(alias.lower() in query_lower for alias in aliases)
-        child_matched = any(child.lower() in query_lower for child in children)
+        child_matched = any(
+            _child_matches_with_context(child, query_lower, child_negative_contexts)
+            for child in children
+        )
         if not (concept_matched or alias_matched or child_matched):
             continue
 
@@ -512,6 +549,70 @@ _OUTDOOR_TERMS_TIERED: Dict[str, Any] = {
         "broad": ["户外", "自然"],
         "facets": ["scene"],
     },
+    # ── 水上/户外活动 ─────────────────────────────────────────────────────
+    "钓鱼": {
+        "expanded": ["垂钓", "钓竿", "鱼竿", "渔夫", "渔船", "海钓"],
+        "support": ["湖边", "河边", "水边", "码头", "钓场", "鱼线"],
+        "broad": ["户外", "水"],
+        "negative": [],
+        "facets": ["activity", "scene"],
+    },
+    "垂钓": {
+        "expanded": ["钓鱼", "钓竿", "鱼竿"],
+        "support": ["湖边", "河边", "水边"],
+        "broad": ["户外"],
+        "facets": ["activity"],
+    },
+    "露营": {
+        "expanded": ["野营", "帐篷", "营地", "篝火"],
+        "support": ["户外", "野外", "背包", "炊具"],
+        "broad": ["自然"],
+        "negative": [],
+        "facets": ["activity", "scene"],
+    },
+    "骑行": {
+        "expanded": ["骑车", "自行车", "单车", "公路车", "山地车"],
+        "support": ["头盔", "车道", "自行车道"],
+        "broad": ["户外", "运动"],
+        "negative": [],
+        "facets": ["activity"],
+    },
+    "滑雪": {
+        "expanded": ["雪地", "雪场", "滑雪场", "滑板"],
+        "support": ["雪坡", "雪橇", "雪地靴", "滑雪板"],
+        "broad": ["冬季", "户外"],
+        "negative": [],
+        "facets": ["activity", "scene"],
+    },
+    "打球": {
+        "expanded": ["篮球", "足球", "羽毛球", "网球", "乒乓球", "排球"],
+        "support": ["球场", "球队", "运动场"],
+        "broad": ["户外", "运动"],
+        "negative": [],
+        "facets": ["activity"],
+    },
+    "游泳": {
+        "expanded": ["游泳池", "泳池", "泳装", "潜水"],
+        "support": ["水下", "蛙泳", "自由泳"],
+        "broad": ["户外", "运动"],
+        "negative": [],
+        "facets": ["activity"],
+    },
+    "摸鱼": {
+        # 网络用语：指偷懒/划水，非真实钓鱼，不应触发 animal_search
+        "expanded": ["划水", "偷懒", "摆烂", "摸鱼人"],
+        "support": [],
+        "broad": ["工作", "办公"],
+        "negative": ["垂钓", "钓竿", "渔船", "钓鱼"],
+        "facets": ["activity"],
+    },
+    "骑马": {
+        "expanded": ["马术", "赛马", "骑手", "马场"],
+        "support": ["马背", "马鞍"],
+        "broad": ["户外", "运动"],
+        "negative": [],
+        "facets": ["activity"],
+    },
 }
 
 _PEOPLE_TERMS_TIERED: Dict[str, Any] = {
@@ -811,6 +912,16 @@ _INDOOR_TERMS_TIERED: Dict[str, Any] = {
 _OUTDOOR_KEYS = set(_OUTDOOR_TERMS_TIERED.keys())
 _WEATHER_KEYS = set(_WEATHER_TERMS_TIERED.keys())
 _ANIMAL_KEYS = set(_ANIMAL_TERMS_TIERED.keys())
+
+# 复合词优先保护集：包含动物字符但语义是活动，不应触发 animal_search
+# 所有条目已在 _OUTDOOR_TERMS_TIERED 中定义，此处仅作为显式白名单使用
+_ACTIVITY_PHRASE_OVERRIDES: frozenset[str] = frozenset({
+    "钓鱼", "垂钓", "捕鱼", "捞鱼",  # 钓鱼活动（含"鱼"）
+    "摸鱼",                             # 网络用语：偷懒（含"鱼"）
+    "骑马", "赛马", "驯马", "马术",    # 马术活动（含"马"）
+    "斗鸡", "放鸟", "牧羊",            # 其他活动（含动物字）
+    "骑行", "骑车",                     # 骑行（"骑"字不含动物，保险起见加入）
+})
 _PEOPLE_KEYS = set(_PEOPLE_TERMS_TIERED.keys())
 _GROUP_PHOTO_KEYS: set[str] = {
     "合照",
@@ -893,15 +1004,22 @@ def _classify_intent(query: str) -> str:
     if _is_ocr_intent(query):
         return "ocr_text_search"
     q_lower = query.lower()
+
+    # ── Activity 优先检查 ──────────────────────────────────────────────────
+    # 必须在 animal 之前：防止"钓鱼/骑马/摸鱼"等复合词因包含"鱼/马"单字
+    # 而被误判为 animal_search。
+    # 先检查显式活动短语保护集（含动物字的复合活动词）
+    if any(phrase in q_lower for phrase in _ACTIVITY_PHRASE_OVERRIDES):
+        return "activity_search"
+    for key in _OUTDOOR_KEYS:
+        if key in q_lower:
+            return "activity_search"
     for key in _ANIMAL_KEYS:
         if key in q_lower:
             return "animal_search"
     for key in _WEATHER_KEYS:
         if key in q_lower:
             return "weather_search"
-    for key in _OUTDOOR_KEYS:
-        if key in q_lower:
-            return "activity_search"
     if any(k in q_lower for k in _GROUP_PHOTO_KEYS):
         return "group_photo_search"
     if any(k in q_lower for k in _PEOPLE_KEYS):

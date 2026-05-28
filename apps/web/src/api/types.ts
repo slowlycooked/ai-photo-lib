@@ -36,6 +36,18 @@ export interface ProjectUpdate {
   is_default?: boolean;
 }
 
+export interface ProjectReadinessCheck {
+  name: string;
+  ready: boolean;
+  message: string;
+}
+
+export interface ProjectReadinessResponse {
+  project_id: number;
+  ready: boolean;
+  checks: ProjectReadinessCheck[];
+}
+
 // ─── Photo ────────────────────────────────────────────────────────────────────
 
 export interface Photo {

@@ -198,7 +198,41 @@ def _animal_core_facet_passes(
     ]
     positive_terms = entity_terms or list(_ANIMAL_ENTITY_HINTS)
 
-    has_positive = any(term in rich_text for term in positive_terms)
+    # ── Precise entity check ───────────────────────────────────────────────
+    # Use exact tag-set membership for structured fields to prevent single-char
+    # terms (e.g. "鱼") from matching unrelated text via substring containment.
+    # For caption / semantic_concepts, require at least 2 chars to avoid
+    # false positives from single-character words.
+
+    # Build exact tag set from structured array fields
+    entity_tag_set: set[str] = set()
+    for field_name in ("object_tags", "search_keywords"):
+        tags = getattr(ai_analysis, field_name, None) or []
+        entity_tag_set.update(t.lower().strip() for t in tags if str(t).strip())
+
+    # Also include raw_result.animals as exact tags
+    raw_result = getattr(ai_analysis, "raw_result", None)
+    if isinstance(raw_result, dict):
+        for item in (raw_result.get("animals") or []):
+            val = str(item).lower().strip()
+            if val:
+                entity_tag_set.add(val)
+
+    # Free-text fields: only match terms with length >= 2 to avoid single-char noise
+    caption_text = (getattr(ai_analysis, "caption", None) or "").lower()
+    semantic_c = [
+        str(v).lower().strip()
+        for v in (getattr(ai_analysis, "semantic_concepts", None) or [])
+        if str(v).strip()
+    ]
+    semantic_text = " ".join(semantic_c)
+
+    has_positive = (
+        any(term in entity_tag_set for term in positive_terms)
+        or any(len(term) >= 2 and term in caption_text for term in positive_terms)
+        or any(len(term) >= 2 and term in semantic_text for term in positive_terms)
+    )
+
     weak_scene_only = any(term in weak_text for term in ("动物园", "宠物店")) and not has_positive
 
     if (
@@ -1477,6 +1511,7 @@ def search_photos(
                 people_visual_candidates=people_visual_candidates_count,
                 vector_candidates=0,
                 merged_candidates=len(merged_keyword_results),
+                displayed_candidates=total,
                 fallback_reason=fallback_reason,
                 settings=effective_settings,
                 trace=trace,
@@ -1558,6 +1593,7 @@ def search_photos(
                 people_visual_candidates=people_visual_candidates_count,
                 vector_candidates=len(vector_scores),
                 merged_candidates=len(vector_only),
+                displayed_candidates=total,
                 fallback_reason="",
                 settings=effective_settings,
                 trace=trace,

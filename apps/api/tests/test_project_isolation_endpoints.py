@@ -280,6 +280,13 @@ VALUES (1001, 1, 'Prompt A', 'A prompt', 1, 1),
 
 INSERT INTO photo_embeddings (id, project_id, photo_id, embedding_model, embedding_dimension, embedding_status)
 VALUES (1, 2, 202, 'test-model', 1024, 'ready');
+
+INSERT INTO project_embedding_settings (
+    id, project_id, provider, endpoint_url, api_key, model_name,
+    embedding_dimension, batch_size, timeout_seconds, enabled
+)
+VALUES
+    (1, 2, 'openai-compatible', 'http://127.0.0.1:9999/v1', 'test', 'test-model', 1024, 16, 60, 1);
 """
 
 
@@ -354,6 +361,75 @@ class ProjectIsolationEndpointsTest(unittest.TestCase):
             json={"image_id": 202},
         )
         self.assertEqual(res.status_code, 404)
+
+    def test_project_prompt_test_fails_when_project_ai_settings_missing(self) -> None:
+        res = self.client.post(
+            "/projects/1/prompt-templates/test",
+            json={"image_id": 101},
+        )
+        self.assertEqual(res.status_code, 422)
+        self.assertIn("AI settings are not configured", res.json().get("detail", ""))
+
+    def test_project_ai_settings_get_is_strict_when_missing(self) -> None:
+        res = self.client.get("/projects/1/ai-settings")
+        self.assertEqual(res.status_code, 422)
+        self.assertIn("AI settings are not configured", res.json().get("detail", ""))
+
+    def test_project_ai_settings_can_be_explicitly_initialized(self) -> None:
+        init_res = self.client.post("/projects/1/ai-settings/init")
+        self.assertEqual(init_res.status_code, 200)
+        init_body = init_res.json()
+        self.assertEqual(init_body["project_id"], 1)
+
+        get_res = self.client.get("/projects/1/ai-settings")
+        self.assertEqual(get_res.status_code, 200)
+        get_body = get_res.json()
+        self.assertEqual(get_body["project_id"], 1)
+
+    def test_project_readiness_reports_missing_ai_and_embedding_config(self) -> None:
+        res = self.client.get("/projects/1/readiness")
+        self.assertEqual(res.status_code, 200)
+        body = res.json()
+        self.assertEqual(body["project_id"], 1)
+        self.assertFalse(body["ready"])
+
+        checks = {item["name"]: item for item in body["checks"]}
+        self.assertIn("scan_runtime", checks)
+        self.assertIn("ai_runtime", checks)
+        self.assertIn("embedding_runtime", checks)
+        self.assertFalse(checks["ai_runtime"]["ready"])
+        self.assertIn("AI settings are not configured", checks["ai_runtime"]["message"])
+        self.assertFalse(checks["embedding_runtime"]["ready"])
+        self.assertIn("Embedding is not configured", checks["embedding_runtime"]["message"])
+
+    def test_project_readiness_ai_and_embedding_become_ready_after_init(self) -> None:
+        self.client.post("/projects/1/ai-settings/init")
+        self.client.put(
+            "/projects/1/embedding-settings",
+            json={
+                "provider": "openai-compatible",
+                "endpoint_url": "http://127.0.0.1:9999/v1",
+                "api_key": "test",
+                "model_name": "test-embed",
+                "embedding_dimension": 1024,
+                "batch_size": 16,
+                "timeout_seconds": 60,
+                "input_prefix_query": "q",
+                "input_prefix_document": "d",
+                "enabled": True,
+                "search_content_vector_weight": 0.5,
+                "search_tag_vector_weight": 0.25,
+                "search_caption_vector_weight": 0.2,
+                "search_ocr_vector_weight": 0.05,
+            },
+        )
+
+        res = self.client.get("/projects/1/readiness")
+        self.assertEqual(res.status_code, 200)
+        body = res.json()
+        checks = {item["name"]: item for item in body["checks"]}
+        self.assertTrue(checks["ai_runtime"]["ready"])
+        self.assertTrue(checks["embedding_runtime"]["ready"])
 
     def test_project_prompt_templates_list_is_scoped(self) -> None:
         res = self.client.get("/projects/1/prompt-templates")
@@ -455,6 +531,9 @@ class ProjectIsolationEndpointsTest(unittest.TestCase):
 
         res = self.client.post("/projects/2/ai/embeddings/rebuild")
         self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.headers.get("Deprecation"), "true")
+        self.assertEqual(res.headers.get("Sunset"), "Wed, 31 Dec 2026 00:00:00 GMT")
+        self.assertIn("/projects/2/embeddings/rebuild", res.headers.get("Link", ""))
         body = res.json()
         self.assertEqual(body["created_jobs"], 0)
         self.assertEqual(body["skipped_existing_jobs"], 1)
@@ -465,6 +544,12 @@ class ProjectIsolationEndpointsTest(unittest.TestCase):
         body = res.json()
         self.assertEqual(body["created_jobs"], 1)
         self.assertEqual(body["total_checked"], 1)
+
+    def test_embedding_endpoints_fail_when_project_embedding_settings_missing(self) -> None:
+        res = self.client.post("/projects/1/ai/embeddings/rebuild")
+        self.assertEqual(res.status_code, 422)
+        detail = res.json().get("detail", "")
+        self.assertIn("Embedding settings not configured", detail)
 
     # ── Tag filter tests ──────────────────────────────────────────────────────
 

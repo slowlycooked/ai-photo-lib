@@ -220,8 +220,8 @@ function FaceScanSection({ projectId }: { projectId: number | null }) {
     dry_run: boolean;
   } | null>(null);
   const canRun = projectId != null;
-  const peoplePath = canRun ? `/projects/${projectId}/people` : "/people";
-  const reviewPath = canRun ? `/projects/${projectId}/people/review` : "/people";
+  const peoplePath = canRun ? `/projects/${projectId}/people` : "/photos";
+  const reviewPath = canRun ? `/projects/${projectId}/people/review` : "/photos";
 
   const { data: faceSettings, isLoading: settingsLoading } = useQuery({
     queryKey: ["project-face-settings", projectId],
@@ -557,7 +557,7 @@ export function TasksPage() {
   if (tabParam === "ai-settings") {
     return (
       <Navigate
-        to={currentProjectId != null ? `/projects/${currentProjectId}/settings/ai` : "/settings"}
+        to={currentProjectId != null ? `/projects/${currentProjectId}/settings/ai` : "/photos"}
         replace
       />
     );
@@ -595,7 +595,7 @@ export function TasksPage() {
           </p>
         </div>
         <Link
-          to={currentProjectId != null ? `/projects/${currentProjectId}/settings/ai` : "/settings"}
+          to={currentProjectId != null ? `/projects/${currentProjectId}/settings/ai` : "/photos"}
           className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-hairline text-btn-sm hover:bg-surface-card transition-colors"
         >
           <Settings2 className="w-3.5 h-3.5" />

@@ -20,6 +20,9 @@ router = APIRouter(prefix="/settings", tags=["settings"])
 
 
 class SettingsResponse(BaseModel):
+    config_scope: str
+    project_authoritative: bool
+    note: str
     photo_library_path: str
     host_photo_library_path: str
     thumbnail_path: str
@@ -33,6 +36,12 @@ class SettingsResponse(BaseModel):
 @router.get("", response_model=SettingsResponse)
 def get_settings():
     return SettingsResponse(
+        config_scope="global",
+        project_authoritative=False,
+        note=(
+            "Global diagnostics only. Runtime project behavior should be configured via "
+            "/projects/{project_id}/... settings endpoints."
+        ),
         photo_library_path=settings.photo_library_path,
         host_photo_library_path=settings.host_photo_library_path,
         thumbnail_path=settings.thumbnail_path,

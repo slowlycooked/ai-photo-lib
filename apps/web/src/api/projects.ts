@@ -42,6 +42,7 @@ import type {
   ProjectCreate,
   ProjectEmbeddingSettings,
   ProjectEmbeddingSettingsUpdate,
+  ProjectReadinessResponse,
   ProjectFaceSettings,
   ProjectFaceSettingsUpdate,
   ProjectListResponse,
@@ -69,6 +70,9 @@ export const projectsApi = {
   list: () => request<ProjectListResponse>("/projects"),
 
   get: (id: number) => request<Project>(`/projects/${id}`),
+
+  readiness: (id: number) =>
+    request<ProjectReadinessResponse>(`/projects/${id}/readiness`),
 
   create: (body: ProjectCreate) =>
     request<Project>("/projects", {
@@ -164,6 +168,11 @@ export const projectsApi = {
 
   getAiSettings: (id: number) =>
     request<ProjectAISettings>(`/projects/${id}/ai-settings`),
+
+  initAiSettings: (id: number) =>
+    request<ProjectAISettings>(`/projects/${id}/ai-settings/init`, {
+      method: "POST",
+    }),
 
   updateAiSettings: (id: number, body: ProjectAISettingsUpdate) =>
     request<ProjectAISettings>(`/projects/${id}/ai-settings`, {

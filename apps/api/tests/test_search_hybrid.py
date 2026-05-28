@@ -113,6 +113,16 @@ class VectorRecallServiceTest(unittest.TestCase):
         svc = VectorRecallService(db, settings)
 
         with patch(
+            "app.services.search.vector_recall.resolve_embedding_settings_strict",
+            return_value={
+                "endpoint_url": "http://127.0.0.1:18083/v1",
+                "api_key": "sk-local",
+                "model_name": "test-embed",
+                "embedding_dimension": 1024,
+                "timeout_seconds": 30,
+                "input_prefix_query": None,
+            },
+        ), patch(
             "app.services.search.vector_recall.embed_text",
             return_value=[0.1] * 1024,
         ), patch(
@@ -138,7 +148,7 @@ class VectorRecallServiceTest(unittest.TestCase):
         svc = VectorRecallService(db, settings)
 
         with patch(
-            "app.services.search.vector_recall.resolve_embedding_settings",
+            "app.services.search.vector_recall.resolve_embedding_settings_strict",
             return_value={
                 "endpoint_url": "http://127.0.0.1:18083/v1",
                 "api_key": "sk-local",
@@ -178,6 +188,16 @@ class VectorRecallServiceTest(unittest.TestCase):
         svc = VectorRecallService(db, settings)
 
         with patch(
+            "app.services.search.vector_recall.resolve_embedding_settings_strict",
+            return_value={
+                "endpoint_url": "http://127.0.0.1:18083/v1",
+                "api_key": "sk-local",
+                "model_name": "test-embed",
+                "embedding_dimension": 1024,
+                "timeout_seconds": 30,
+                "input_prefix_query": None,
+            },
+        ), patch(
             "app.services.search.vector_recall.embed_text",
             return_value=[0.1] * 1024,
         ) as embed_text_mock, patch(
@@ -208,6 +228,16 @@ class VectorRecallServiceTest(unittest.TestCase):
         svc = VectorRecallService(db, settings)
 
         with patch(
+            "app.services.search.vector_recall.resolve_embedding_settings_strict",
+            return_value={
+                "endpoint_url": "http://127.0.0.1:18083/v1",
+                "api_key": "sk-local",
+                "model_name": "test-embed",
+                "embedding_dimension": 1024,
+                "timeout_seconds": 30,
+                "input_prefix_query": None,
+            },
+        ), patch(
             "app.services.search.vector_recall.embed_text",
             return_value=[0.1] * 1024,
         ), patch(

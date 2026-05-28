@@ -14,7 +14,7 @@ from ...config import settings as global_settings
 from ...services.embedding_service import EMBEDDING_INPUT_VERSION
 from ...services.embedding_client import EmbeddingRequestError, embed_text
 from ...models.ai import PhotoEmbedding
-from ...services.project_embedding_settings_service import resolve_embedding_settings
+from ...services.project_embedding_settings_service import resolve_embedding_settings_strict
 from .types import (
     DEFAULT_OCR_VECTOR_FIELD_WEIGHTS,
     DEFAULT_VECTOR_FIELD_WEIGHTS,
@@ -138,22 +138,12 @@ class VectorRecallService:
                 f"got {global_settings.embedding_dimension}"
             )
 
-        try:
-            embed_cfg = resolve_embedding_settings(self._db, project_id)
-            endpoint_url = embed_cfg["endpoint_url"]
-            api_key = embed_cfg["api_key"]
-            embedding_model = embed_cfg["model_name"]
-            timeout_seconds = embed_cfg["timeout_seconds"]
-            input_prefix_query = embed_cfg.get("input_prefix_query")
-        except RuntimeError:
-            endpoint_url = (
-                global_settings.embedding_base_url or global_settings.openai_base_url or ""
-            ).strip()
-            api_key = global_settings.embedding_api_key or global_settings.openai_api_key
-            embedding_model = global_settings.embedding_model or global_settings.openai_model
-            timeout_seconds = global_settings.embedding_timeout_seconds
-            embed_cfg = {}
-            input_prefix_query = None
+        embed_cfg = resolve_embedding_settings_strict(self._db, project_id)
+        endpoint_url = embed_cfg["endpoint_url"]
+        api_key = embed_cfg["api_key"]
+        embedding_model = embed_cfg["model_name"]
+        timeout_seconds = embed_cfg["timeout_seconds"]
+        input_prefix_query = embed_cfg.get("input_prefix_query")
 
         embed_input = semantic_query_text.strip() or normalized_query.strip() or query
         if isinstance(input_prefix_query, str) and input_prefix_query.strip():

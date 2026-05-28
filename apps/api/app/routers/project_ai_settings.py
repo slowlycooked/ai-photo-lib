@@ -16,6 +16,7 @@ from ..schemas.project_ai import (
 from ..services.project_ai_service import (
     TASK_IMAGE_ANALYSIS,
     activate_prompt_template,
+    get_project_ai_settings_strict,
     get_or_create_project_ai_settings,
 )
 
@@ -27,8 +28,22 @@ def get_project_ai_settings(
     project: Project = Depends(require_project),
     db: Session = Depends(get_db),
 ):
-    """Return the AI settings for a project, creating defaults if missing."""
-    row = get_or_create_project_ai_settings(db, project.id)
+    """Return strict project AI settings (no implicit default creation)."""
+    try:
+        row = get_project_ai_settings_strict(db, project.id)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return row
+
+
+@router.post("/{project_id}/ai-settings/init", response_model=ProjectAISettingsResponse)
+def init_project_ai_settings(
+    project_id: int,
+    project: Project = Depends(require_project),
+    db: Session = Depends(get_db),
+):
+    """Explicitly initialize project AI settings and default prompt template."""
+    row = get_or_create_project_ai_settings(db, project_id)
     db.commit()
     db.refresh(row)
     return row

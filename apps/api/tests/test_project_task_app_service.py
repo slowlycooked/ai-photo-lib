@@ -180,6 +180,32 @@ class ProjectTaskAppServiceTest(unittest.TestCase):
         self.assertEqual(task.result_payload["recent_files"][0]["status"], "failed")
         db.close()
 
+    def test_process_scan_task_marks_completed_with_errors_on_fail_fast_config(self) -> None:
+        db = self._SessionLocal()
+        project = db.query(Project).filter(Project.id == 1).first()
+        assert project is not None
+        project.photo_library_path = "/tmp/nonexistent-photo-library"
+        project.thumbnail_path = ""
+        db.commit()
+
+        task = ProjectTask(
+            project_id=1,
+            task_type=TASK_TYPE_LIBRARY_SCAN,
+            status="queued",
+            request_params={},
+        )
+        db.add(task)
+        db.commit()
+        db.refresh(task)
+
+        ProjectTaskAppService(db, session_factory=self._SessionLocal).process_task(task)
+
+        db.refresh(task)
+        self.assertEqual(task.status, "completed_with_errors")
+        self.assertGreaterEqual(int(task.progress_payload.get("errors") or 0), 1)
+        self.assertIn("Directory not found", str(task.progress_payload.get("message") or ""))
+        db.close()
+
     def test_process_reindex_task_marks_failure(self) -> None:
         db = self._SessionLocal()
         task = ProjectTask(

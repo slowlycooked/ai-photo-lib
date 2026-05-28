@@ -16,6 +16,7 @@ import {
   Star,
   AlertTriangle,
   Activity,
+  CheckCircle2,
 } from "lucide-react";
 import {
   api,
@@ -88,6 +89,85 @@ function SettingsCard({
       <div className="px-5">{children}</div>
     </div>
   );
+}
+
+function ProjectReadinessCard({ projectId }: { projectId: number }) {
+  const { data, isLoading, isError } = useQuery({
+    queryKey: ["project-readiness", projectId],
+    queryFn: () => api.projects.readiness(projectId),
+    staleTime: 30_000,
+  });
+
+  return (
+    <SettingsCard title="项目运行就绪检查">
+      <div className="py-3 space-y-3">
+        {isLoading && (
+          <div className="flex items-center gap-2 text-body-sm text-mute">
+            <Loader2 className="w-4 h-4 animate-spin" />
+            正在检查项目配置…
+          </div>
+        )}
+        {isError && (
+          <div className="flex items-center gap-2 text-body-sm text-danger">
+            <AlertCircle className="w-4 h-4" />
+            无法获取项目就绪状态，请检查 API 服务。
+          </div>
+        )}
+        {data && (
+          <>
+            <div className="flex items-center justify-between gap-3 pb-2 border-b border-hairline">
+              <span className="text-body-sm text-mute">当前项目整体状态</span>
+              <span
+                className={`inline-flex items-center gap-1 text-body-sm font-semibold ${
+                  data.ready ? "text-green-600" : "text-amber-600"
+                }`}
+              >
+                {data.ready ? <CheckCircle2 className="w-4 h-4" /> : <AlertTriangle className="w-4 h-4" />}
+                {data.ready ? "READY" : "NOT READY"}
+              </span>
+            </div>
+            {data.checks.map((check) => (
+              <div key={check.name} className="flex items-start justify-between gap-3 py-2 border-b border-hairline last:border-0">
+                <div>
+                  <p className="text-body-sm text-ink font-medium">{check.name}</p>
+                  <p className="text-caption-sm text-mute mt-0.5">{check.message}</p>
+                  {!check.ready && (
+                    <div className="mt-2">
+                      <Link
+                        to={resolveReadinessFixPath(projectId, check.name)}
+                        className="text-caption-sm text-primary hover:underline"
+                      >
+                        去修复
+                      </Link>
+                    </div>
+                  )}
+                </div>
+                <span
+                  className={`text-caption-sm font-semibold px-2 py-0.5 rounded ${
+                    check.ready
+                      ? "bg-green-50 text-green-700"
+                      : "bg-amber-50 text-amber-700"
+                  }`}
+                >
+                  {check.ready ? "READY" : "NOT READY"}
+                </span>
+              </div>
+            ))}
+          </>
+        )}
+      </div>
+    </SettingsCard>
+  );
+}
+
+function resolveReadinessFixPath(projectId: number, checkName: string): string {
+  if (checkName === "scan_runtime") {
+    return "/tasks?tab=scan";
+  }
+  if (checkName === "ai_runtime" || checkName === "embedding_runtime") {
+    return `/projects/${projectId}/settings/ai`;
+  }
+  return "/settings";
 }
 
 // ─── Library form (shared by add & edit) ─────────────────────────────────────
@@ -788,15 +868,26 @@ export function SettingsPage() {
           <LibraryManagementCard />
 
           {currentProjectId != null && (
+            <>
+              <ProjectReadinessCard projectId={currentProjectId} />
+              <SettingsCard title="项目 AI 设置">
+                <div className="py-3 flex items-center justify-between gap-3">
+                  <p className="text-body-sm text-mute">进入当前项目的模型配置、Prompt 版本与测试区。</p>
+                  <Link
+                    to={`/projects/${currentProjectId}/settings/ai`}
+                    className="px-3 py-1.5 text-body-sm rounded-md border border-hairline text-ink hover:bg-secondary-bg transition-colors"
+                  >
+                    打开项目 AI 配置
+                  </Link>
+                </div>
+              </SettingsCard>
+            </>
+          )}
+
+          {currentProjectId == null && (
             <SettingsCard title="项目 AI 设置">
-              <div className="py-3 flex items-center justify-between gap-3">
-                <p className="text-body-sm text-mute">进入当前项目的模型配置、Prompt 版本与测试区。</p>
-                <Link
-                  to={`/projects/${currentProjectId}/settings/ai`}
-                  className="px-3 py-1.5 text-body-sm rounded-md border border-hairline text-ink hover:bg-secondary-bg transition-colors"
-                >
-                  打开项目 AI 配置
-                </Link>
+              <div className="py-3 text-body-sm text-mute">
+                请先选择项目后查看项目级配置与就绪状态。
               </div>
             </SettingsCard>
           )}

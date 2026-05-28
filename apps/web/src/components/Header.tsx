@@ -22,7 +22,7 @@ export function Header() {
     () => [
       { to: "/photos", label: "照片", icon: Images },
       {
-        to: currentProjectId != null ? `/projects/${currentProjectId}/people` : "/people",
+        to: currentProjectId != null ? `/projects/${currentProjectId}/people` : "/photos",
         label: "人物",
         icon: Users,
       },

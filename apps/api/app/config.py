@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+import re
 from pathlib import Path
 from typing import Optional
 
@@ -9,6 +11,25 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # Locate the project-root .env regardless of the current working directory.
 # Path: config.py -> app/ -> api/ -> apps/ -> project_root/
 _ROOT_ENV = Path(__file__).resolve().parent.parent.parent.parent / ".env"
+_ENV_KEY_RE = re.compile(r"^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=")
+
+logger = logging.getLogger(__name__)
+
+_MANAGED_CONFIG_PREFIXES = (
+    "DATABASE_",
+    "PHOTO_",
+    "THUMBNAIL_",
+    "HOST_PHOTO_",
+    "OPENAI_",
+    "EMBEDDING_",
+    "SEARCH_",
+    "AI_",
+    "AUTH_",
+    "FACE_",
+    "LOCATION_",
+    "CORS_",
+    "API_",
+)
 
 
 class Settings(BaseSettings):
@@ -42,9 +63,15 @@ class Settings(BaseSettings):
     thumbnail_size: int = 512
     api_host: str = "0.0.0.0"
     api_port: int = 8000
+    # Used by svc.sh to control uvicorn --reload flag; not used by the API itself.
+    api_reload: bool = False
     ai_vision_max_tokens: int = 1200
     ai_vision_temperature: float = 0.1
     ai_max_retries: int = 3
+    # Used by svc.sh/worker to control AI job concurrency; not read by the API.
+    ai_worker_concurrency: int = 1
+    # Path prefix for model files used in .env variable expansion by svc.sh; not read by the API.
+    ai_photo_lib_model_root: str = ""
     # Comma-separated list of allowed CORS origins.
     # Override in .env when deploying behind a reverse proxy or custom domain.
     cors_allow_origins: str = "http://localhost:5173,http://localhost:8088"
@@ -122,3 +149,70 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+
+def _iter_env_file_keys(env_file: Path) -> set[str]:
+    if not env_file.exists():
+        return set()
+
+    keys: set[str] = set()
+    for raw_line in env_file.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        match = _ENV_KEY_RE.match(line)
+        if match:
+            keys.add(match.group(1))
+    return keys
+
+
+def _allowed_env_keys() -> set[str]:
+    allowed: set[str] = set()
+    for field_name in Settings.model_fields.keys():
+        allowed.add(field_name)
+        allowed.add(field_name.upper())
+    return allowed
+
+
+def get_unknown_config_keys(
+    env_file: Path | None = None,
+    *,
+    managed_only: bool = False,
+) -> list[str]:
+    target = env_file or _ROOT_ENV
+    env_keys = _iter_env_file_keys(target)
+    if managed_only:
+        env_keys = {
+            key
+            for key in env_keys
+            if key.startswith(_MANAGED_CONFIG_PREFIXES)
+        }
+    unknown = sorted(k for k in env_keys if k not in _allowed_env_keys())
+    return unknown
+
+
+def warn_unknown_config_keys() -> None:
+    unknown = get_unknown_config_keys()
+    if not unknown:
+        return
+    logger.warning(
+        "Unknown configuration keys detected in .env: %s. "
+        "These keys are ignored today but will become startup errors in a future release.",
+        ", ".join(unknown),
+    )
+
+
+def enforce_managed_config_keys(env_file: Path | None = None) -> None:
+    """Fail explicitly when managed config keys are unknown.
+
+    We only enforce for managed prefixes so deployment-level keys used by
+    bootstrap scripts can continue to coexist in the shared repository .env.
+    """
+    unknown = get_unknown_config_keys(env_file, managed_only=True)
+    if not unknown:
+        return
+    raise RuntimeError(
+        "Unknown managed configuration keys in .env: "
+        f"{', '.join(unknown)}. "
+        "Remove them or add explicit Settings fields before startup."
+    )

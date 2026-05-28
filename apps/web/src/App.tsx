@@ -14,6 +14,7 @@ import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { ProjectProvider } from "@/contexts/ProjectContext";
 import { api } from "@/api";
 import { configureFrontendLogger, logger } from "@/lib/logger";
+import { LegacyScanRouteRedirect } from "@/components/LegacyScanRouteRedirect";
 
 export default function App() {
   return (
@@ -83,9 +84,10 @@ function AppRoutes() {
           <Route path="/" element={<Navigate to="/photos" replace />} />
           <Route path="/login" element={<Navigate to="/photos" replace />} />
           <Route path="/photos" element={<PhotosPage />} />
-          <Route path="/scan" element={<Navigate to="/tasks?tab=scan" replace />} />
+          {/* Legacy route: keep redirect-only behavior with explicit deprecation log. */}
+          <Route path="/scan" element={<LegacyScanRouteRedirect />} />
           <Route path="/search" element={<SearchPage />} />
-          <Route path="/people" element={<PeoplePage />} />
+          <Route path="/people" element={<Navigate to="/photos" replace />} />
           <Route path="/tags" element={<TagsPage />} />
           <Route path="/tasks" element={<TasksPage />} />
           <Route path="/settings" element={<SettingsPage />} />
