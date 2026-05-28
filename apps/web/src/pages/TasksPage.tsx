@@ -10,16 +10,19 @@ import {
   Settings2,
   RotateCcw,
   ScanFace,
+  XCircle,
 } from "lucide-react";
 import { ScanPanel } from "@/components/ScanPanel";
 import { FailedJobsSection } from "@/components/tasks/FailedJobsSection";
+import { ProjectTaskFailureDetails } from "@/components/tasks/ProjectTaskFailureDetails";
+import { ProjectTaskHistorySection } from "@/components/tasks/ProjectTaskHistorySection";
 import { TaskProgressStream } from "@/components/tasks/TaskProgressStream";
 import { TaskStatusSummary } from "@/components/tasks/TaskStatusSummary";
 import { api } from "@/api";
 import { queryKeys } from "@/api/queryKeys";
 import { CapabilityMaturityBadge } from "@/components/common/CapabilityMaturityBadge";
 import { useProjectQueuedTaskStatus } from "@/hooks/useProjectQueuedTaskStatus";
-import { useScanStatus, useStartScan, useStartReindex } from "@/hooks/useScan";
+import { useCancelScan, useScanStatus, useStartScan, useStartReindex } from "@/hooks/useScan";
 import { useProjectContext } from "@/contexts/ProjectContext";
 import { CAPABILITY_MATURITY } from "@/lib/capabilityMaturity";
 
@@ -267,7 +270,7 @@ function FaceScanSection({ projectId }: { projectId: number | null }) {
         queryClient.invalidateQueries({ queryKey: ["project-review-page", projectId] });
         queryClient.invalidateQueries({ queryKey: queryKeys.projectFaces(projectId) });
       } else if (clusterStatus.status === "failed") {
-        setError(`聚类失败：${clusterStatus.recent_errors[0] ?? clusterStatus.message}`);
+        setError(`聚类失败：${clusterStatus.message}`);
       }
     }
     clusterWasActiveRef.current = isActive;
@@ -285,7 +288,7 @@ function FaceScanSection({ projectId }: { projectId: number | null }) {
         queryClient.invalidateQueries({ queryKey: ["project-review-page", projectId] });
         queryClient.invalidateQueries({ queryKey: queryKeys.projectFaces(projectId) });
       } else if (rematchStatus.status === "failed") {
-        setError(`重匹配失败：${rematchStatus.recent_errors[0] ?? rematchStatus.message}`);
+        setError(`重匹配失败：${rematchStatus.message}`);
       }
     }
     rematchWasActiveRef.current = isActive;
@@ -363,6 +366,36 @@ function FaceScanSection({ projectId }: { projectId: number | null }) {
     onError: (err: Error) => {
       setError(`重匹配失败：${err.message}`);
     },
+  });
+
+  const cancelFaceScanMutation = useMutation({
+    mutationFn: () => api.projects.cancelProjectFaceScan(projectId!),
+    onSuccess: () => {
+      setError(null);
+      setMessage("已请求取消人脸扫描任务");
+      queryClient.invalidateQueries({ queryKey: ["face-scan-status", projectId] });
+    },
+    onError: (err: Error) => setError(`取消失败：${err.message}`),
+  });
+
+  const cancelClusterMutation = useMutation({
+    mutationFn: () => api.projects.cancelClusterUnknownFaces(projectId!),
+    onSuccess: () => {
+      setError(null);
+      setMessage("已请求取消未知人脸聚类任务");
+      queryClient.invalidateQueries({ queryKey: ["face-cluster-unknown-status", projectId] });
+    },
+    onError: (err: Error) => setError(`取消失败：${err.message}`),
+  });
+
+  const cancelRematchMutation = useMutation({
+    mutationFn: () => api.projects.cancelRematchUnknownFaces(projectId!),
+    onSuccess: () => {
+      setError(null);
+      setMessage("已请求取消未知人脸重匹配任务");
+      queryClient.invalidateQueries({ queryKey: ["face-rematch-unknown-status", projectId] });
+    },
+    onError: (err: Error) => setError(`取消失败：${err.message}`),
   });
 
   const statusLoadingNow = statusLoading || settingsLoading;
@@ -446,11 +479,13 @@ function FaceScanSection({ projectId }: { projectId: number | null }) {
             clusters={clusterStatus.clusters_created} · persons={clusterStatus.persons_created} · faces={clusterStatus.faces_clustered} · assignments={clusterStatus.assignments_created}
           </p>
           <p className="text-caption-sm text-mute">{clusterStatus.message}</p>
-          {clusterStatus.recent_errors.length > 0 && (
-            <p className="text-caption-sm text-danger">
-              最近错误：{clusterStatus.recent_errors[clusterStatus.recent_errors.length - 1]}
-            </p>
-          )}
+          <ProjectTaskFailureDetails
+            projectId={projectId}
+            taskId={clusterStatus.task_id}
+            expectedCount={clusterStatus.errors}
+            title="聚类失败明细"
+            compact
+          />
         </div>
       )}
 
@@ -466,11 +501,13 @@ function FaceScanSection({ projectId }: { projectId: number | null }) {
             considered={rematchStatus.faces_considered} · matched={rematchStatus.matched_faces} · auto={rematchStatus.auto_assigned} · review={rematchStatus.review_pending}
           </p>
           <p className="text-caption-sm text-mute">{rematchStatus.message}</p>
-          {rematchStatus.recent_errors.length > 0 && (
-            <p className="text-caption-sm text-danger">
-              最近错误：{rematchStatus.recent_errors[rematchStatus.recent_errors.length - 1]}
-            </p>
-          )}
+          <ProjectTaskFailureDetails
+            projectId={projectId}
+            taskId={rematchStatus.task_id}
+            expectedCount={rematchStatus.errors}
+            title="重匹配失败明细"
+            compact
+          />
         </div>
       )}
 
@@ -482,6 +519,16 @@ function FaceScanSection({ projectId }: { projectId: number | null }) {
       </p>
 
       <div className="flex flex-wrap items-center gap-2">
+        {!!status?.running && (
+          <button
+            onClick={() => cancelFaceScanMutation.mutate()}
+            disabled={!canRun || cancelFaceScanMutation.isPending}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-red-200 text-danger text-btn-sm hover:bg-red-50 disabled:opacity-50 transition-colors"
+          >
+            <XCircle className="w-3.5 h-3.5" />
+            {cancelFaceScanMutation.isPending ? "取消中…" : "取消人脸扫描"}
+          </button>
+        )}
         <button
           onClick={() => clusterMutation.mutate()}
           disabled={!canRun || clusterMutation.isPending || !!clusterStatus?.running}
@@ -494,6 +541,16 @@ function FaceScanSection({ projectId }: { projectId: number | null }) {
               ? "聚类任务进行中…"
               : "聚类未知人脸"}
         </button>
+        {!!clusterStatus?.running && (
+          <button
+            onClick={() => cancelClusterMutation.mutate()}
+            disabled={!canRun || cancelClusterMutation.isPending}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-red-200 text-danger text-btn-sm hover:bg-red-50 disabled:opacity-50 transition-colors"
+          >
+            <XCircle className="w-3.5 h-3.5" />
+            {cancelClusterMutation.isPending ? "取消中…" : "取消聚类"}
+          </button>
+        )}
         <button
           onClick={() => rematchMutation.mutate()}
           disabled={!canRun || rematchMutation.isPending || !!rematchStatus?.running}
@@ -506,6 +563,16 @@ function FaceScanSection({ projectId }: { projectId: number | null }) {
               ? "重匹配进行中…"
               : "重匹配未知人脸"}
         </button>
+        {!!rematchStatus?.running && (
+          <button
+            onClick={() => cancelRematchMutation.mutate()}
+            disabled={!canRun || cancelRematchMutation.isPending}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-red-200 text-danger text-btn-sm hover:bg-red-50 disabled:opacity-50 transition-colors"
+          >
+            <XCircle className="w-3.5 h-3.5" />
+            {cancelRematchMutation.isPending ? "取消中…" : "取消重匹配"}
+          </button>
+        )}
         <Link
           to={reviewPath}
           className="px-3 py-1.5 rounded-md border border-hairline text-btn-sm hover:bg-surface-card transition-colors"
@@ -551,6 +618,7 @@ export function TasksPage() {
   const { data: scanStatus, isLoading: scanLoading } = useScanStatus(currentProjectId);
   const { mutate: startScan, isPending, error: scanError } = useStartScan(currentProjectId);
   const { mutate: startReindex, isPending: isReindexPending } = useStartReindex(currentProjectId);
+  const { mutate: cancelScan, isPending: isCancelScanPending } = useCancelScan(currentProjectId);
   const [searchParams, setSearchParams] = useSearchParams();
 
   const tabParam = searchParams.get("tab");
@@ -629,6 +697,7 @@ export function TasksPage() {
       {tab === "scan" && (
         <section className="space-y-3">
           <ScanPanel
+            projectId={currentProjectId}
             status={scanStatus}
             isLoading={scanLoading}
             onStart={() => startScan()}
@@ -636,6 +705,8 @@ export function TasksPage() {
             mutationError={scanError?.message ?? null}
             onReindex={(scope) => startReindex(scope)}
             isReindexPending={isReindexPending}
+            onCancel={() => cancelScan()}
+            isCancelPending={isCancelScanPending}
           />
         </section>
       )}
@@ -647,6 +718,8 @@ export function TasksPage() {
       {tab === "face-scan" && (
         <FaceScanSection projectId={currentProjectId} />
       )}
+
+      <ProjectTaskHistorySection projectId={currentProjectId} />
     </main>
   );
 }

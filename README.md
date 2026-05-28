@@ -13,6 +13,19 @@
 - 初始化脚本：`./scripts/bootstrap-macos.sh`
 - 配置方式：每台机器各自维护一份 `.env`
 
+## 文档入口与分层
+
+文档按三层组织，避免“目标态设计”和“当前可运行能力”混读：
+
+1. README（当前能力与入口）
+   - 本文件：当前能力、怎么跑、怎么部署、已知边界。
+2. Design-document（架构与领域资料）
+   - [Design-document/README.md](Design-document/README.md)
+   - 覆盖架构目标、领域设计、任务体系、People、Search 等。
+3. Runbook（运维操作手册）
+   - [Runbook/README.md](Runbook/README.md)
+   - 覆盖迁移、回填、故障排查、发布检查。
+
 ## People Recognition 当前状态
 
 People Recognition 已经从“只读调试阶段”进入“人工纠错闭环已成型、工程收敛仍在继续”的阶段。
@@ -63,7 +76,7 @@ People Recognition 已经从“只读调试阶段”进入“人工纠错闭环�
 | Prompt 测试 | 稳定 | Prompt 测试支持项目模板、测试图片、解析结果与本地历史回看。 |
 | Embedding rebuild | 稳定 | 已支持项目级状态检查、按范围重建与任务入队。 |
 
-发布前检查清单见：[Design-document/release-checklist.md](Design-document/release-checklist.md)。
+发布前检查清单见：[Runbook/release-checklist.md](Runbook/release-checklist.md)。
 
 发布前一键预检命令：
 
@@ -72,6 +85,54 @@ People Recognition 已经从“只读调试阶段”进入“人工纠错闭环�
 ```
 
 该预检会覆盖后端发布审计、项目隔离、任务/People/Search 主链路、前端关键页面测试、TypeScript typecheck 和前端 build。
+
+## 代码与文档能力对齐
+
+本节用于对齐 README、设计文档和当前代码的实际能力边界，避免把目标态误读成已完成能力。
+
+当前代码已经匹配 README 的主能力：
+
+- 后端主入口 `apps/api/app/main.py` 已统一挂载项目级路由，覆盖 project / photos / folders / scan / ai jobs / ai settings / prompt templates / embeddings / search / search settings / tags / face settings / faces / people。
+- 前端主入口 `apps/web/src/App.tsx` 已覆盖照片、搜索、标签、任务、设置、AI 设置、People、People Review 与登录；旧 `/scan` 只保留重定向。
+- Worker 已从单纯处理 `ai_jobs` 演进为同时处理 `ProjectTask` 和 `AIJob`，批量 face scan、embedding rebuild、unknown clustering/rematch 等项目级任务已进入统一任务链路。
+- 启动配置、schema self-check、系统健康检查、debug matrix、项目隔离测试和 release preflight 已形成基本发布护栏。
+
+需要特别说明的边界：
+
+- `./scripts/svc.sh start api` / `restart api` 会先执行 Alembic migration；但直接运行 `uvicorn app.main:app` 只做 schema self-check，不会自动升级数据库。
+- 设计文档里的 Repository / Query Service / Application Service 分层仍是目标态，当前代码已经部分落地，但仍存在若干 router 直接查询 DB、service 体积偏大、worker 编排逻辑偏集中的情况。
+- `Design-document/DESIGN.md` 是早期 Pinterest 风格设计 token 记录，不代表当前产品架构；当前架构边界以 `README.md`、`Design-document/architect-design.md`、`Design-document/faceDetectionDesgin.md` 和 release checklist 为准。
+- Docker 文件如果存在，仅作为历史兼容和参考；默认运行路径是 macOS native 脚本。
+
+## 优化与收敛建议
+
+优先级建议按“高收益、低风险、可持续”排序：
+
+1. 拆分后端大服务
+   - `apps/api/app/services/search/app_service.py`、`query_understanding_service.py`、`people_mutation_service.py` 已明显偏大。
+   - 建议先按 recall / query parsing / filter policy / hydrator / debug trace 拆 search，再按 confirm / exclude / move / merge / split 拆 People mutation。
+
+2. 收敛 router 里的 DB 读写
+   - `project_faces.py`、`project_prompt_templates.py`、`project_embeddings.py`、`project_photos.py`、`projects.py` 仍有不少直接 `db.query(...)`。
+   - 建议把复杂查询迁到 Query Service，把写入迁到 Application Service / Repository；router 只保留参数、鉴权、HTTP 错误映射。
+
+3. 清理遗留入口和兼容代码
+   - 前端 `/scan` 已是 legacy redirect，后端仍保留 legacy embedding rebuild endpoint。
+   - 建议给 legacy endpoint 加明确 sunset 版本，并在 release checklist 中检查“主流程不调用 legacy API”。
+
+4. 任务体系补齐暂停 / 取消 / 错误明细
+   - README 已明确任务中心还缺暂停、取消、子任务错误照片明细。
+   - 建议优先补 ProjectTask 状态机和错误明细读模型，再做前端交互；这会直接提升长任务可运维性。
+
+5. 前端瘦身和页面拆分
+   - `SettingsPage.tsx`、`SearchResultGrid.tsx`、`PersonDetailPanel.tsx`、`TasksPage.tsx`、`PhotoCard.tsx` 体积偏大。
+   - 建议按 data hook、view model、toolbar/filter、detail panel、action dialog 拆分，并把 API 类型继续模块化，减少 `apps/web/src/api/types.ts` 单文件膨胀。
+
+6. 文档分层治理
+   - README 保持“如何运行 + 当前能力边界 + 发布护栏”。
+   - 设计文档保留“目标架构 / 领域设计”。
+   - Runbook 独立维护“迁移 / 回填 / 故障排查 / 发布检查”。
+   - 过期设计稿需要标注历史状态，避免与当前 UI 和架构混淆。
 
 ## 架构
 
@@ -188,7 +249,7 @@ AUTH_SESSION_TIMEOUT_MINUTES=30
 - `init-db.sh` 仅执行 `alembic upgrade head`。
 - `db-schema.sh upgrade` 与 `init-db.sh` 作用等价，二选一即可。
 - 如果出现 `alembic_version` 多行异常，可执行 `./scripts/db-schema.sh fix-version` 后再 `upgrade`。
-- API 启动不会自动执行 migration；如果数据库未升级到最新版本，启动时会直接报 schema self-check 错误。
+- 通过 `./scripts/svc.sh start api` 或 `restart api` 启动时会先执行 migration；直接运行 `uvicorn app.main:app` 时不会自动执行 migration，如果数据库未升级到最新版本，启动时会直接报 schema self-check 错误。
 
 ### 启动开发服务
 
@@ -435,8 +496,8 @@ curl -X POST "http://127.0.0.1:8000/projects/1/scan/reindex?scope=all"
 
 更详细的操作步骤见：
 
-- `Design-document/location-backfill-runbook.md`
-- `Design-document/scanner-failfast-runbook.md`
+- `Runbook/location-backfill-runbook.md`
+- `Runbook/scanner-failfast-runbook.md`
 
 ## 9. 当前保留的 Docker 文件
 

@@ -6,13 +6,19 @@ import sqlalchemy as sa
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from ..models.face import FaceDetection, Person, PersonFaceAssignment
-from .people_assignment_constants import STATUS_REVIEW_PENDING
+from ..models.face import FaceDetection, FaceNegativeConstraint, Person, PersonFaceAssignment
+from .people_assignment_constants import (
+    STATUS_AUTO_ASSIGNED,
+    STATUS_HUMAN_CONFIRMED,
+    STATUS_HUMAN_CORRECTED,
+    STATUS_REVIEW_PENDING,
+)
 from ..schemas.face import (
     FaceDetectionResponse,
     PersonDetailResponse,
     PersonFaceAssignmentResponse,
     PersonListResponse,
+    PersonMatchExplanationResponse,
     PersonReviewListResponse,
     PersonSummaryResponse,
 )
@@ -58,10 +64,19 @@ class PeopleQueryService:
             .all()
         )
 
+        constraints_by_face = self._load_negative_constraints(
+            project_id=project_id,
+            face_ids=[face_detection.id for _, face_detection in rows],
+        )
+
         return PersonReviewListResponse(
             total=total,
             items=[
-                self._serialize_assignment(assignment, face_detection)
+                self._serialize_assignment(
+                    assignment,
+                    face_detection,
+                    constraints_by_face=constraints_by_face,
+                )
                 for assignment, face_detection in rows
             ],
         )
@@ -153,12 +168,46 @@ class PeopleQueryService:
             .all()
         )
 
+        constraints_by_face = self._load_negative_constraints(
+            project_id=project_id,
+            face_ids=[face_detection.id for _, face_detection in rows],
+        )
+
         payload = PersonDetailResponse.model_validate(person)
         payload.assignments = [
-            self._serialize_assignment(assignment, face_detection)
+            self._serialize_assignment(
+                assignment,
+                face_detection,
+                constraints_by_face=constraints_by_face,
+            )
             for assignment, face_detection in rows
         ]
         return payload
+
+    def _load_negative_constraints(
+        self,
+        *,
+        project_id: int,
+        face_ids: list[int],
+    ) -> dict[int, set[int]]:
+        unique_face_ids = sorted({int(face_id) for face_id in face_ids})
+        if not unique_face_ids:
+            return {}
+        rows = (
+            self._db.query(
+                FaceNegativeConstraint.face_detection_id,
+                FaceNegativeConstraint.not_person_id,
+            )
+            .filter(
+                FaceNegativeConstraint.project_id == project_id,
+                FaceNegativeConstraint.face_detection_id.in_(unique_face_ids),
+            )
+            .all()
+        )
+        grouped: dict[int, set[int]] = {}
+        for face_id, not_person_id in rows:
+            grouped.setdefault(int(face_id), set()).add(int(not_person_id))
+        return grouped
 
     def _get_person_or_404(self, project_id: int, person_id: int) -> Person:
         person = (
@@ -174,7 +223,23 @@ class PeopleQueryService:
     def _serialize_assignment(
         assignment: PersonFaceAssignment,
         face_detection: FaceDetection,
+        *,
+        constraints_by_face: Optional[dict[int, set[int]]] = None,
     ) -> PersonFaceAssignmentResponse:
+        negatives = (constraints_by_face or {}).get(face_detection.id, set())
+        negative_count = len(negatives)
+        is_human_confirmed = assignment.assignment_status in {
+            STATUS_HUMAN_CONFIRMED,
+            STATUS_HUMAN_CORRECTED,
+        }
+        explanation = PersonMatchExplanationResponse(
+            similarity=assignment.similarity_score,
+            source=assignment.assignment_source,
+            is_auto=assignment.assignment_status == STATUS_AUTO_ASSIGNED,
+            is_human_confirmed=is_human_confirmed,
+            negative_constraint_affected=negative_count > 0,
+            negative_constraint_count=negative_count,
+        )
         return PersonFaceAssignmentResponse(
             id=assignment.id,
             project_id=assignment.project_id,
@@ -188,5 +253,6 @@ class PeopleQueryService:
             is_training_candidate=assignment.is_training_candidate,
             created_at=assignment.created_at,
             updated_at=assignment.updated_at,
+            explanation=explanation,
             face_detection=FaceDetectionResponse.model_validate(face_detection),
         )

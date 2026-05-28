@@ -56,6 +56,9 @@ import type {
   PromptTemplateTestRequest,
   PromptTemplateTestResponse,
   PromptTemplateUpdate,
+  ProjectTask,
+  ProjectTaskFailureListResponse,
+  ProjectTaskListResponse,
   RebuildRequest,
   RebuildResponse,
   ScanStatus,
@@ -99,6 +102,11 @@ export const projectsApi = {
 
   scanStatus: (id: number) => request<ScanStatus>(`/projects/${id}/scan/status`),
 
+  cancelScan: (id: number) =>
+    request<ScanStatus>(`/projects/${id}/scan/cancel`, {
+      method: "POST",
+    }),
+
   startReindex: (
     id: number,
     scope: "all" | "missing_metadata" | "missing_location" = "missing_metadata",
@@ -107,6 +115,57 @@ export const projectsApi = {
       `/projects/${id}/scan/reindex?scope=${scope}`,
       { method: "POST" },
     ),
+
+  tasks: (
+    id: number,
+    params: {
+      status?: string;
+      task_type?: string;
+      limit?: number;
+      offset?: number;
+    } = {},
+  ) =>
+    request<ProjectTaskListResponse>(
+      `/projects/${id}/tasks${qs({
+        status: params.status,
+        task_type: params.task_type,
+        limit: params.limit ?? 20,
+        offset: params.offset ?? 0,
+      })}`,
+    ),
+
+  task: (id: number, taskId: number) =>
+    request<ProjectTask>(`/projects/${id}/tasks/${taskId}`),
+
+  taskFailures: (
+    id: number,
+    taskId: number,
+    params: {
+      limit?: number;
+      offset?: number;
+    } = {},
+  ) =>
+    request<ProjectTaskFailureListResponse>(
+      `/projects/${id}/tasks/${taskId}/failures${qs({
+        limit: params.limit ?? 20,
+        offset: params.offset ?? 0,
+      })}`,
+    ),
+
+  pauseTask: (id: number, taskId: number) =>
+    request<ProjectTask>(`/projects/${id}/tasks/${taskId}/pause`, {
+      method: "POST",
+    }),
+
+  cancelTask: (id: number, taskId: number) =>
+    request<ProjectTask>(`/projects/${id}/tasks/${taskId}/cancel`, {
+      method: "POST",
+    }),
+
+  resumeTask: (id: number, taskId: number) =>
+    request<ProjectTask>(`/projects/${id}/tasks/${taskId}/resume`, {
+      method: "POST",
+    }),
 
   // ── AI Jobs ───────────────────────────────────────────────────────────────
 
@@ -213,6 +272,11 @@ export const projectsApi = {
   projectFaceScanStatus: (id: number) =>
     request<FaceScanProjectStatusResponse>(`/projects/${id}/face-scan-project/status`),
 
+  cancelProjectFaceScan: (id: number) =>
+    request<FaceScanProjectStatusResponse>(`/projects/${id}/face-scan-project/cancel`, {
+      method: "POST",
+    }),
+
   clusterUnknownFaces: (id: number, body: FaceClusterUnknownRequest = {}) =>
     request<FaceClusterUnknownResponse>(`/projects/${id}/face-cluster-unknown`, {
       method: "POST",
@@ -223,6 +287,11 @@ export const projectsApi = {
   projectFaceClusterUnknownStatus: (id: number) =>
     request<FaceClusterUnknownStatusResponse>(`/projects/${id}/face-cluster-unknown/status`),
 
+  cancelClusterUnknownFaces: (id: number) =>
+    request<FaceClusterUnknownStatusResponse>(`/projects/${id}/face-cluster-unknown/cancel`, {
+      method: "POST",
+    }),
+
   rematchUnknownFaces: (id: number, body: FaceRematchUnknownRequest = {}) =>
     request<FaceRematchUnknownResponse>(`/projects/${id}/face-rematch-unknown`, {
       method: "POST",
@@ -232,6 +301,11 @@ export const projectsApi = {
 
   projectFaceRematchUnknownStatus: (id: number) =>
     request<FaceRematchUnknownStatusResponse>(`/projects/${id}/face-rematch-unknown/status`),
+
+  cancelRematchUnknownFaces: (id: number) =>
+    request<FaceRematchUnknownStatusResponse>(`/projects/${id}/face-rematch-unknown/cancel`, {
+      method: "POST",
+    }),
 
   faces: (
     id: number,

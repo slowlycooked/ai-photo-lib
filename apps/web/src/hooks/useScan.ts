@@ -51,3 +51,16 @@ export function useStartScan(projectId: number | null) {
     },
   });
 }
+
+export function useCancelScan(projectId: number | null) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => {
+      if (projectId === null) return Promise.reject(new Error("No project selected"));
+      return api.projects.cancelScan(projectId);
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.projectScanStatus(projectId) });
+    },
+  });
+}

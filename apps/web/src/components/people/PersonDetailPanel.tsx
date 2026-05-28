@@ -248,6 +248,7 @@ export function PersonDetailPanel({
 
   const renderAssignmentCard = (assignment: PersonDetail["assignments"][number]) => {
     const face = assignment.face_detection;
+    const explanation = assignment.explanation;
     const splitSelectable = assignment.assignment_status !== "rejected";
     const splitChecked = splitFaceIds.includes(face.id);
     return (
@@ -313,6 +314,30 @@ export function PersonDetailPanel({
             {face.face_quality_score != null && (
               <span>质量 {(face.face_quality_score * 100).toFixed(0)}%</span>
             )}
+          </div>
+          <div className="mt-2 rounded-md border border-hairline bg-canvas px-2.5 py-2 text-caption-sm text-mute space-y-1">
+            <p>
+              匹配解释：source={explanation?.source ?? assignment.assignment_source}
+              {" · auto="}
+              {String(explanation?.is_auto ?? assignment.assignment_status === "auto_assigned")}
+              {" · human_confirmed="}
+              {String(
+                explanation?.is_human_confirmed ??
+                  ["human_confirmed", "human_corrected"].includes(assignment.assignment_status),
+              )}
+            </p>
+            <p>
+              similarity=
+              {explanation?.similarity != null
+                ? `${(explanation.similarity * 100).toFixed(0)}%`
+                : assignment.similarity_score != null
+                  ? `${(assignment.similarity_score * 100).toFixed(0)}%`
+                  : "n/a"}
+              {" · negative_constraint="}
+              {String(explanation?.negative_constraint_affected ?? false)}
+              {" · negative_count="}
+              {explanation?.negative_constraint_count ?? 0}
+            </p>
           </div>
           <div className="mt-2 flex flex-wrap gap-2">
             <button

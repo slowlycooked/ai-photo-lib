@@ -13,6 +13,7 @@ class ScanFileProgressEntry(BaseModel):
 
 
 class ScanStatus(BaseModel):
+    task_id: Optional[int] = None
     running: bool
     scanned: int
     inserted: int

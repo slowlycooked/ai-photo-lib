@@ -1,12 +1,116 @@
 """Debug payload builder for search."""
 from __future__ import annotations
 
+import json
+import logging
+from dataclasses import dataclass
 from typing import Optional
 
 from ..query_understanding_service import SearchQueryPlan
 from .concept_recall import derive_concept_query_context
-from .settings_resolver import SearchSettingsResolver
 from .types import EffectiveSearchSettings
+
+
+@dataclass
+class SearchDebugContext:
+    query_plan: SearchQueryPlan
+    settings: EffectiveSearchSettings
+    trace: list
+    embedding_dimension: int
+    people_query_plan: Optional[dict] = None
+    people_candidates: Optional[list] = None
+    people_filter_mode: Optional[str] = None
+    matched_person_ids: Optional[list[int]] = None
+    metadata_filter_active: bool = False
+    metadata_filter_skipped_reason: Optional[str] = None
+    metadata_only_allowed: bool = True
+    concept_terms: Optional[list[str]] = None
+    concept_entity_terms: Optional[list[str]] = None
+    concept_debug: Optional[dict] = None
+    concept_candidates: int = 0
+    people_visual_candidates: int = 0
+
+
+def log_debug_payload(logger: logging.Logger, debug_payload: dict) -> None:
+    """Emit a compact summary and the full debug payload for diagnostics."""
+    try:
+        logger.info(
+            "[search][debug] intent=%s keyword_candidates=%s concept_candidates=%s vector_candidates=%s merged_candidates=%s filtered_candidates=%s stale_embedding_filtered=%s",
+            debug_payload.get("intent"),
+            debug_payload.get("keyword_candidates", 0),
+            debug_payload.get("concept_candidates", 0),
+            debug_payload.get("vector_candidates", 0),
+            debug_payload.get("merged_candidates", 0),
+            debug_payload.get("filtered_candidates", 0),
+            debug_payload.get("stale_embedding_filtered", 0),
+        )
+        logger.debug("[search][debug] payload=%s", json.dumps(debug_payload, ensure_ascii=False, default=str))
+    except Exception:
+        logger.exception("[search][debug] failed to emit payload")
+
+
+def build_logged_debug_payload(
+    logger: logging.Logger,
+    context: SearchDebugContext,
+    *,
+    mode: str,
+    embedding_model: str = "",
+    keyword_candidates: int = 0,
+    vector_candidates: int = 0,
+    merged_candidates: int = 0,
+    fallback_reason: str = "",
+    displayed_candidates: int = 0,
+    filtered_candidates: int = 0,
+    filtered_out_samples: Optional[list] = None,
+    stale_embedding_filtered: int = 0,
+    concept_candidates: Optional[int] = None,
+    people_visual_candidates: Optional[int] = None,
+    metadata_filters: Optional[dict] = None,
+    metadata_candidates: int = 0,
+    metadata_only: bool = False,
+) -> dict:
+    """Build and emit the debug payload from shared search debug context."""
+    payload = build_debug_payload(
+        query_plan=context.query_plan,
+        mode=mode,
+        embedding_model=embedding_model,
+        embedding_dimension=context.embedding_dimension,
+        keyword_candidates=keyword_candidates,
+        concept_candidates=(
+            context.concept_candidates
+            if concept_candidates is None
+            else concept_candidates
+        ),
+        people_visual_candidates=(
+            context.people_visual_candidates
+            if people_visual_candidates is None
+            else people_visual_candidates
+        ),
+        vector_candidates=vector_candidates,
+        merged_candidates=merged_candidates,
+        fallback_reason=fallback_reason,
+        settings=context.settings,
+        trace=context.trace,
+        displayed_candidates=displayed_candidates,
+        filtered_candidates=filtered_candidates,
+        filtered_out_samples=filtered_out_samples,
+        stale_embedding_filtered=stale_embedding_filtered,
+        metadata_filters=metadata_filters,
+        metadata_candidates=metadata_candidates,
+        metadata_only=metadata_only,
+        people_query_plan=context.people_query_plan,
+        people_candidates=context.people_candidates,
+        people_filter_mode=context.people_filter_mode,
+        matched_person_ids=context.matched_person_ids,
+        metadata_filter_active=context.metadata_filter_active,
+        metadata_filter_skipped_reason=context.metadata_filter_skipped_reason,
+        metadata_only_allowed=context.metadata_only_allowed,
+        concept_terms=context.concept_terms,
+        concept_entity_terms=context.concept_entity_terms,
+        concept_debug=context.concept_debug,
+    )
+    log_debug_payload(logger, payload)
+    return payload
 
 
 def build_debug_payload(

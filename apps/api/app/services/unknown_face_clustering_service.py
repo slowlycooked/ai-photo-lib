@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Callable, Optional
 
 import sqlalchemy as sa
 from sqlalchemy import inspect
@@ -37,6 +37,7 @@ def cluster_unknown_faces(
     project_id: int,
     max_faces: int = 500,
     photo_ids: Optional[list[int]] = None,
+    progress_callback: Optional[Callable[[dict], None]] = None,
 ) -> UnknownFaceClusteringResult:
     if not _has_unknown_clustering_tables(db):
         return UnknownFaceClusteringResult(
@@ -99,7 +100,7 @@ def cluster_unknown_faces(
         )
 
     clusters: list[_Cluster] = []
-    for face_id, vector in candidates:
+    for index, (face_id, vector) in enumerate(candidates, start=1):
         best_index = -1
         best_similarity = -1.0
         for i, cluster in enumerate(clusters):
@@ -118,6 +119,24 @@ def cluster_unknown_faces(
         else:
             clusters.append(_Cluster(centroid=vector, face_ids=[face_id], vectors=[vector]))
 
+        if progress_callback is not None and (index == len(candidates) or index % 50 == 0):
+            progress_callback(
+                {
+                    "project_id": project_id,
+                    "task_id": None,
+                    "status": "running",
+                    "running": True,
+                    "max_faces": max_faces,
+                    "clusters_created": len(clusters),
+                    "persons_created": 0,
+                    "faces_clustered": index,
+                    "assignments_created": 0,
+                    "errors": 0,
+                    "recent_errors": [],
+                    "message": f"clustering unknown faces ({index}/{len(candidates)})",
+                }
+            )
+
     now = datetime.now(timezone.utc)
     persons_created = 0
     assignments_created = 0
@@ -129,7 +148,7 @@ def cluster_unknown_faces(
         or 0
     )
 
-    for cluster in clusters:
+    for index, cluster in enumerate(clusters, start=1):
         person_name_seq += 1
         person = Person(
             project_id=project_id,
@@ -175,6 +194,24 @@ def cluster_unknown_faces(
                 )
             )
             assignments_created += 1
+
+        if progress_callback is not None and (index == len(clusters) or index % 20 == 0):
+            progress_callback(
+                {
+                    "project_id": project_id,
+                    "task_id": None,
+                    "status": "running",
+                    "running": True,
+                    "max_faces": max_faces,
+                    "clusters_created": len(clusters),
+                    "persons_created": persons_created,
+                    "faces_clustered": len(candidates),
+                    "assignments_created": assignments_created,
+                    "errors": 0,
+                    "recent_errors": [],
+                    "message": f"creating review groups ({index}/{len(clusters)})",
+                }
+            )
 
     db.flush()
 

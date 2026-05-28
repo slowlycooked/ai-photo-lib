@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Collection, Optional
 
@@ -16,11 +17,65 @@ from .people_assignment_constants import (
     STATUS_REVIEW_PENDING,
 )
 from .people_learning_service import rebuild_person_centroid_prototype
+from .project_task_service import enqueue_face_rematch_unknown_task
+
+_DEFAULT_MANUAL_REMATCH_MAX_FACES = 1000
+
+
+@dataclass
+class PeopleFeedbackEffects:
+    prototype_rebuilt: bool = False
+    rebuilt_person_ids: list[int] = field(default_factory=list)
+    unknown_rematch_requested: bool = False
+    unknown_rematch_scope: Optional[str] = None
+    unknown_rematch_person_id: Optional[int] = None
+    unknown_rematch_task_id: Optional[int] = None
+    unknown_rematch_task_created: bool = False
 
 
 class PeopleMutationService:
     def __init__(self, db: Session) -> None:
         self._db = db
+        self._last_feedback_effects = PeopleFeedbackEffects()
+
+    def get_feedback_effects(self) -> PeopleFeedbackEffects:
+        return self._last_feedback_effects
+
+    def _reset_feedback_effects(self) -> None:
+        self._last_feedback_effects = PeopleFeedbackEffects()
+
+    def _set_feedback_effects(
+        self,
+        *,
+        project_id: int,
+        rebuilt_person_ids: Collection[int],
+        rematch_scope: Optional[str] = None,
+        rematch_person_id: Optional[int] = None,
+    ) -> None:
+        unique_person_ids = sorted({int(person_id) for person_id in rebuilt_person_ids})
+        effects = PeopleFeedbackEffects(
+            prototype_rebuilt=bool(unique_person_ids),
+            rebuilt_person_ids=unique_person_ids,
+        )
+        if rematch_scope:
+            effects.unknown_rematch_requested = True
+            effects.unknown_rematch_scope = rematch_scope
+            effects.unknown_rematch_person_id = rematch_person_id
+            try:
+                result = enqueue_face_rematch_unknown_task(
+                    self._db,
+                    project_id=project_id,
+                    max_faces=_DEFAULT_MANUAL_REMATCH_MAX_FACES,
+                    scope=rematch_scope,
+                    person_id=rematch_person_id,
+                )
+                effects.unknown_rematch_task_id = result.task.id
+                effects.unknown_rematch_task_created = bool(result.created)
+            except Exception:  # noqa: BLE001
+                self._db.rollback()
+                effects.unknown_rematch_task_id = None
+                effects.unknown_rematch_task_created = False
+        self._last_feedback_effects = effects
 
     def create_person(
         self,
@@ -29,6 +84,7 @@ class PeopleMutationService:
         display_name: Optional[str],
         is_named: bool,
     ) -> Person:
+        self._reset_feedback_effects()
         now = datetime.now(timezone.utc)
         resolved_display_name = (display_name or "").strip()
         if not resolved_display_name:
@@ -50,6 +106,7 @@ class PeopleMutationService:
         )
         self._db.add(person)
         self._db.commit()
+        self._set_feedback_effects(project_id=project_id, rebuilt_person_ids=[])
         self._db.refresh(person)
         return person
 
@@ -60,6 +117,7 @@ class PeopleMutationService:
         person_id: int,
         display_name: str,
     ) -> Person:
+        self._reset_feedback_effects()
         person = self._get_person_or_404(project_id, person_id)
         resolved_display_name = display_name.strip()
         if not resolved_display_name:
@@ -69,6 +127,7 @@ class PeopleMutationService:
         person.is_named = True
         person.updated_at = datetime.now(timezone.utc)
         self._db.commit()
+        self._set_feedback_effects(project_id=project_id, rebuilt_person_ids=[])
         self._db.refresh(person)
         return person
 
@@ -78,6 +137,7 @@ class PeopleMutationService:
         project_id: int,
         person_id: int,
     ) -> None:
+        self._reset_feedback_effects()
         person = self._get_person_or_404(project_id, person_id)
         active_assignment_count = (
             self._db.query(sa.func.count(PersonFaceAssignment.id))
@@ -116,6 +176,7 @@ class PeopleMutationService:
         )
         self._db.delete(person)
         self._db.commit()
+        self._set_feedback_effects(project_id=project_id, rebuilt_person_ids=[])
 
     def merge_people(
         self,
@@ -124,6 +185,7 @@ class PeopleMutationService:
         source_person_id: int,
         target_person_id: int,
     ) -> tuple[Person, Person, int]:
+        self._reset_feedback_effects()
         source_person = self._get_person_or_404(project_id, source_person_id)
         target_person = self._get_person_or_404(project_id, target_person_id)
         if source_person.id == target_person.id:
@@ -173,6 +235,12 @@ class PeopleMutationService:
 
         self._finalize_people_updates(project_id=project_id, person_ids=[source_person.id, target_person.id])
         self._db.commit()
+        self._set_feedback_effects(
+            project_id=project_id,
+            rebuilt_person_ids=[source_person.id, target_person.id],
+            rematch_scope="person",
+            rematch_person_id=target_person.id,
+        )
         self._db.refresh(source_person)
         self._db.refresh(target_person)
         return source_person, target_person, moved_assignments
@@ -185,6 +253,7 @@ class PeopleMutationService:
         face_detection_ids: list[int],
         new_display_name: Optional[str],
     ) -> tuple[Person, Person, int]:
+        self._reset_feedback_effects()
         source_person = self._get_person_or_404(project_id, person_id)
         now = datetime.now(timezone.utc)
         face_ids = sorted({int(face_id) for face_id in face_detection_ids})
@@ -278,17 +347,24 @@ class PeopleMutationService:
 
         self._finalize_people_updates(project_id=project_id, person_ids=[source_person.id, target_person.id])
         self._db.commit()
+        self._set_feedback_effects(
+            project_id=project_id,
+            rebuilt_person_ids=[source_person.id, target_person.id],
+            rematch_scope="person",
+            rematch_person_id=target_person.id,
+        )
         self._db.refresh(source_person)
         self._db.refresh(target_person)
         return source_person, target_person, moved_assignments
 
-    def confirm_face_assignment(
+    def confirm_assignment(
         self,
         *,
         project_id: int,
         person_id: int,
         face_id: int,
     ) -> Person:
+        self._reset_feedback_effects()
         person = self._get_person_or_404(project_id, person_id)
         self._get_face_or_404(project_id, face_id)
         assignment = self._get_assignment(
@@ -357,16 +433,32 @@ class PeopleMutationService:
 
         self._finalize_people_updates(project_id=project_id, person_ids=touched_person_ids)
         self._db.commit()
+        self._set_feedback_effects(
+            project_id=project_id,
+            rebuilt_person_ids=touched_person_ids,
+            rematch_scope="person",
+            rematch_person_id=person_id,
+        )
         self._db.refresh(person)
         return person
 
-    def reject_face_assignment(
+    def confirm_face_assignment(
         self,
         *,
         project_id: int,
         person_id: int,
         face_id: int,
     ) -> Person:
+        return self.confirm_assignment(project_id=project_id, person_id=person_id, face_id=face_id)
+
+    def exclude_assignment(
+        self,
+        *,
+        project_id: int,
+        person_id: int,
+        face_id: int,
+    ) -> Person:
+        self._reset_feedback_effects()
         person = self._get_person_or_404(project_id, person_id)
         self._get_face_or_404(project_id, face_id)
         assignment = self._get_assignment(
@@ -394,10 +486,25 @@ class PeopleMutationService:
 
         self._finalize_people_updates(project_id=project_id, person_ids=[person_id])
         self._db.commit()
+        self._set_feedback_effects(
+            project_id=project_id,
+            rebuilt_person_ids=[person_id],
+            rematch_scope="person",
+            rematch_person_id=person_id,
+        )
         self._db.refresh(person)
         return person
 
-    def move_face_assignment(
+    def reject_face_assignment(
+        self,
+        *,
+        project_id: int,
+        person_id: int,
+        face_id: int,
+    ) -> Person:
+        return self.exclude_assignment(project_id=project_id, person_id=person_id, face_id=face_id)
+
+    def move_face(
         self,
         *,
         project_id: int,
@@ -405,6 +512,7 @@ class PeopleMutationService:
         face_id: int,
         target_person_id: int,
     ) -> tuple[Person, Person]:
+        self._reset_feedback_effects()
         source_person = self._get_person_or_404(project_id, source_person_id)
         target_person = self._get_person_or_404(project_id, target_person_id)
         if source_person.id == target_person.id:
@@ -470,17 +578,39 @@ class PeopleMutationService:
 
         self._finalize_people_updates(project_id=project_id, person_ids=[source_person.id, target_person.id])
         self._db.commit()
+        self._set_feedback_effects(
+            project_id=project_id,
+            rebuilt_person_ids=[source_person.id, target_person.id],
+            rematch_scope="person",
+            rematch_person_id=target_person.id,
+        )
         self._db.refresh(source_person)
         self._db.refresh(target_person)
         return source_person, target_person
 
-    def set_representative_face(
+    def move_face_assignment(
+        self,
+        *,
+        project_id: int,
+        source_person_id: int,
+        face_id: int,
+        target_person_id: int,
+    ) -> tuple[Person, Person]:
+        return self.move_face(
+            project_id=project_id,
+            source_person_id=source_person_id,
+            face_id=face_id,
+            target_person_id=target_person_id,
+        )
+
+    def set_cover_face(
         self,
         *,
         project_id: int,
         person_id: int,
         face_id: int,
     ) -> Person:
+        self._reset_feedback_effects()
         person = self._get_person_or_404(project_id, person_id)
         self._get_face_or_404(project_id, face_id)
         assignment = self._get_assignment(
@@ -496,8 +626,18 @@ class PeopleMutationService:
         person.representative_face_detection_id = face_id
         person.updated_at = datetime.now(timezone.utc)
         self._db.commit()
+        self._set_feedback_effects(project_id=project_id, rebuilt_person_ids=[])
         self._db.refresh(person)
         return person
+
+    def set_representative_face(
+        self,
+        *,
+        project_id: int,
+        person_id: int,
+        face_id: int,
+    ) -> Person:
+        return self.set_cover_face(project_id=project_id, person_id=person_id, face_id=face_id)
 
     def batch_confirm_review_pending(
         self,
@@ -506,6 +646,7 @@ class PeopleMutationService:
         person_id: int,
         face_detection_ids: list[int],
     ) -> tuple[Person, int]:
+        self._reset_feedback_effects()
         person = self._get_person_or_404(project_id, person_id)
         face_ids = sorted({int(face_id) for face_id in face_detection_ids})
         now = datetime.now(timezone.utc)
@@ -573,6 +714,12 @@ class PeopleMutationService:
         )
         self._finalize_people_updates(project_id=project_id, person_ids=touched_person_ids)
         self._db.commit()
+        self._set_feedback_effects(
+            project_id=project_id,
+            rebuilt_person_ids=touched_person_ids,
+            rematch_scope="person",
+            rematch_person_id=person_id,
+        )
         self._db.refresh(person)
         return person, len(assignments)
 
@@ -583,6 +730,7 @@ class PeopleMutationService:
         person_id: int,
         face_detection_ids: list[int],
     ) -> tuple[Person, int]:
+        self._reset_feedback_effects()
         person = self._get_person_or_404(project_id, person_id)
         face_ids = sorted({int(face_id) for face_id in face_detection_ids})
         now = datetime.now(timezone.utc)
@@ -617,6 +765,12 @@ class PeopleMutationService:
         )
         self._finalize_people_updates(project_id=project_id, person_ids=[person_id])
         self._db.commit()
+        self._set_feedback_effects(
+            project_id=project_id,
+            rebuilt_person_ids=[person_id],
+            rematch_scope="person",
+            rematch_person_id=person_id,
+        )
         self._db.refresh(person)
         return person, len(assignments)
 
@@ -628,6 +782,7 @@ class PeopleMutationService:
         target_person_id: int,
         face_detection_ids: list[int],
     ) -> tuple[Person, Person, int]:
+        self._reset_feedback_effects()
         source_person = self._get_person_or_404(project_id, source_person_id)
         target_person = self._get_person_or_404(project_id, target_person_id)
         if source_person.id == target_person.id:
@@ -710,6 +865,12 @@ class PeopleMutationService:
         )
         self._finalize_people_updates(project_id=project_id, person_ids=[source_person.id, target_person.id])
         self._db.commit()
+        self._set_feedback_effects(
+            project_id=project_id,
+            rebuilt_person_ids=[source_person.id, target_person.id],
+            rematch_scope="person",
+            rematch_person_id=target_person.id,
+        )
         self._db.refresh(source_person)
         self._db.refresh(target_person)
         return source_person, target_person, updated

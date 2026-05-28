@@ -184,6 +184,10 @@ class FaceClusterUnknownResponse(BaseModel):
 
 class FaceRematchUnknownRequest(BaseModel):
     max_faces: int = Field(1000, ge=1, le=10000)
+    scope: Literal["unknown", "person", "time_range", "project"] = "unknown"
+    person_id: Optional[int] = Field(default=None, ge=1)
+    start_time: Optional[datetime] = None
+    end_time: Optional[datetime] = None
 
 
 class FaceRematchUnknownStatusResponse(BaseModel):
@@ -192,6 +196,10 @@ class FaceRematchUnknownStatusResponse(BaseModel):
     status: str
     running: bool
     max_faces: int = 1000
+    scope: Literal["unknown", "person", "time_range", "project"] = "unknown"
+    person_id: Optional[int] = None
+    start_time: Optional[datetime] = None
+    end_time: Optional[datetime] = None
     faces_considered: int = 0
     matched_faces: int = 0
     auto_assigned: int = 0
@@ -244,7 +252,17 @@ class PersonFaceAssignmentResponse(BaseModel):
     is_training_candidate: bool
     created_at: datetime
     updated_at: datetime
+    explanation: Optional["PersonMatchExplanationResponse"] = None
     face_detection: FaceDetectionResponse
+
+
+class PersonMatchExplanationResponse(BaseModel):
+    similarity: Optional[float] = None
+    source: str
+    is_auto: bool
+    is_human_confirmed: bool
+    negative_constraint_affected: bool
+    negative_constraint_count: int = 0
 
 
 class PersonDetailResponse(PersonSummaryResponse):
@@ -279,23 +297,27 @@ class PersonRepresentativeFaceRequest(BaseModel):
 
 class PersonActionResponse(BaseModel):
     person: PersonSummaryResponse
+    feedback_effects: Optional["PersonFeedbackEffectsResponse"] = None
 
 
 class PersonMoveFaceResponse(BaseModel):
     source_person: PersonSummaryResponse
     target_person: PersonSummaryResponse
+    feedback_effects: Optional["PersonFeedbackEffectsResponse"] = None
 
 
 class PersonMergeResponse(BaseModel):
     moved_assignments: int
     source_person: PersonSummaryResponse
     target_person: PersonSummaryResponse
+    feedback_effects: Optional["PersonFeedbackEffectsResponse"] = None
 
 
 class PersonSplitResponse(BaseModel):
     moved_assignments: int
     source_person: PersonSummaryResponse
     target_person: PersonSummaryResponse
+    feedback_effects: Optional["PersonFeedbackEffectsResponse"] = None
 
 
 class PersonReviewListResponse(BaseModel):
@@ -317,6 +339,7 @@ class PersonBatchMoveRequest(PersonBatchReviewRequest):
 class PersonBatchActionResponse(BaseModel):
     updated: int
     person: PersonSummaryResponse
+    feedback_effects: Optional["PersonFeedbackEffectsResponse"] = None
     request_id: Optional[str] = None
     operator: Optional[str] = None
     attempts: int = 1
@@ -326,6 +349,19 @@ class PersonBatchMoveResponse(BaseModel):
     updated: int
     source_person: PersonSummaryResponse
     target_person: PersonSummaryResponse
+    feedback_effects: Optional["PersonFeedbackEffectsResponse"] = None
     request_id: Optional[str] = None
     operator: Optional[str] = None
     attempts: int = 1
+
+
+class PersonFeedbackEffectsResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    prototype_rebuilt: bool
+    rebuilt_person_ids: list[int] = Field(default_factory=list)
+    unknown_rematch_requested: bool = False
+    unknown_rematch_scope: Optional[Literal["unknown", "person", "time_range", "project"]] = None
+    unknown_rematch_person_id: Optional[int] = None
+    unknown_rematch_task_id: Optional[int] = None
+    unknown_rematch_task_created: bool = False

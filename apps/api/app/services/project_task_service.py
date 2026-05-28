@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Any, Optional
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -25,6 +25,7 @@ SCAN_TASK_TYPES: tuple[str, ...] = (
 FACE_CLUSTER_TASK_TYPES: tuple[str, ...] = (TASK_TYPE_UNKNOWN_FACE_CLUSTERING,)
 FACE_SCAN_TASK_TYPES: tuple[str, ...] = (TASK_TYPE_FACE_SCAN_PROJECT,)
 FACE_REMATCH_TASK_TYPES: tuple[str, ...] = (TASK_TYPE_FACE_REMATCH_UNKNOWN,)
+ACTIVE_TASK_STATUSES: tuple[str, ...] = ("queued", "running", "paused")
 
 
 @dataclass(frozen=True)
@@ -35,6 +36,7 @@ class EnqueueProjectTaskResult:
 
 def empty_scan_state() -> dict:
     return {
+        "task_id": None,
         "running": False,
         "scanned": 0,
         "inserted": 0,
@@ -110,7 +112,7 @@ def _get_active_project_task(
         .filter(
             ProjectTask.project_id == project_id,
             ProjectTask.task_type.in_(task_types),
-            ProjectTask.status.in_(["queued", "running"]),
+            ProjectTask.status.in_(ACTIVE_TASK_STATUSES),
         )
         .order_by(ProjectTask.created_at.desc(), ProjectTask.id.desc())
         .first()
@@ -184,13 +186,24 @@ def enqueue_face_rematch_unknown_task(
     *,
     project_id: int,
     max_faces: int,
+    scope: str = "unknown",
+    person_id: Optional[int] = None,
+    start_time: Optional[str] = None,
+    end_time: Optional[str] = None,
 ) -> EnqueueProjectTaskResult:
+    request_params: dict[str, object] = {"max_faces": max_faces, "scope": scope}
+    if person_id is not None:
+        request_params["person_id"] = int(person_id)
+    if start_time:
+        request_params["start_time"] = start_time
+    if end_time:
+        request_params["end_time"] = end_time
     return enqueue_unique_project_task(
         db,
         project_id=project_id,
         task_type=TASK_TYPE_FACE_REMATCH_UNKNOWN,
         active_task_types=FACE_REMATCH_TASK_TYPES,
-        request_params={"max_faces": max_faces},
+        request_params=request_params,
     )
 
 
@@ -256,12 +269,324 @@ def enqueue_project_task(
     return task
 
 
+def request_project_task_cancel(
+    db: Session,
+    *,
+    project_id: int,
+    task_types: tuple[str, ...],
+) -> Optional[ProjectTask]:
+    task = _get_active_project_task(db, project_id, task_types)
+    if task is None:
+        return None
+
+    return _request_task_cancel(db, task)
+
+
+def request_project_task_cancel_by_id(
+    db: Session,
+    *,
+    project_id: int,
+    task_id: int,
+) -> Optional[ProjectTask]:
+    task = get_project_task(db, project_id=project_id, task_id=task_id)
+    if task is None or task.status not in ACTIVE_TASK_STATUSES:
+        return task
+
+    return _request_task_cancel(db, task)
+
+
+def _request_task_cancel(db: Session, task: ProjectTask) -> ProjectTask:
+    now = _now_utc()
+    progress = dict(
+        task.progress_payload
+        or empty_project_task_state(
+            task.task_type,
+            task.request_params,
+            project_id=task.project_id,
+        )
+    )
+    progress["cancel_requested"] = True
+    progress.pop("pause_requested", None)
+    progress["message"] = "cancelling"
+
+    if task.status in ("queued", "paused"):
+        task.status = "cancelled"
+        task.finished_at = now
+        progress["running"] = False
+        progress["message"] = "cancelled"
+        task.result_payload = dict(progress)
+        task.error_message = None
+    else:
+        progress["running"] = True
+
+    task.progress_payload = progress
+    task.updated_at = now
+    db.commit()
+    db.refresh(task)
+    return task
+
+
+def request_project_task_pause(
+    db: Session,
+    *,
+    project_id: int,
+    task_id: int,
+) -> Optional[ProjectTask]:
+    task = get_project_task(db, project_id=project_id, task_id=task_id)
+    if task is None or task.status not in ("queued", "running"):
+        return task
+
+    now = _now_utc()
+    progress = dict(
+        task.progress_payload
+        or empty_project_task_state(
+            task.task_type,
+            task.request_params,
+            project_id=task.project_id,
+        )
+    )
+    progress["pause_requested"] = True
+    progress["message"] = "pausing"
+
+    if task.status == "queued":
+        task.status = "paused"
+        progress["running"] = False
+        progress["message"] = "paused"
+    else:
+        progress["running"] = True
+
+    task.progress_payload = progress
+    task.updated_at = now
+    db.commit()
+    db.refresh(task)
+    return task
+
+
+def resume_project_task(
+    db: Session,
+    *,
+    project_id: int,
+    task_id: int,
+) -> Optional[ProjectTask]:
+    task = get_project_task(db, project_id=project_id, task_id=task_id)
+    if task is None or task.status != "paused":
+        return task
+
+    progress = dict(
+        task.progress_payload
+        or empty_project_task_state(
+            task.task_type,
+            task.request_params,
+            project_id=task.project_id,
+        )
+    )
+    progress.pop("pause_requested", None)
+    progress["running"] = True
+    progress["message"] = _default_running_message(task.task_type, task.request_params)
+    task.status = "queued"
+    task.finished_at = None
+    task.progress_payload = progress
+    task.updated_at = _now_utc()
+    db.commit()
+    db.refresh(task)
+    return task
+
+
+def list_project_tasks(
+    db: Session,
+    *,
+    project_id: int,
+    status: Optional[str] = None,
+    task_type: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> tuple[int, list[ProjectTask]]:
+    limit = max(1, min(limit, 200))
+    offset = max(0, offset)
+    query = db.query(ProjectTask).filter(ProjectTask.project_id == project_id)
+    if status:
+        statuses = [item.strip() for item in status.split(",") if item.strip()]
+        if statuses:
+            query = query.filter(ProjectTask.status.in_(statuses))
+    if task_type:
+        task_types = [item.strip() for item in task_type.split(",") if item.strip()]
+        if task_types:
+            query = query.filter(ProjectTask.task_type.in_(task_types))
+
+    total = query.count()
+    items = (
+        query.order_by(ProjectTask.created_at.desc(), ProjectTask.id.desc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+    return total, items
+
+
+def list_project_task_failures(
+    db: Session,
+    *,
+    project_id: int,
+    task_id: int,
+    limit: int = 50,
+    offset: int = 0,
+) -> Optional[tuple[int, list[dict[str, Any]]]]:
+    task = get_project_task(db, project_id=project_id, task_id=task_id)
+    if task is None:
+        return None
+
+    limit = max(1, min(limit, 200))
+    offset = max(0, offset)
+    items = extract_task_failures(task)
+    return len(items), items[offset : offset + limit]
+
+
+def get_project_task(db: Session, *, project_id: int, task_id: int) -> Optional[ProjectTask]:
+    return (
+        db.query(ProjectTask)
+        .filter(ProjectTask.project_id == project_id, ProjectTask.id == task_id)
+        .first()
+    )
+
+
+def extract_task_failures(task: ProjectTask) -> list[dict[str, Any]]:
+    failures: list[dict[str, Any]] = []
+    seen: set[tuple[Any, ...]] = set()
+
+    for payload_name, payload in (("result_payload", task.result_payload), ("progress_payload", task.progress_payload)):
+        if not isinstance(payload, dict):
+            continue
+
+        for entry in reversed(list(payload.get("recent_files") or [])):
+            normalized = _normalize_recent_file_failure(entry, payload_name=payload_name)
+            if normalized is None:
+                continue
+            _append_failure(failures, seen, normalized)
+
+        for message in reversed(list(payload.get("recent_errors") or [])):
+            normalized = _normalize_recent_error_failure(message, payload_name=payload_name)
+            if normalized is None:
+                continue
+            _append_failure(failures, seen, normalized)
+
+    error_text = (task.error_message or "").strip()
+    if error_text:
+        _append_failure(
+            failures,
+            seen,
+            {
+                "key": f"task_error:{task.id}:{len(failures)}",
+                "source": "task_error",
+                "message": error_text,
+                "path": None,
+                "status": "failed",
+                "timestamp": task.finished_at or task.updated_at,
+                "details": {"task_status": task.status},
+            },
+        )
+    return failures
+
+
+def extract_task_recent_errors(task: ProjectTask) -> list[str]:
+    errors: list[str] = []
+    for failure in extract_task_failures(task):
+        message = str(failure.get("message") or "").strip()
+        if message and message not in errors:
+            errors.append(message)
+    return errors
+
+
+def _append_failure(
+    failures: list[dict[str, Any]],
+    seen: set[tuple[Any, ...]],
+    failure: dict[str, Any],
+) -> None:
+    dedupe_key = (
+        failure.get("source"),
+        failure.get("message"),
+        failure.get("path"),
+        failure.get("status"),
+        failure.get("timestamp"),
+    )
+    if dedupe_key in seen:
+        return
+    seen.add(dedupe_key)
+    failures.append(failure)
+
+
+def _normalize_recent_file_failure(
+    entry: Any,
+    *,
+    payload_name: str,
+) -> Optional[dict[str, Any]]:
+    if not isinstance(entry, dict):
+        return None
+    status = str(entry.get("status") or "").strip().lower()
+    message = str(entry.get("message") or "").strip()
+    if status not in {"failed", "error"} and not message:
+        return None
+
+    path = entry.get("path")
+    timestamp = _coerce_failure_timestamp(entry.get("timestamp"))
+    details = {
+        key: value
+        for key, value in entry.items()
+        if key not in {"path", "status", "message", "timestamp"}
+    }
+    if payload_name:
+        details["payload"] = payload_name
+    return {
+        "key": f"file_progress:{payload_name}:{path or 'unknown'}:{timestamp or 'na'}:{message or status}",
+        "source": "file_progress",
+        "message": message or status or "task failure",
+        "path": str(path) if path else None,
+        "status": status or None,
+        "timestamp": timestamp,
+        "details": details or None,
+    }
+
+
+def _normalize_recent_error_failure(
+    entry: Any,
+    *,
+    payload_name: str,
+) -> Optional[dict[str, Any]]:
+    message = str(entry or "").strip()
+    if not message:
+        return None
+    return {
+        "key": f"recent_error:{payload_name}:{message}",
+        "source": "recent_error",
+        "message": message,
+        "path": None,
+        "status": "failed",
+        "timestamp": None,
+        "details": {"payload": payload_name},
+    }
+
+
+def _coerce_failure_timestamp(value: Any) -> Optional[datetime]:
+    if isinstance(value, datetime):
+        return value
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if not text:
+        return None
+    normalized = text.replace("Z", "+00:00")
+    try:
+        return datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+
+
 def build_scan_status(task: Optional[ProjectTask]) -> ScanStatus:
     if task is None:
         return ScanStatus(**empty_scan_state())
 
     payload = dict(empty_scan_state())
     payload.update(task.progress_payload or {})
+    payload["task_id"] = task.id
 
     if task.status in ("queued", "running"):
         payload["running"] = True
@@ -272,12 +597,18 @@ def build_scan_status(task: Optional[ProjectTask]) -> ScanStatus:
         return ScanStatus(**payload)
 
     payload["running"] = False
+    if task.status == "paused":
+        payload["message"] = "paused"
+        return ScanStatus(**payload)
     if task.status == "success":
         payload["message"] = payload.get("message") or "done"
         return ScanStatus(**payload)
     if task.status == "completed_with_errors":
         payload["errors"] = max(int(payload.get("errors") or 0), 1)
         payload["message"] = payload.get("message") or "done_with_errors"
+        return ScanStatus(**payload)
+    if task.status == "cancelled":
+        payload["message"] = "cancelled"
         return ScanStatus(**payload)
 
     error_text = (task.error_message or "").strip()
@@ -329,7 +660,18 @@ def build_face_rematch_status(task: Optional[ProjectTask]) -> FaceRematchUnknown
 
     request_params = dict(task.request_params or {})
     max_faces = int(request_params.get("max_faces") or 1000)
-    payload = empty_face_rematch_state(project_id=task.project_id, max_faces=max_faces)
+    payload = empty_face_rematch_state(
+        project_id=task.project_id,
+        max_faces=max_faces,
+        scope=str(request_params.get("scope") or "unknown"),
+        person_id=(
+            int(request_params["person_id"])
+            if request_params.get("person_id") is not None
+            else None
+        ),
+        start_time=(str(request_params.get("start_time")) if request_params.get("start_time") else None),
+        end_time=(str(request_params.get("end_time")) if request_params.get("end_time") else None),
+    )
 
     if task.status == "success":
         payload.update(task.result_payload or {})
@@ -402,8 +744,16 @@ def empty_project_task_state(
             "message": "idle",
         }
     if task_type == TASK_TYPE_FACE_REMATCH_UNKNOWN:
-        max_faces = int((request_params or {}).get("max_faces") or 1000)
-        return empty_face_rematch_state(project_id=project_id, max_faces=max_faces)
+        params = request_params or {}
+        max_faces = int(params.get("max_faces") or 1000)
+        return empty_face_rematch_state(
+            project_id=project_id,
+            max_faces=max_faces,
+            scope=str(params.get("scope") or "unknown"),
+            person_id=(int(params["person_id"]) if params.get("person_id") is not None else None),
+            start_time=(str(params.get("start_time")) if params.get("start_time") else None),
+            end_time=(str(params.get("end_time")) if params.get("end_time") else None),
+        )
     return empty_scan_state()
 
 
@@ -419,7 +769,8 @@ def _default_running_message(task_type: str, request_params: Optional[dict]) -> 
         return f"queuing face scan jobs ({scope})"
     if task_type == TASK_TYPE_FACE_REMATCH_UNKNOWN:
         max_faces = int((request_params or {}).get("max_faces") or 1000)
-        return f"rematching unknown faces (max_faces={max_faces})"
+        scope = str((request_params or {}).get("scope") or "unknown")
+        return f"rematching faces (scope={scope}, max_faces={max_faces})"
     return "scanning"
 
 
@@ -475,6 +826,10 @@ def empty_face_rematch_state(
     *,
     project_id: int = 0,
     max_faces: int = 1000,
+    scope: str = "unknown",
+    person_id: Optional[int] = None,
+    start_time: Optional[str] = None,
+    end_time: Optional[str] = None,
 ) -> dict:
     return {
         "project_id": project_id,
@@ -482,6 +837,10 @@ def empty_face_rematch_state(
         "status": "idle",
         "running": False,
         "max_faces": max_faces,
+        "scope": scope,
+        "person_id": person_id,
+        "start_time": start_time,
+        "end_time": end_time,
         "faces_considered": 0,
         "matched_faces": 0,
         "auto_assigned": 0,
@@ -497,12 +856,23 @@ def build_face_rematch_result_payload(
     project_id: int,
     task_id: int,
     max_faces: int,
+    scope: str,
+    person_id: Optional[int],
+    start_time: Optional[str],
+    end_time: Optional[str],
     faces_considered: int,
     matched_faces: int,
     auto_assigned: int,
     review_pending: int,
 ) -> dict:
-    payload = empty_face_rematch_state(project_id=project_id, max_faces=max_faces)
+    payload = empty_face_rematch_state(
+        project_id=project_id,
+        max_faces=max_faces,
+        scope=scope,
+        person_id=person_id,
+        start_time=start_time,
+        end_time=end_time,
+    )
     payload.update(
         task_id=task_id,
         status="success",

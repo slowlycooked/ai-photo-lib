@@ -18,6 +18,10 @@ export const queryKeys = {
   projectPerson: (projectId: number | null, personId: number | null) =>
     ["project-person", projectId, personId] as const,
   projectScanStatus: (projectId: number | null) => ["project-scan-status", projectId] as const,
+  projectTasks: (projectId: number | null, limit = 20) =>
+    ["project-tasks", projectId, limit] as const,
+  projectTaskFailures: (projectId: number | null, taskId: number | null, limit = 20, offset = 0) =>
+    ["project-task-failures", projectId, taskId, limit, offset] as const,
   photos: (
     projectId: number | null,
     dateFrom?: string | null,

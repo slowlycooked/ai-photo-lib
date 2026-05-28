@@ -184,6 +184,18 @@ kill_prefixed_processes() {
   fi
 }
 
+terminate_process_tree() {
+  local pid="$1"
+  local sig="${2:-TERM}"
+  local child
+
+  for child in $(pgrep -P "$pid" 2>/dev/null || true); do
+    terminate_process_tree "$child" "$sig"
+  done
+
+  kill "-$sig" "$pid" 2>/dev/null || true
+}
+
 kill_listener_by_service_port() {
   local name="$1"
   local port=""
@@ -538,7 +550,7 @@ stop_web() {
     local pid
     pid="$(cat "$(pid_file web)")"
     log_info "停止 web (PID $pid)..."
-    kill -- -"$(ps -o pgid= -p "$pid" | tr -d ' ')" 2>/dev/null || kill "$pid" 2>/dev/null || true
+    terminate_process_tree "$pid" TERM
     rm -f "$(pid_file web)"
     log_ok "web 已停止"
   else
@@ -809,18 +821,42 @@ resolve_services() {
   if [ "$#" -eq 0 ]; then
     echo "postgres ai embed api worker web"
   else
-    echo "$@"
+    local expanded=()
+    local svc
+    for svc in "$@"; do
+      if [ "$svc" = "all" ]; then
+        expanded+=(postgres ai embed api worker web)
+      else
+        expanded+=("$svc")
+      fi
+    done
+    echo "${expanded[*]}"
   fi
+}
+
+contains_service() {
+  local target="$1"
+  shift
+
+  local svc
+  for svc in "$@"; do
+    if [ "$svc" = "$target" ]; then
+      return 0
+    fi
+  done
+  return 1
 }
 
 do_start() {
   local services
   services="$(resolve_services "$@")"
+  # shellcheck disable=SC2206
+  local requested=( $services )
   echo ""
   log_info "启动服务: $services"
   echo ""
 
-  for svc in $services; do
+  for svc in "${requested[@]}"; do
     case "$svc" in
       postgres) start_postgres ;;
       ai)       start_ai ;;
@@ -828,7 +864,6 @@ do_start() {
       api)      start_api ;;
       worker)   start_worker ;;
       web)      start_web ;;
-      all)      start_postgres; start_ai; start_embed; start_api; start_worker; start_web ;;
       *)        log_error "未知服务: $svc"; exit 1 ;;
     esac
   done
@@ -839,19 +874,21 @@ do_start() {
 do_stop() {
   local services
   services="$(resolve_services "$@")"
-  local ordered=""
+  # shellcheck disable=SC2206
+  local requested=( $services )
+  local ordered=()
 
   for s in web worker api embed ai postgres; do
-    if echo "$services" | grep -qw "$s"; then
-      ordered="$ordered $s"
+    if contains_service "$s" "${requested[@]}"; then
+      ordered+=("$s")
     fi
   done
 
   echo ""
-  log_info "停止服务:$ordered"
+  log_info "停止服务: ${ordered[*]}"
   echo ""
 
-  for svc in $ordered; do
+  for svc in "${ordered[@]}"; do
     case "$svc" in
       postgres) stop_postgres ;;
       ai)       stop_ai ;;
@@ -859,7 +896,6 @@ do_stop() {
       api)      stop_api ;;
       worker)   stop_worker ;;
       web)      stop_web ;;
-      all)      stop_web; stop_worker; stop_api; stop_embed; stop_ai; stop_postgres ;;
       *)        log_error "未知服务: $svc"; exit 1 ;;
     esac
   done

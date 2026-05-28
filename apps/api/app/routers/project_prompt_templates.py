@@ -3,13 +3,11 @@ from __future__ import annotations
 import time
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from ..api.deps import require_project
 from ..database import get_db
-from ..models.ai import ProjectAISettings, ProjectPromptTemplate
-from ..models.photo import Photo
+from ..models.ai import ProjectPromptTemplate
 from ..models.project import Project
 from ..schemas.project_ai import (
     PromptTemplateCreate,
@@ -22,15 +20,16 @@ from ..schemas.project_ai import (
 from ..services.json_parser import parse_model_json_output
 from ..services.project_ai_service import (
     TASK_IMAGE_ANALYSIS,
-    activate_prompt_template,
     analyze_and_parse_with_strict_json_retry,
-    build_default_template,
-    default_output_schema,
     get_active_prompt_template,
     get_active_prompt_template_strict,
-    get_or_create_project_ai_settings,
     get_project_ai_settings_strict,
     render_analysis_prompt_parts,
+)
+from ..services.project_prompt_templates_app_service import (
+    ActivePromptTemplateDeleteError,
+    ProjectPromptTemplatesAppService,
+    PromptTemplateNotFoundError,
 )
 from ..services.vlm_client import VLMRequestError, analyze_image
 
@@ -48,14 +47,9 @@ def list_project_prompt_templates(
     db: Session = Depends(get_db),
 ):
     """List all prompt templates for a project and task type."""
-    rows = (
-        db.query(ProjectPromptTemplate)
-        .filter(
-            ProjectPromptTemplate.project_id == project_id,
-            ProjectPromptTemplate.task_type == task_type,
-        )
-        .order_by(ProjectPromptTemplate.version.desc(), ProjectPromptTemplate.id.desc())
-        .all()
+    rows = ProjectPromptTemplatesAppService(db).list_templates(
+        project_id=project_id,
+        task_type=task_type,
     )
     return PromptTemplateListResponse(total=len(rows), items=rows)
 
@@ -72,35 +66,10 @@ def create_project_prompt_template(
     db: Session = Depends(get_db),
 ):
     """Create a new prompt template for a project."""
-    latest = (
-        db.query(func.max(ProjectPromptTemplate.version))
-        .filter(
-            ProjectPromptTemplate.project_id == project_id,
-            ProjectPromptTemplate.task_type == body.task_type,
-        )
-        .scalar()
-    )
-    next_version = (latest or 0) + 1
-
-    template = ProjectPromptTemplate(
+    return ProjectPromptTemplatesAppService(db).create_template(
         project_id=project_id,
-        name=body.name,
-        task_type=body.task_type,
-        system_prompt=body.system_prompt,
-        user_prompt=body.user_prompt,
-        output_schema=body.output_schema or default_output_schema(),
-        is_active=False,
-        version=next_version,
+        body=body,
     )
-    db.add(template)
-    db.flush()
-
-    if body.is_active:
-        activate_prompt_template(db, project_id, template, task_type=body.task_type)
-
-    db.commit()
-    db.refresh(template)
-    return template
 
 
 @router.put(
@@ -115,48 +84,15 @@ def update_project_prompt_template(
     db: Session = Depends(get_db),
 ):
     """Create a new version of an existing prompt template."""
-    current = (
-        db.query(ProjectPromptTemplate)
-        .filter(
-            ProjectPromptTemplate.id == template_id,
-            ProjectPromptTemplate.project_id == project_id,
+    service = ProjectPromptTemplatesAppService(db)
+    try:
+        return service.update_template(
+            project_id=project_id,
+            template_id=template_id,
+            body=body,
         )
-        .first()
-    )
-    if not current:
-        raise HTTPException(status_code=404, detail="Prompt template not found")
-
-    next_version = (
-        db.query(func.max(ProjectPromptTemplate.version))
-        .filter(
-            ProjectPromptTemplate.project_id == project_id,
-            ProjectPromptTemplate.task_type == current.task_type,
-        )
-        .scalar()
-        or 0
-    ) + 1
-
-    new_template = ProjectPromptTemplate(
-        project_id=project_id,
-        name=body.name or current.name,
-        task_type=current.task_type,
-        system_prompt=(
-            body.system_prompt if body.system_prompt is not None else current.system_prompt
-        ),
-        user_prompt=body.user_prompt,
-        output_schema=body.output_schema or current.output_schema or default_output_schema(),
-        is_active=False,
-        version=next_version,
-    )
-    db.add(new_template)
-    db.flush()
-
-    if body.is_active:
-        activate_prompt_template(db, project_id, new_template, task_type=current.task_type)
-
-    db.commit()
-    db.refresh(new_template)
-    return new_template
+    except PromptTemplateNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.delete(
@@ -170,29 +106,13 @@ def delete_project_prompt_template(
     db: Session = Depends(get_db),
 ):
     """Delete a non-active prompt template."""
-    template = (
-        db.query(ProjectPromptTemplate)
-        .filter(
-            ProjectPromptTemplate.id == template_id,
-            ProjectPromptTemplate.project_id == project_id,
-        )
-        .first()
-    )
-    if not template:
-        raise HTTPException(status_code=404, detail="Prompt template not found")
-
-    settings_row = (
-        db.query(ProjectAISettings)
-        .filter(ProjectAISettings.project_id == project_id)
-        .first()
-    )
-    if template.is_active or (
-        settings_row and settings_row.active_prompt_template_id == template.id
-    ):
-        raise HTTPException(status_code=400, detail="Cannot delete active prompt template")
-
-    db.delete(template)
-    db.commit()
+    service = ProjectPromptTemplatesAppService(db)
+    try:
+        service.delete_template(project_id=project_id, template_id=template_id)
+    except PromptTemplateNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ActivePromptTemplateDeleteError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.post(
@@ -205,34 +125,7 @@ def reset_project_prompt_template_default(
     db: Session = Depends(get_db),
 ):
     """Create and activate a new default prompt template for a project."""
-    next_version = (
-        db.query(func.max(ProjectPromptTemplate.version))
-        .filter(
-            ProjectPromptTemplate.project_id == project_id,
-            ProjectPromptTemplate.task_type == TASK_IMAGE_ANALYSIS,
-        )
-        .scalar()
-        or 0
-    ) + 1
-
-    base = build_default_template(project_id)
-    template = ProjectPromptTemplate(
-        project_id=project_id,
-        name=f"默认图片分析模板 v{next_version}",
-        task_type=TASK_IMAGE_ANALYSIS,
-        system_prompt=base.system_prompt,
-        user_prompt=base.user_prompt,
-        output_schema=base.output_schema,
-        is_active=False,
-        version=next_version,
-    )
-    db.add(template)
-    db.flush()
-    activate_prompt_template(db, project_id, template, task_type=TASK_IMAGE_ANALYSIS)
-
-    db.commit()
-    db.refresh(template)
-    return template
+    return ProjectPromptTemplatesAppService(db).reset_default_template(project_id=project_id)
 
 
 @router.post(
@@ -246,10 +139,9 @@ def test_project_prompt_template(
     db: Session = Depends(get_db),
 ):
     """Test a prompt template against a specific photo using the live VLM."""
-    photo = (
-        db.query(Photo)
-        .filter(Photo.id == body.image_id, Photo.project_id == project_id)
-        .first()
+    photo = ProjectPromptTemplatesAppService(db).get_project_photo(
+        project_id=project_id,
+        photo_id=body.image_id,
     )
     if not photo:
         raise HTTPException(status_code=404, detail="Photo not found in project")

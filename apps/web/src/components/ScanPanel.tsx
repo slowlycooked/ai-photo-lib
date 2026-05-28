@@ -1,5 +1,6 @@
-import { CheckCircle2, Loader2, AlertCircle, FolderSearch } from "lucide-react";
+import { CheckCircle2, Loader2, AlertCircle, FolderSearch, XCircle } from "lucide-react";
 import type { ScanStatus } from "@/api";
+import { ProjectTaskFailureDetails } from "@/components/tasks/ProjectTaskFailureDetails";
 
 // Messages that are normal lifecycle states, not errors.
 const LABEL: Record<string, string> = {
@@ -10,9 +11,12 @@ const LABEL: Record<string, string> = {
   "reindexing (missing_location)": "正在补全地点信息（仅缺失地点）…",
   done: "扫描完成",
   done_with_errors: "扫描完成（含错误）",
+  cancelling: "正在取消…",
+  cancelled: "已取消",
 };
 
 interface ScanPanelProps {
+  projectId: number | null;
   status: ScanStatus | undefined;
   isLoading: boolean;
   onStart: () => void;
@@ -22,9 +26,12 @@ interface ScanPanelProps {
   /** Trigger re-extraction of EXIF metadata for photos already in the DB. */
   onReindex?: (scope: "all" | "missing_metadata" | "missing_location") => void;
   isReindexPending?: boolean;
+  onCancel?: () => void;
+  isCancelPending?: boolean;
 }
 
 export function ScanPanel({
+  projectId,
   status,
   isLoading,
   onStart,
@@ -32,6 +39,8 @@ export function ScanPanel({
   mutationError,
   onReindex,
   isReindexPending,
+  onCancel,
+  isCancelPending,
 }: ScanPanelProps) {
   if (isLoading) {
     return (
@@ -50,11 +59,12 @@ export function ScanPanel({
       ? status.message
       : null;
 
-  const recentErrors = status.recent_errors ?? [];
   const recentFiles = status.recent_files ?? [];
-  const hasScanErrors = status.errors > 0 || recentErrors.length > 0;
+  const hasScanErrors = status.errors > 0;
   const displayLabel = status.running
-    ? LABEL.scanning
+    ? status.message === "cancelling"
+      ? LABEL.cancelling
+      : LABEL.scanning
     : hasScanErrors && status.message === "done"
       ? LABEL.done_with_errors
       : LABEL[status.message] ?? status.message;
@@ -68,6 +78,8 @@ export function ScanPanel({
         <div className="flex items-center gap-2">
           {status.running ? (
             <Loader2 className="w-4 h-4 animate-spin text-primary" />
+          ) : status.message === "cancelled" ? (
+            <XCircle className="w-4 h-4 text-mute" />
           ) : status.message === "done" && !hasScanErrors ? (
             <CheckCircle2 className="w-4 h-4 text-green-600" />
           ) : showError || hasScanErrors ? (
@@ -77,6 +89,16 @@ export function ScanPanel({
           )}
           <span className="text-body-sm font-semibold text-ink">{displayLabel}</span>
         </div>
+
+        {status.running && onCancel && (
+          <button
+            onClick={onCancel}
+            disabled={isCancelPending}
+            className="text-btn-sm font-bold text-danger hover:text-red-800 disabled:text-stone transition-colors"
+          >
+            {isCancelPending ? "取消中…" : "取消任务"}
+          </button>
+        )}
 
         {!status.running && (
           <div className="flex items-center gap-3">
@@ -178,26 +200,12 @@ export function ScanPanel({
         </section>
       )}
 
-      {recentErrors.length > 0 && (
-        <section className="space-y-2 pt-1 border-t border-hairline">
-          <div className="flex items-center gap-2">
-            <AlertCircle className="w-4 h-4 text-amber-500" />
-            <h3 className="text-body-sm font-semibold text-ink">错误日志</h3>
-            <span className="text-caption-sm text-mute">{recentErrors.length} 条</span>
-          </div>
-          <div className="space-y-1.5">
-            {recentErrors.map((entry, index) => (
-              <div
-                key={`${index}-${entry}`}
-                className="bg-canvas border border-hairline rounded-md px-4 py-2.5 flex items-start gap-3"
-              >
-                <AlertCircle className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" />
-                <p className="text-caption-sm text-mute whitespace-pre-wrap break-all">{entry}</p>
-              </div>
-            ))}
-          </div>
-        </section>
-      )}
+      <ProjectTaskFailureDetails
+        projectId={projectId}
+        taskId={status.task_id}
+        expectedCount={status.errors}
+        title="扫描失败明细"
+      />
     </div>
   );
 }

@@ -2,19 +2,21 @@ from __future__ import annotations
 
 from enum import Enum
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from ..api.deps import get_db, require_project
 from ..models.project import Project
 from ..schemas.scan import ScanStatus
 from ..services.project_task_service import (
+    SCAN_TASK_TYPES,
     TASK_TYPE_LIBRARY_REINDEX,
     TASK_TYPE_LIBRARY_SCAN,
     build_scan_status,
     enqueue_scan_task,
     get_active_scan_task,
     get_latest_scan_task,
+    request_project_task_cancel,
 )
 
 router = APIRouter(prefix="/projects", tags=["projects-scan"])
@@ -49,6 +51,22 @@ def get_project_scan_status(
     if active_task is not None:
         return build_scan_status(active_task)
     return build_scan_status(get_latest_scan_task(db, project.id))
+
+
+@router.post("/{project_id}/scan/cancel", response_model=ScanStatus)
+def cancel_project_scan(
+    project: Project = Depends(require_project),
+    db: Session = Depends(get_db),
+):
+    """Request cancellation for the active project scan/reindex task."""
+    task = request_project_task_cancel(
+        db,
+        project_id=project.id,
+        task_types=SCAN_TASK_TYPES,
+    )
+    if task is None:
+        raise HTTPException(status_code=404, detail="No active scan/reindex task")
+    return build_scan_status(task)
 
 
 class _ReindexScope(str, Enum):

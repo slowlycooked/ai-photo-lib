@@ -8,7 +8,6 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse, Response
-from sqlalchemy import extract, func
 from sqlalchemy.orm import Session
 
 from ..api.deps import require_project, require_project_photo
@@ -18,8 +17,8 @@ from ..models.photo import Photo
 from ..models.project import Project
 from ..schemas.ai import AIAnalysisResponse
 from ..schemas.photo import PhotoDeleteResponse, PhotoDetailResponse, PhotoListResponse
-from ..services.folder_service import apply_folder_filter
 from ..services.photo_cleanup import delete_photo_record
+from ..services.project_photos_query_service import ProjectPhotosQueryService
 from ..services.thumbnail import generate_thumbnail
 
 router = APIRouter(prefix="/projects", tags=["projects-photos"])
@@ -38,30 +37,16 @@ def list_project_photos(
     db: Session = Depends(get_db),
 ):
     """List photos for a specific project with optional filters."""
+    total, photos = ProjectPhotosQueryService(db).list_photos(
+        project_id=project_id,
+        page=page,
+        page_size=page_size,
+        date_from=date_from,
+        date_to=date_to,
+        folder_id=folder_id,
+        folder_scope=folder_scope,
+    )
     page_size = max(1, min(page_size, 100))
-    offset = (page - 1) * page_size
-
-    base_query = db.query(Photo).filter(
-        Photo.project_id == project_id, Photo.deleted_at.is_(None)
-    )
-    if date_from is not None:
-        base_query = base_query.filter(
-            Photo.taken_at >= datetime.combine(date_from, time_.min)
-        )
-    if date_to is not None:
-        base_query = base_query.filter(
-            Photo.taken_at < datetime.combine(date_to, time_.min)
-        )
-    if folder_id is not None:
-        base_query = apply_folder_filter(base_query, db, project_id, folder_id, folder_scope)
-
-    total = base_query.count()
-    photos = (
-        base_query.order_by(Photo.taken_at.desc().nullslast(), Photo.created_at.desc())
-        .offset(offset)
-        .limit(page_size)
-        .all()
-    )
     return PhotoListResponse(total=total, page=page, page_size=page_size, items=photos)
 
 
@@ -74,38 +59,12 @@ def get_project_timeline(
     db: Session = Depends(get_db),
 ):
     """Return monthly photo count timeline for a specific project."""
-    base_query = db.query(Photo).filter(
-        Photo.project_id == project_id,
-        Photo.deleted_at.is_(None),
-        Photo.taken_at.is_not(None),
+    items = ProjectPhotosQueryService(db).timeline(
+        project_id=project_id,
+        folder_id=folder_id,
+        folder_scope=folder_scope,
     )
-    if folder_id is not None:
-        base_query = apply_folder_filter(base_query, db, project_id, folder_id, folder_scope)
-
-    rows = (
-        base_query.with_entities(
-            extract("year", Photo.taken_at).label("year"),
-            extract("month", Photo.taken_at).label("month"),
-            func.count(Photo.id).label("count"),
-        )
-        .group_by("year", "month")
-        .order_by(
-            extract("year", Photo.taken_at).desc(),
-            extract("month", Photo.taken_at).desc(),
-        )
-        .all()
-    )
-    return {
-        "items": [
-            {
-                "key": f"{int(r.year)}-{str(int(r.month)).zfill(2)}",
-                "year": int(r.year),
-                "month": int(r.month),
-                "count": r.count,
-            }
-            for r in rows
-        ]
-    }
+    return {"items": items}
 
 
 @router.get("/{project_id}/photos/{photo_id}", response_model=PhotoDetailResponse)
@@ -227,14 +186,9 @@ def get_project_photo_ai(
     db: Session = Depends(get_db),
 ):
     """Return the latest AI analysis for a photo within project scope."""
-    analysis = (
-        db.query(PhotoAIAnalysis)
-        .filter(
-            PhotoAIAnalysis.photo_id == photo_id,
-            PhotoAIAnalysis.project_id == project_id,
-        )
-        .order_by(PhotoAIAnalysis.created_at.desc())
-        .first()
+    analysis = ProjectPhotosQueryService(db).get_latest_ai_analysis(
+        project_id=project_id,
+        photo_id=photo_id,
     )
     if not analysis:
         raise HTTPException(status_code=404, detail="No AI analysis found for this photo")

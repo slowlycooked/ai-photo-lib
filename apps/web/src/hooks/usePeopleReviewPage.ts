@@ -4,6 +4,7 @@ import { useParams } from "react-router-dom";
 import type { PersonFaceAssignment } from "@/api";
 import { api } from "@/api";
 import { useProjectContext } from "@/contexts/ProjectContext";
+import { formatBatchFeedbackToast } from "@/lib/peopleFeedback";
 
 const PAGE_SIZE = 80;
 
@@ -79,7 +80,14 @@ export function usePeopleReviewPage() {
         max_retries: 3,
       }),
     onSuccess: (result) => {
-      setStatusMessage(`批量确认成功：updated=${result.updated} attempts=${result.attempts ?? 1}`);
+      setStatusMessage(
+        formatBatchFeedbackToast(
+          "批量确认",
+          result.updated,
+          result.attempts ?? 1,
+          result.feedback_effects,
+        ),
+      );
       setErrorMessage(null);
       invalidateReviewQueries();
     },
@@ -98,7 +106,14 @@ export function usePeopleReviewPage() {
         max_retries: 3,
       }),
     onSuccess: (result) => {
-      setStatusMessage(`批量排除成功：updated=${result.updated} attempts=${result.attempts ?? 1}`);
+      setStatusMessage(
+        formatBatchFeedbackToast(
+          "批量排除",
+          result.updated,
+          result.attempts ?? 1,
+          result.feedback_effects,
+        ),
+      );
       setErrorMessage(null);
       invalidateReviewQueries();
     },
@@ -118,7 +133,14 @@ export function usePeopleReviewPage() {
         max_retries: 3,
       }),
     onSuccess: (result) => {
-      setStatusMessage(`批量移动成功：updated=${result.updated} attempts=${result.attempts ?? 1}`);
+      setStatusMessage(
+        formatBatchFeedbackToast(
+          "批量移动",
+          result.updated,
+          result.attempts ?? 1,
+          result.feedback_effects,
+        ),
+      );
       setErrorMessage(null);
       invalidateReviewQueries();
     },

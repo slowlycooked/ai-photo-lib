@@ -4,6 +4,7 @@ import { useParams, useSearchParams } from "react-router-dom";
 import { api } from "@/api";
 import { queryKeys } from "@/api/queryKeys";
 import { useProjectContext } from "@/contexts/ProjectContext";
+import { formatBatchFeedbackToast } from "@/lib/peopleFeedback";
 
 export type PeopleFilterMode =
   | "all"
@@ -121,6 +122,32 @@ export function usePeoplePage() {
     refreshPeopleData();
   };
 
+  const feedbackSuffix = (
+    effects:
+      | {
+          prototype_rebuilt: boolean;
+          rebuilt_person_ids: number[];
+          unknown_rematch_requested: boolean;
+          unknown_rematch_scope: string | null;
+          unknown_rematch_task_id: number | null;
+          unknown_rematch_task_created: boolean;
+        }
+      | undefined,
+  ) => {
+    if (!effects) return "";
+    const parts: string[] = [];
+    if (effects.prototype_rebuilt) {
+      parts.push(`prototype rebuild=${effects.rebuilt_person_ids.join(",") || "done"}`);
+    }
+    if (effects.unknown_rematch_requested) {
+      const scope = effects.unknown_rematch_scope ?? "unknown";
+      const mode = effects.unknown_rematch_task_created ? "queued" : "reused";
+      const task = effects.unknown_rematch_task_id ?? "-";
+      parts.push(`rematch(${scope}) ${mode} task=${task}`);
+    }
+    return parts.length > 0 ? `（${parts.join(" · ")}）` : "";
+  };
+
   const handleError = (error: Error) => {
     setErrorMessage(error.message);
     setStatusMessage(null);
@@ -129,21 +156,22 @@ export function usePeoplePage() {
   const renameMutation = useMutation({
     mutationFn: (displayName: string) =>
       api.projects.renamePerson(selectedProjectId!, resolvedSelectedPersonId!, displayName),
-    onSuccess: () => handleSuccess("人物名称已更新"),
+    onSuccess: (result) => handleSuccess(`人物名称已更新${feedbackSuffix(result.feedback_effects)}`),
     onError: handleError,
   });
 
   const confirmMutation = useMutation({
     mutationFn: (faceId: number) =>
       api.projects.confirmPersonFace(selectedProjectId!, resolvedSelectedPersonId!, faceId),
-    onSuccess: () => handleSuccess("已确认这张脸属于当前人物"),
+    onSuccess: (result) =>
+      handleSuccess(`已确认这张脸属于当前人物${feedbackSuffix(result.feedback_effects)}`),
     onError: handleError,
   });
 
   const rejectMutation = useMutation({
     mutationFn: (faceId: number) =>
       api.projects.rejectPersonFace(selectedProjectId!, resolvedSelectedPersonId!, faceId),
-    onSuccess: () => handleSuccess("已标记为不是此人"),
+    onSuccess: (result) => handleSuccess(`已标记为不是此人${feedbackSuffix(result.feedback_effects)}`),
     onError: handleError,
   });
 
@@ -152,14 +180,14 @@ export function usePeoplePage() {
       api.projects.movePersonFace(selectedProjectId!, resolvedSelectedPersonId!, faceId, {
         target_person_id: targetPersonId,
       }),
-    onSuccess: () => handleSuccess("已移动到目标人物"),
+    onSuccess: (result) => handleSuccess(`已移动到目标人物${feedbackSuffix(result.feedback_effects)}`),
     onError: handleError,
   });
 
   const representativeMutation = useMutation({
     mutationFn: (faceId: number) =>
       api.projects.setPersonRepresentativeFace(selectedProjectId!, resolvedSelectedPersonId!, faceId),
-    onSuccess: () => handleSuccess("代表头像已更新"),
+    onSuccess: (result) => handleSuccess(`代表头像已更新${feedbackSuffix(result.feedback_effects)}`),
     onError: handleError,
   });
 
@@ -168,7 +196,15 @@ export function usePeoplePage() {
       api.projects.batchConfirmReview(selectedProjectId!, resolvedSelectedPersonId!, {
         face_detection_ids: faceIds,
       }),
-    onSuccess: (result) => handleSuccess(`已批量确认 ${result.updated} 张待确认人脸`),
+    onSuccess: (result) =>
+      handleSuccess(
+        formatBatchFeedbackToast(
+          "批量确认",
+          result.updated,
+          result.attempts ?? 1,
+          result.feedback_effects,
+        ),
+      ),
     onError: handleError,
   });
 
@@ -177,7 +213,15 @@ export function usePeoplePage() {
       api.projects.batchRejectReview(selectedProjectId!, resolvedSelectedPersonId!, {
         face_detection_ids: faceIds,
       }),
-    onSuccess: (result) => handleSuccess(`已批量排除 ${result.updated} 张待确认人脸`),
+    onSuccess: (result) =>
+      handleSuccess(
+        formatBatchFeedbackToast(
+          "批量排除",
+          result.updated,
+          result.attempts ?? 1,
+          result.feedback_effects,
+        ),
+      ),
     onError: handleError,
   });
 
@@ -187,7 +231,15 @@ export function usePeoplePage() {
         face_detection_ids: faceIds,
         target_person_id: targetPersonId,
       }),
-    onSuccess: (result) => handleSuccess(`已批量移动 ${result.updated} 张待确认人脸`),
+    onSuccess: (result) =>
+      handleSuccess(
+        formatBatchFeedbackToast(
+          "批量移动",
+          result.updated,
+          result.attempts ?? 1,
+          result.feedback_effects,
+        ),
+      ),
     onError: handleError,
   });
 
@@ -198,7 +250,7 @@ export function usePeoplePage() {
         is_named: !!payload.display_name,
       }),
     onSuccess: (result) => {
-      handleSuccess("已创建新人物");
+      handleSuccess(`已创建新人物${feedbackSuffix(result.feedback_effects)}`);
       setCreateDisplayName("");
       const next = new URLSearchParams(searchParams);
       next.set("person_id", String(result.person.id));
@@ -213,7 +265,9 @@ export function usePeoplePage() {
         target_person_id: targetPersonId,
       }),
     onSuccess: (result) => {
-      handleSuccess(`已合并人物，迁移 ${result.moved_assignments} 张人脸`);
+      handleSuccess(
+        `已合并人物，迁移 ${result.moved_assignments} 张人脸${feedbackSuffix(result.feedback_effects)}`,
+      );
       const next = new URLSearchParams(searchParams);
       next.set("person_id", String(result.target_person.id));
       setSearchParams(next, { replace: true });
@@ -228,7 +282,9 @@ export function usePeoplePage() {
         new_display_name: payload.newDisplayName,
       }),
     onSuccess: (result) => {
-      handleSuccess(`已拆分人物，迁移 ${result.moved_assignments} 张人脸`);
+      handleSuccess(
+        `已拆分人物，迁移 ${result.moved_assignments} 张人脸${feedbackSuffix(result.feedback_effects)}`,
+      );
       const next = new URLSearchParams(searchParams);
       next.set("person_id", String(result.target_person.id));
       setSearchParams(next, { replace: true });

@@ -585,6 +585,7 @@ class ProjectFacesEndpointsTest(unittest.TestCase):
     payload = start.json()
     self.assertEqual(payload["status"]["status"], "queued")
     self.assertEqual(payload["status"]["max_faces"], 123)
+    self.assertEqual(payload["status"]["scope"], "unknown")
     self.assertTrue(payload["status"]["running"])
 
     duplicate = self.client.post("/projects/1/face-rematch-unknown", json={"max_faces": 456})
@@ -598,6 +599,103 @@ class ProjectFacesEndpointsTest(unittest.TestCase):
     status_payload = status.json()
     self.assertEqual(status_payload["status"], "queued")
     self.assertEqual(status_payload["max_faces"], 123)
+    self.assertEqual(status_payload["scope"], "unknown")
+
+  def test_face_rematch_unknown_supports_person_scope(self) -> None:
+    start = self.client.post(
+      "/projects/1/face-rematch-unknown",
+      json={"max_faces": 88, "scope": "person", "person_id": 101},
+    )
+    self.assertEqual(start.status_code, 200)
+    payload = start.json()
+    self.assertEqual(payload["status"]["scope"], "person")
+    self.assertEqual(payload["status"]["person_id"], 101)
+
+  def test_face_rematch_unknown_time_range_requires_valid_window(self) -> None:
+    missing = self.client.post(
+      "/projects/1/face-rematch-unknown",
+      json={"scope": "time_range", "max_faces": 100},
+    )
+    self.assertEqual(missing.status_code, 422)
+
+    invalid = self.client.post(
+      "/projects/1/face-rematch-unknown",
+      json={
+        "scope": "time_range",
+        "start_time": "2026-05-30T00:00:00Z",
+        "end_time": "2026-05-29T00:00:00Z",
+      },
+    )
+    self.assertEqual(invalid.status_code, 422)
+
+  def test_project_tasks_can_be_listed_and_read_with_recent_errors(self) -> None:
+    with self._engine.begin() as conn:
+      conn.execute(
+        sa.text(
+          """
+          INSERT INTO project_tasks (
+            id, project_id, task_type, status, retry_count,
+            request_params, progress_payload, result_payload, error_message
+          )
+          VALUES (
+            3001, 1, 'library_scan', 'failed', 1,
+            '{"scope":"all"}',
+            '{"recent_errors":["bad.jpg: decode failed"],"message":"failed"}',
+            NULL,
+            'scan exploded'
+          ),
+          (
+            3002, 2, 'library_scan', 'failed', 1,
+            '{}',
+            '{"recent_errors":["other project"],"message":"failed"}',
+            NULL,
+            'hidden'
+          )
+          """
+        )
+      )
+
+    listed = self.client.get("/projects/1/tasks?status=failed&limit=10")
+    self.assertEqual(listed.status_code, 200)
+    payload = listed.json()
+    self.assertEqual(payload["total"], 1)
+    self.assertEqual(payload["items"][0]["id"], 3001)
+    self.assertEqual(payload["items"][0]["task_type"], "library_scan")
+    self.assertEqual(
+      payload["items"][0]["recent_errors"],
+      ["bad.jpg: decode failed", "scan exploded"],
+    )
+
+    detail = self.client.get("/projects/1/tasks/3001")
+    self.assertEqual(detail.status_code, 200)
+    self.assertEqual(detail.json()["request_params"], {"scope": "all"})
+
+    other_project = self.client.get("/projects/1/tasks/3002")
+    self.assertEqual(other_project.status_code, 404)
+
+  def test_project_task_can_be_paused_and_resumed(self) -> None:
+    with self._engine.begin() as conn:
+      conn.execute(
+        sa.text(
+          """
+          INSERT INTO project_tasks (id, project_id, task_type, status, retry_count, request_params, progress_payload)
+          VALUES (3001, 1, 'library_scan', 'queued', 0, '{}', :progress_payload)
+          """
+        ),
+        {"progress_payload": '{"running":true,"message":"scanning"}'},
+      )
+
+    paused = self.client.post("/projects/1/tasks/3001/pause")
+    self.assertEqual(paused.status_code, 200)
+    paused_payload = paused.json()
+    self.assertEqual(paused_payload["status"], "paused")
+    self.assertEqual(paused_payload["progress_payload"]["message"], "paused")
+
+    resumed = self.client.post("/projects/1/tasks/3001/resume")
+    self.assertEqual(resumed.status_code, 200)
+    resumed_payload = resumed.json()
+    self.assertEqual(resumed_payload["status"], "queued")
+    self.assertNotIn("pause_requested", resumed_payload["progress_payload"])
 
   def test_ai_jobs_failed_list_can_filter_job_type(self) -> None:
     with self._engine.begin() as conn:

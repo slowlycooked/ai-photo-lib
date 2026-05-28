@@ -154,6 +154,7 @@ export type FolderScope = "direct" | "subtree";
 // ─── Scan ─────────────────────────────────────────────────────────────────────
 
 export interface ScanStatus {
+  task_id: number | null;
   running: boolean;
   scanned: number;
   inserted: number;
@@ -170,6 +171,47 @@ export interface ScanFileProgressEntry {
   status: string;
   message: string | null;
   timestamp: string;
+}
+
+// ─── Project Tasks ───────────────────────────────────────────────────────────
+
+export interface ProjectTask {
+  id: number;
+  project_id: number;
+  task_type: string;
+  status: string;
+  retry_count: number;
+  request_params: Record<string, unknown> | null;
+  progress_payload: Record<string, unknown> | null;
+  result_payload: Record<string, unknown> | null;
+  error_message: string | null;
+  recent_errors: string[];
+  failure_count: number;
+  latest_failure: ProjectTaskFailureDetail | null;
+  started_at: string | null;
+  finished_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ProjectTaskFailureDetail {
+  key: string;
+  source: string;
+  message: string;
+  path: string | null;
+  status: string | null;
+  timestamp: string | null;
+  details: Record<string, unknown> | null;
+}
+
+export interface ProjectTaskFailureListResponse {
+  total: number;
+  items: ProjectTaskFailureDetail[];
+}
+
+export interface ProjectTaskListResponse {
+  total: number;
+  items: ProjectTask[];
 }
 
 // ─── AI ───────────────────────────────────────────────────────────────────────
@@ -604,6 +646,10 @@ export interface FaceClusterUnknownResponse {
 
 export interface FaceRematchUnknownRequest {
   max_faces?: number;
+  scope?: "unknown" | "person" | "time_range" | "project";
+  person_id?: number;
+  start_time?: string;
+  end_time?: string;
 }
 
 export interface FaceRematchUnknownStatusResponse {
@@ -612,6 +658,10 @@ export interface FaceRematchUnknownStatusResponse {
   status: string;
   running: boolean;
   max_faces: number;
+  scope: "unknown" | "person" | "time_range" | "project";
+  person_id: number | null;
+  start_time: string | null;
+  end_time: string | null;
   faces_considered: number;
   matched_faces: number;
   auto_assigned: number;
@@ -655,7 +705,27 @@ export interface PersonFaceAssignment {
   is_training_candidate: boolean;
   created_at: string;
   updated_at: string;
+  explanation?: PersonMatchExplanation;
   face_detection: FaceDetection;
+}
+
+export interface PersonMatchExplanation {
+  similarity: number | null;
+  source: string;
+  is_auto: boolean;
+  is_human_confirmed: boolean;
+  negative_constraint_affected: boolean;
+  negative_constraint_count: number;
+}
+
+export interface PersonFeedbackEffects {
+  prototype_rebuilt: boolean;
+  rebuilt_person_ids: number[];
+  unknown_rematch_requested: boolean;
+  unknown_rematch_scope: "unknown" | "person" | "time_range" | "project" | null;
+  unknown_rematch_person_id: number | null;
+  unknown_rematch_task_id: number | null;
+  unknown_rematch_task_created: boolean;
 }
 
 export interface PersonDetail extends PersonSummary {
@@ -669,6 +739,7 @@ export interface PersonListResponse {
 
 export interface PersonActionResponse {
   person: PersonSummary;
+  feedback_effects?: PersonFeedbackEffects;
 }
 
 export interface PersonMoveFaceRequest {
@@ -692,18 +763,21 @@ export interface PersonSplitRequest {
 export interface PersonMoveFaceResponse {
   source_person: PersonSummary;
   target_person: PersonSummary;
+  feedback_effects?: PersonFeedbackEffects;
 }
 
 export interface PersonMergeResponse {
   moved_assignments: number;
   source_person: PersonSummary;
   target_person: PersonSummary;
+  feedback_effects?: PersonFeedbackEffects;
 }
 
 export interface PersonSplitResponse {
   moved_assignments: number;
   source_person: PersonSummary;
   target_person: PersonSummary;
+  feedback_effects?: PersonFeedbackEffects;
 }
 
 export interface PersonReviewListResponse {
@@ -725,6 +799,7 @@ export interface PersonBatchMoveRequest extends PersonBatchReviewRequest {
 export interface PersonBatchActionResponse {
   updated: number;
   person: PersonSummary;
+  feedback_effects?: PersonFeedbackEffects;
   request_id?: string | null;
   operator?: string | null;
   attempts?: number;
@@ -734,6 +809,7 @@ export interface PersonBatchMoveResponse {
   updated: number;
   source_person: PersonSummary;
   target_person: PersonSummary;
+  feedback_effects?: PersonFeedbackEffects;
   request_id?: string | null;
   operator?: string | null;
   attempts?: number;

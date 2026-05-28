@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+from datetime import datetime
 
 import sqlalchemy as sa
 from sqlalchemy.orm import Session, sessionmaker
@@ -299,5 +300,68 @@ def test_rematch_unknown_faces_only_matches_unassigned_faces() -> None:
             (202, "auto_assigned"),
             (203, "review_pending"),
         ]
+    finally:
+        db.close()
+
+
+def test_rematch_unknown_faces_supports_person_scope() -> None:
+    db = _make_session()
+    try:
+        rebuild_person_centroid_prototype(db, project_id=1, person_id=101)
+        db.execute(
+            sa.text(
+                """
+                INSERT INTO person_face_assignments (
+                  id, project_id, person_id, face_detection_id,
+                  assignment_status, assignment_source, is_positive_sample, is_training_candidate
+                ) VALUES (402, 1, 101, 202, 'review_pending', 'unknown_cluster', 0, 1)
+                """
+            )
+        )
+        db.commit()
+
+        result = rematch_unknown_faces(
+            db,
+            project_id=1,
+            max_faces=10,
+            scope="person",
+            person_id=101,
+        )
+        assert result.faces_considered == 1
+        assert result.matched_faces == 1
+        assert result.auto_assigned == 1
+    finally:
+        db.close()
+
+
+def test_rematch_unknown_faces_supports_time_range_scope() -> None:
+    db = _make_session()
+    try:
+        rebuild_person_centroid_prototype(db, project_id=1, person_id=101)
+        db.execute(
+            sa.text(
+                """
+                UPDATE face_detections
+                SET detected_at = CASE
+                  WHEN id = 202 THEN '2026-05-28T10:00:00+00:00'
+                  WHEN id = 203 THEN '2026-05-10T10:00:00+00:00'
+                  ELSE detected_at
+                END
+                WHERE project_id = 1
+                """
+            )
+        )
+        db.commit()
+
+        result = rematch_unknown_faces(
+            db,
+            project_id=1,
+            max_faces=10,
+            scope="time_range",
+            start_time=datetime.fromisoformat("2026-05-20T00:00:00+00:00"),
+            end_time=datetime.fromisoformat("2026-05-30T23:59:59+00:00"),
+        )
+        assert result.faces_considered == 1
+        assert result.matched_faces == 1
     finally:
         db.close()

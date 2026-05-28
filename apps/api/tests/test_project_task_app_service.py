@@ -24,8 +24,15 @@ from app.services.project_task_service import (  # noqa: E402
     TASK_TYPE_LIBRARY_REINDEX,
     TASK_TYPE_LIBRARY_SCAN,
     TASK_TYPE_UNKNOWN_FACE_CLUSTERING,
+    build_scan_status,
     enqueue_face_cluster_task,
     enqueue_scan_task,
+    extract_task_failures,
+    list_project_task_failures,
+    request_project_task_cancel,
+    request_project_task_cancel_by_id,
+    request_project_task_pause,
+    resume_project_task,
 )
 
 
@@ -134,6 +141,24 @@ class ProjectTaskAppServiceTest(unittest.TestCase):
         self.assertEqual(task.result_payload["recent_files"][0]["status"], "success")
         db.close()
 
+    def test_build_scan_status_includes_task_id(self) -> None:
+        db = self._SessionLocal()
+        task = ProjectTask(
+            project_id=1,
+            task_type=TASK_TYPE_LIBRARY_SCAN,
+            status="queued",
+            request_params={},
+        )
+        db.add(task)
+        db.commit()
+        db.refresh(task)
+
+        status = build_scan_status(task)
+
+        self.assertEqual(status.task_id, task.id)
+        self.assertTrue(status.running)
+        db.close()
+
     def test_process_scan_task_preserves_completed_with_errors_payload(self) -> None:
         db = self._SessionLocal()
         task = ProjectTask(
@@ -230,6 +255,268 @@ class ProjectTaskAppServiceTest(unittest.TestCase):
         self.assertGreaterEqual(task.progress_payload["errors"], 1)
         db.close()
 
+    def test_cancel_queued_scan_task_marks_cancelled(self) -> None:
+        db = self._SessionLocal()
+        task = ProjectTask(
+            project_id=1,
+            task_type=TASK_TYPE_LIBRARY_SCAN,
+            status="queued",
+            request_params={},
+        )
+        db.add(task)
+        db.commit()
+
+        cancelled = request_project_task_cancel(
+            db,
+            project_id=1,
+            task_types=(TASK_TYPE_LIBRARY_SCAN, TASK_TYPE_LIBRARY_REINDEX),
+        )
+
+        self.assertIsNotNone(cancelled)
+        assert cancelled is not None
+        self.assertEqual(cancelled.status, "cancelled")
+        self.assertFalse(cancelled.progress_payload["running"])
+        self.assertEqual(cancelled.progress_payload["message"], "cancelled")
+        db.close()
+
+    def test_process_scan_task_honors_cancel_request_from_progress_callback(self) -> None:
+        db = self._SessionLocal()
+        task = ProjectTask(
+            project_id=1,
+            task_type=TASK_TYPE_LIBRARY_SCAN,
+            status="queued",
+            request_params={},
+        )
+        db.add(task)
+        db.commit()
+        db.refresh(task)
+        task_id = task.id
+
+        def fake_scan(session, project_id, progress_callback=None):
+            request_db = self._SessionLocal()
+            active = request_db.query(ProjectTask).filter(ProjectTask.id == task_id).first()
+            assert active is not None
+            progress = dict(active.progress_payload or {})
+            progress["cancel_requested"] = True
+            active.progress_payload = progress
+            request_db.commit()
+            request_db.close()
+
+            if progress_callback is not None:
+                progress_callback(
+                    {
+                        "running": True,
+                        "scanned": 1,
+                        "inserted": 0,
+                        "updated": 0,
+                        "errors": 0,
+                        "current_path": "/tmp/a/test.jpg",
+                        "message": "scanning",
+                        "recent_errors": [],
+                        "recent_files": [],
+                    }
+                )
+            raise AssertionError("cancelled task should not continue after progress callback")
+
+        with patch(
+            "app.services.project_task_app_service.scan_project",
+            side_effect=fake_scan,
+        ):
+            ProjectTaskAppService(db, session_factory=self._SessionLocal).process_task(task)
+
+        db.refresh(task)
+        self.assertEqual(task.status, "cancelled")
+        self.assertFalse(task.progress_payload["running"])
+        self.assertTrue(task.progress_payload["cancel_requested"])
+        self.assertEqual(task.result_payload["message"], "cancelled")
+        db.close()
+
+    def test_pause_and_resume_queued_scan_task(self) -> None:
+        db = self._SessionLocal()
+        task = ProjectTask(
+            project_id=1,
+            task_type=TASK_TYPE_LIBRARY_SCAN,
+            status="queued",
+            request_params={},
+        )
+        db.add(task)
+        db.commit()
+        db.refresh(task)
+
+        paused = request_project_task_pause(db, project_id=1, task_id=task.id)
+        assert paused is not None
+        self.assertEqual(paused.status, "paused")
+        self.assertFalse(paused.progress_payload["running"])
+        self.assertEqual(paused.progress_payload["message"], "paused")
+
+        resumed = resume_project_task(db, project_id=1, task_id=task.id)
+        assert resumed is not None
+        self.assertEqual(resumed.status, "queued")
+        self.assertTrue(resumed.progress_payload["running"])
+        self.assertNotIn("pause_requested", resumed.progress_payload)
+        db.close()
+
+    def test_cancel_paused_scan_task_marks_cancelled_immediately(self) -> None:
+        db = self._SessionLocal()
+        task = ProjectTask(
+            project_id=1,
+            task_type=TASK_TYPE_LIBRARY_SCAN,
+            status="paused",
+            request_params={},
+            progress_payload={
+                "running": False,
+                "pause_requested": True,
+                "message": "paused",
+            },
+        )
+        db.add(task)
+        db.commit()
+        db.refresh(task)
+
+        cancelled = request_project_task_cancel_by_id(db, project_id=1, task_id=task.id)
+
+        assert cancelled is not None
+        self.assertEqual(cancelled.status, "cancelled")
+        self.assertFalse(cancelled.progress_payload["running"])
+        self.assertTrue(cancelled.progress_payload["cancel_requested"])
+        self.assertNotIn("pause_requested", cancelled.progress_payload)
+        self.assertEqual(cancelled.progress_payload["message"], "cancelled")
+        self.assertEqual(cancelled.result_payload["message"], "cancelled")
+        db.close()
+
+    def test_extract_task_failures_normalizes_recent_files_and_errors(self) -> None:
+        db = self._SessionLocal()
+        task = ProjectTask(
+            project_id=1,
+            task_type=TASK_TYPE_LIBRARY_SCAN,
+            status="completed_with_errors",
+            request_params={},
+            progress_payload={
+                "recent_errors": ["alpha failure", "beta failure"],
+                "recent_files": [
+                    {
+                        "path": "/tmp/a/ok.jpg",
+                        "status": "success",
+                        "message": None,
+                        "timestamp": "2026-01-01T00:00:00+00:00",
+                    },
+                    {
+                        "path": "/tmp/a/bad.jpg",
+                        "status": "failed",
+                        "message": "decode failed",
+                        "timestamp": "2026-01-01T00:01:00+00:00",
+                    },
+                ],
+            },
+            result_payload={
+                "recent_errors": ["beta failure"],
+                "recent_files": [
+                    {
+                        "path": "/tmp/a/bad.jpg",
+                        "status": "failed",
+                        "message": "decode failed",
+                        "timestamp": "2026-01-01T00:01:00+00:00",
+                    }
+                ],
+            },
+            error_message="terminal failure",
+        )
+        db.add(task)
+        db.commit()
+        db.refresh(task)
+
+        failures = extract_task_failures(task)
+
+        self.assertEqual(len(failures), 4)
+        self.assertEqual(failures[0]["source"], "task_error")
+        self.assertEqual(failures[0]["message"], "terminal failure")
+        self.assertEqual(failures[1]["source"], "file_progress")
+        self.assertEqual(failures[1]["path"], "/tmp/a/bad.jpg")
+        self.assertEqual(failures[2]["source"], "recent_error")
+        self.assertEqual(failures[2]["message"], "beta failure")
+        self.assertEqual(failures[3]["source"], "recent_error")
+        self.assertEqual(failures[3]["message"], "alpha failure")
+        db.close()
+
+    def test_list_project_task_failures_supports_pagination(self) -> None:
+        db = self._SessionLocal()
+        task = ProjectTask(
+            project_id=1,
+            task_type=TASK_TYPE_LIBRARY_SCAN,
+            status="failed",
+            request_params={},
+            progress_payload={
+                "recent_errors": ["first failure", "second failure", "third failure"],
+                "recent_files": [],
+            },
+            error_message=None,
+        )
+        db.add(task)
+        db.commit()
+        db.refresh(task)
+
+        result = list_project_task_failures(db, project_id=1, task_id=task.id, limit=2, offset=1)
+
+        assert result is not None
+        total, items = result
+        self.assertEqual(total, 3)
+        self.assertEqual(len(items), 2)
+        self.assertEqual(items[0]["message"], "second failure")
+        self.assertEqual(items[1]["message"], "first failure")
+        db.close()
+
+    def test_process_scan_task_honors_pause_request_from_progress_callback(self) -> None:
+        db = self._SessionLocal()
+        task = ProjectTask(
+            project_id=1,
+            task_type=TASK_TYPE_LIBRARY_SCAN,
+            status="queued",
+            request_params={},
+        )
+        db.add(task)
+        db.commit()
+        db.refresh(task)
+        task_id = task.id
+
+        def fake_scan(session, project_id, progress_callback=None):
+            request_db = self._SessionLocal()
+            active = request_db.query(ProjectTask).filter(ProjectTask.id == task_id).first()
+            assert active is not None
+            progress = dict(active.progress_payload or {})
+            progress["pause_requested"] = True
+            active.progress_payload = progress
+            request_db.commit()
+            request_db.close()
+
+            if progress_callback is not None:
+                progress_callback(
+                    {
+                        "running": True,
+                        "scanned": 1,
+                        "inserted": 0,
+                        "updated": 0,
+                        "errors": 0,
+                        "current_path": "/tmp/a/test.jpg",
+                        "message": "scanning",
+                        "recent_errors": [],
+                        "recent_files": [],
+                    }
+                )
+            raise AssertionError("paused task should not continue after progress callback")
+
+        with patch(
+            "app.services.project_task_app_service.scan_project",
+            side_effect=fake_scan,
+        ):
+            ProjectTaskAppService(db, session_factory=self._SessionLocal).process_task(task)
+
+        db.refresh(task)
+        self.assertEqual(task.status, "paused")
+        self.assertFalse(task.progress_payload["running"])
+        self.assertTrue(task.progress_payload["pause_requested"])
+        self.assertEqual(task.result_payload["message"], "paused")
+        db.close()
+
     def test_process_unknown_face_cluster_task_marks_success(self) -> None:
         db = self._SessionLocal()
         task = ProjectTask(
@@ -259,6 +546,60 @@ class ProjectTaskAppServiceTest(unittest.TestCase):
         self.assertEqual(task.progress_payload["clusters_created"], 4)
         self.assertEqual(task.progress_payload["max_faces"], 123)
         self.assertEqual(task.result_payload["faces_clustered"], 21)
+        db.close()
+
+    def test_process_unknown_face_cluster_task_honors_cancel_callback(self) -> None:
+        db = self._SessionLocal()
+        task = ProjectTask(
+            project_id=1,
+            task_type=TASK_TYPE_UNKNOWN_FACE_CLUSTERING,
+            status="queued",
+            request_params={"max_faces": 123},
+        )
+        db.add(task)
+        db.commit()
+        db.refresh(task)
+        task_id = task.id
+
+        def fake_cluster(session, *, project_id, max_faces, progress_callback=None):
+            request_db = self._SessionLocal()
+            active = request_db.query(ProjectTask).filter(ProjectTask.id == task_id).first()
+            assert active is not None
+            progress = dict(active.progress_payload or {})
+            progress["cancel_requested"] = True
+            active.progress_payload = progress
+            request_db.commit()
+            request_db.close()
+
+            if progress_callback is not None:
+                progress_callback(
+                    {
+                        "project_id": project_id,
+                        "task_id": task_id,
+                        "status": "running",
+                        "running": True,
+                        "max_faces": max_faces,
+                        "clusters_created": 1,
+                        "persons_created": 0,
+                        "faces_clustered": 10,
+                        "assignments_created": 0,
+                        "errors": 0,
+                        "recent_errors": [],
+                        "message": "clustering unknown faces (10/123)",
+                    }
+                )
+            raise AssertionError("cancelled cluster task should not continue")
+
+        with patch(
+            "app.services.project_task_app_service.cluster_unknown_faces",
+            side_effect=fake_cluster,
+        ):
+            ProjectTaskAppService(db, session_factory=self._SessionLocal).process_task(task)
+
+        db.refresh(task)
+        self.assertEqual(task.status, "cancelled")
+        self.assertFalse(task.progress_payload["running"])
+        self.assertEqual(task.result_payload["message"], "cancelled")
         db.close()
 
     def test_process_face_scan_project_task_queues_child_jobs(self) -> None:
@@ -345,6 +686,74 @@ class ProjectTaskAppServiceTest(unittest.TestCase):
         self.assertEqual(task.progress_payload["faces_considered"], 9)
         self.assertEqual(task.result_payload["matched_faces"], 5)
         self.assertEqual(task.result_payload["review_pending"], 3)
+        db.close()
+
+    def test_process_face_rematch_unknown_task_honors_cancel_callback(self) -> None:
+        db = self._SessionLocal()
+        task = ProjectTask(
+            project_id=1,
+            task_type=TASK_TYPE_FACE_REMATCH_UNKNOWN,
+            status="queued",
+            request_params={"max_faces": 321},
+        )
+        db.add(task)
+        db.commit()
+        db.refresh(task)
+        task_id = task.id
+
+        def fake_rematch(
+            session,
+            *,
+            project_id,
+            max_faces,
+            scope="unknown",
+            person_id=None,
+            start_time=None,
+            end_time=None,
+            progress_callback=None,
+        ):
+            request_db = self._SessionLocal()
+            active = request_db.query(ProjectTask).filter(ProjectTask.id == task_id).first()
+            assert active is not None
+            progress = dict(active.progress_payload or {})
+            progress["cancel_requested"] = True
+            active.progress_payload = progress
+            request_db.commit()
+            request_db.close()
+
+            if progress_callback is not None:
+                progress_callback(
+                    {
+                        "project_id": project_id,
+                        "task_id": task_id,
+                        "status": "running",
+                        "running": True,
+                        "max_faces": max_faces,
+                        "scope": scope,
+                        "person_id": person_id,
+                        "start_time": start_time.isoformat() if start_time else None,
+                        "end_time": end_time.isoformat() if end_time else None,
+                        "faces_considered": 25,
+                        "matched_faces": 9,
+                        "auto_assigned": 3,
+                        "review_pending": 6,
+                        "errors": 0,
+                        "recent_errors": [],
+                        "message": "rematching unknown faces (25/321)",
+                    }
+                )
+            raise AssertionError("cancelled rematch task should not continue")
+
+        with patch(
+            "app.services.project_task_app_service.rematch_unknown_faces",
+            side_effect=fake_rematch,
+        ):
+            ProjectTaskAppService(db, session_factory=self._SessionLocal).process_task(task)
+
+        db.refresh(task)
+        self.assertEqual(task.status, "cancelled")
+        self.assertFalse(task.progress_payload["running"])
+        self.assertEqual(task.result_payload["message"], "cancelled")
         db.close()
 
     def test_enqueue_scan_task_returns_existing_active_scan_family_task(self) -> None:

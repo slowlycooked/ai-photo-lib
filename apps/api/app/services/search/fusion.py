@@ -2,11 +2,18 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from typing import Optional
 
 from .types import EffectiveSearchSettings, SearchCandidate, VectorMatchScores
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class FusionResult:
+    candidates: list[SearchCandidate]
+    trace_event: dict
 
 
 def rrf_merge(
@@ -113,3 +120,38 @@ def rrf_merge(
                 c.match_source,
             )
     return result
+
+
+def fuse_hybrid_candidates(
+    keyword_results: list[SearchCandidate],
+    vector_scores: dict[int, VectorMatchScores],
+    settings: EffectiveSearchSettings,
+    *,
+    concept_candidates_count: int,
+    people_results: Optional[list[SearchCandidate]] = None,
+    people_weight: float = 1.20,
+) -> FusionResult:
+    """Fuse hybrid recall results and build the matching debug trace event."""
+    merged = rrf_merge(
+        keyword_results,
+        vector_scores,
+        settings,
+        people_results=people_results,
+        people_weight=people_weight,
+    )
+    return FusionResult(
+        candidates=merged,
+        trace_event={
+            "stage": "rrf_merge",
+            "kw_candidates": len(keyword_results),
+            "concept_candidates": concept_candidates_count,
+            "vec_candidates": len(vector_scores),
+            "people_candidates": len(people_results or []),
+            "merged": len(merged),
+            "top_final_scores": [round(candidate.final_score, 6) for candidate in merged[:5]],
+            "rrf_k": settings.rrf_k,
+            "kw_weight": settings.keyword_weight,
+            "vec_weight": settings.vector_weight,
+            "people_weight": people_weight,
+        },
+    )

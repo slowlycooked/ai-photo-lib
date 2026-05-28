@@ -19,6 +19,7 @@ from ..schemas.face import (
     PersonCreateRequest,
     PersonDetailResponse,
     PersonFaceMoveRequest,
+    PersonFeedbackEffectsResponse,
     PersonListResponse,
     PersonMergeRequest,
     PersonMergeResponse,
@@ -160,7 +161,10 @@ def create_project_person(
         person.id,
         person.display_name,
     )
-    return PersonActionResponse(person=PersonSummaryResponse.model_validate(person))
+    return PersonActionResponse(
+        person=PersonSummaryResponse.model_validate(person),
+        feedback_effects=PersonFeedbackEffectsResponse.model_validate(service.get_feedback_effects()),
+    )
 
 
 @router.get("/{project_id}/people/{person_id}", response_model=PersonDetailResponse)
@@ -198,7 +202,10 @@ def rename_project_person(
         person_id,
         person.display_name,
     )
-    return PersonActionResponse(person=PersonSummaryResponse.model_validate(person))
+    return PersonActionResponse(
+        person=PersonSummaryResponse.model_validate(person),
+        feedback_effects=PersonFeedbackEffectsResponse.model_validate(service.get_feedback_effects()),
+    )
 
 
 @router.delete("/{project_id}/people/{person_id}", response_model=dict)
@@ -246,6 +253,7 @@ def merge_project_persons(
         moved_assignments=moved_assignments,
         source_person=PersonSummaryResponse.model_validate(source_person),
         target_person=PersonSummaryResponse.model_validate(target_person),
+        feedback_effects=PersonFeedbackEffectsResponse.model_validate(service.get_feedback_effects()),
     )
 
 
@@ -278,6 +286,7 @@ def split_project_person(
         moved_assignments=moved_assignments,
         source_person=PersonSummaryResponse.model_validate(source_person),
         target_person=PersonSummaryResponse.model_validate(target_person),
+        feedback_effects=PersonFeedbackEffectsResponse.model_validate(service.get_feedback_effects()),
     )
 
 
@@ -293,7 +302,7 @@ def confirm_face_assignment(
     db: Session = Depends(get_db),
 ) -> PersonActionResponse:
     service = PeopleMutationService(db)
-    person = service.confirm_face_assignment(
+    person = service.confirm_assignment(
         project_id=project_id,
         person_id=person_id,
         face_id=face_id,
@@ -304,7 +313,10 @@ def confirm_face_assignment(
         person_id,
         face_id,
     )
-    return PersonActionResponse(person=PersonSummaryResponse.model_validate(person))
+    return PersonActionResponse(
+        person=PersonSummaryResponse.model_validate(person),
+        feedback_effects=PersonFeedbackEffectsResponse.model_validate(service.get_feedback_effects()),
+    )
 
 
 @router.post(
@@ -319,7 +331,7 @@ def reject_face_assignment(
     db: Session = Depends(get_db),
 ) -> PersonActionResponse:
     service = PeopleMutationService(db)
-    person = service.reject_face_assignment(
+    person = service.exclude_assignment(
         project_id=project_id,
         person_id=person_id,
         face_id=face_id,
@@ -330,7 +342,10 @@ def reject_face_assignment(
         person_id,
         face_id,
     )
-    return PersonActionResponse(person=PersonSummaryResponse.model_validate(person))
+    return PersonActionResponse(
+        person=PersonSummaryResponse.model_validate(person),
+        feedback_effects=PersonFeedbackEffectsResponse.model_validate(service.get_feedback_effects()),
+    )
 
 
 @router.post(
@@ -346,7 +361,7 @@ def move_face_assignment(
     db: Session = Depends(get_db),
 ) -> PersonMoveFaceResponse:
     service = PeopleMutationService(db)
-    source_person, target_person = service.move_face_assignment(
+    source_person, target_person = service.move_face(
         project_id=project_id,
         source_person_id=person_id,
         face_id=face_id,
@@ -362,6 +377,7 @@ def move_face_assignment(
     return PersonMoveFaceResponse(
         source_person=PersonSummaryResponse.model_validate(source_person),
         target_person=PersonSummaryResponse.model_validate(target_person),
+        feedback_effects=PersonFeedbackEffectsResponse.model_validate(service.get_feedback_effects()),
     )
 
 
@@ -377,7 +393,7 @@ def set_representative_face(
     db: Session = Depends(get_db),
 ) -> PersonActionResponse:
     service = PeopleMutationService(db)
-    person = service.set_representative_face(
+    person = service.set_cover_face(
         project_id=project_id,
         person_id=person_id,
         face_id=body.face_detection_id,
@@ -388,7 +404,10 @@ def set_representative_face(
         person_id,
         body.face_detection_id,
     )
-    return PersonActionResponse(person=PersonSummaryResponse.model_validate(person))
+    return PersonActionResponse(
+        person=PersonSummaryResponse.model_validate(person),
+        feedback_effects=PersonFeedbackEffectsResponse.model_validate(service.get_feedback_effects()),
+    )
 
 
 @router.post(
@@ -430,6 +449,7 @@ def batch_confirm_review_pending(
         return PersonBatchActionResponse(
             updated=updated,
             person=PersonSummaryResponse.model_validate(person),
+            feedback_effects=PersonFeedbackEffectsResponse.model_validate(service.get_feedback_effects()),
         )
 
     payload, attempts = _execute_batch_with_retry(
@@ -485,6 +505,7 @@ def batch_reject_review_pending(
         return PersonBatchActionResponse(
             updated=updated,
             person=PersonSummaryResponse.model_validate(person),
+            feedback_effects=PersonFeedbackEffectsResponse.model_validate(service.get_feedback_effects()),
         )
 
     payload, attempts = _execute_batch_with_retry(
@@ -543,6 +564,7 @@ def batch_move_review_pending(
             updated=updated,
             source_person=PersonSummaryResponse.model_validate(source_person),
             target_person=PersonSummaryResponse.model_validate(target_person),
+            feedback_effects=PersonFeedbackEffectsResponse.model_validate(service.get_feedback_effects()),
         )
 
     payload, attempts = _execute_batch_with_retry(

@@ -245,6 +245,15 @@ describe("PeopleReviewPage", () => {
     const batchActionResponse: PersonBatchActionResponse = {
       updated: 2,
       person: peopleResponse.items[0],
+      feedback_effects: {
+        prototype_rebuilt: true,
+        rebuilt_person_ids: [101],
+        unknown_rematch_requested: true,
+        unknown_rematch_scope: "person",
+        unknown_rematch_person_id: 101,
+        unknown_rematch_task_id: 77,
+        unknown_rematch_task_created: true,
+      },
       request_id: "req-1",
       operator: "web_review_page",
       attempts: 1,
@@ -253,6 +262,15 @@ describe("PeopleReviewPage", () => {
       updated: 2,
       source_person: peopleResponse.items[0],
       target_person: peopleResponse.items[1],
+      feedback_effects: {
+        prototype_rebuilt: true,
+        rebuilt_person_ids: [101, 102],
+        unknown_rematch_requested: true,
+        unknown_rematch_scope: "person",
+        unknown_rematch_person_id: 102,
+        unknown_rematch_task_id: 88,
+        unknown_rematch_task_created: false,
+      },
       request_id: "req-2",
       operator: "web_review_page",
       attempts: 1,
@@ -304,7 +322,9 @@ describe("PeopleReviewPage", () => {
         }),
       );
     });
-    expect(await screen.findByText(/批量确认成功：updated=2/)).toBeInTheDocument();
+    expect(await screen.findByText(/批量确认成功：updated=2 attempts=1/)).toBeInTheDocument();
+    expect(screen.getByText(/prototype=rebuild\(person=101\)/)).toBeInTheDocument();
+    expect(screen.getByText(/rematch=person\/queued\(task=77\)/)).toBeInTheDocument();
   });
 
   it("triggers batch move with the selected target person", async () => {
@@ -327,7 +347,9 @@ describe("PeopleReviewPage", () => {
         }),
       );
     });
-    expect(await screen.findByText(/批量移动成功：updated=2/)).toBeInTheDocument();
+    expect(await screen.findByText(/批量移动成功：updated=2 attempts=1/)).toBeInTheDocument();
+    expect(screen.getByText(/prototype=rebuild\(person=101,102\)/)).toBeInTheDocument();
+    expect(screen.getByText(/rematch=person\/reused\(task=88\)/)).toBeInTheDocument();
   });
 
   it("redirects invalid project routes back to /photos", async () => {

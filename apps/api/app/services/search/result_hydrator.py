@@ -1,7 +1,7 @@
 """Result hydrator — converts SearchCandidate list to serialisable dicts."""
 from __future__ import annotations
 
-from typing import Optional
+from typing import Callable, Optional
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -178,3 +178,71 @@ def build_result_items(
         items.append(item)
 
     return total, items
+
+
+def build_result_response(
+    db: Session,
+    candidates: list[SearchCandidate],
+    *,
+    project_id: int,
+    result_mode: SearchMode,
+    path: str,
+    page: int,
+    page_size: int,
+    debug: bool,
+    trace: list[dict],
+    debug_factory: Optional[Callable[..., dict]] = None,
+    debug_kwargs: Optional[dict] = None,
+) -> tuple[int, list[dict], Optional[dict]]:
+    """Hydrate candidates, append result trace, and optionally build debug payload."""
+    total, items = build_result_items(
+        db,
+        candidates,
+        project_id=project_id,
+        mode=result_mode,
+        page=page,
+        page_size=page_size,
+        debug=debug,
+    )
+    trace.append(
+        {
+            "stage": "result",
+            "path": path,
+            "total": total,
+            "items_in_page": len(items),
+            "page": page,
+        }
+    )
+    debug_payload = (
+        debug_factory(**(debug_kwargs or {}))
+        if debug and debug_factory is not None
+        else None
+    )
+    return total, items, debug_payload
+
+
+def build_empty_result_response(
+    *,
+    path: str,
+    page: int,
+    debug: bool,
+    trace: list[dict],
+    debug_factory: Optional[Callable[..., dict]] = None,
+    debug_kwargs: Optional[dict] = None,
+) -> tuple[int, list[dict], Optional[dict]]:
+    """Return an empty result response with the standard result trace shape."""
+    trace.append(
+        {
+            "stage": "result",
+            "path": path,
+            "total": 0,
+            "items_in_page": 0,
+            "page": page,
+        }
+    )
+    debug_payload = (
+        debug_factory(**(debug_kwargs or {}))
+        if debug and debug_factory is not None
+        else None
+    )
+    return 0, [], debug_payload

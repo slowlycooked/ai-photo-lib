@@ -31,6 +31,14 @@ logger = logging.getLogger(__name__)
 _MAX_ERROR_LEN = 12000
 
 
+class ProjectTaskCancelled(RuntimeError):
+    pass
+
+
+class ProjectTaskPaused(RuntimeError):
+    pass
+
+
 class ProjectTaskAppService:
     def __init__(
         self,
@@ -43,6 +51,13 @@ class ProjectTaskAppService:
 
     def process_task(self, task: ProjectTask) -> None:
         now = datetime.now(timezone.utc)
+        if self._cancel_requested(task):
+            self._persist_cancelled(task.id)
+            return
+        if self._pause_requested(task):
+            self._persist_paused(task.id)
+            return
+
         task.status = "running"
         task.started_at = now
         task.updated_at = now
@@ -57,6 +72,13 @@ class ProjectTaskAppService:
             final_state = self._run_task(task)
 
             self._db.refresh(task)
+            if self._cancel_requested(task):
+                self._persist_cancelled(task.id, final_state)
+                return
+            if self._pause_requested(task):
+                self._persist_paused(task.id, final_state)
+                return
+
             final_errors = int(final_state.get("errors") or 0)
             task.status = "completed_with_errors" if final_errors > 0 else "success"
             task.error_message = None
@@ -65,6 +87,12 @@ class ProjectTaskAppService:
             task.finished_at = datetime.now(timezone.utc)
             task.updated_at = task.finished_at
             self._db.commit()
+        except ProjectTaskCancelled:
+            self._db.rollback()
+            self._persist_cancelled(task.id)
+        except ProjectTaskPaused:
+            self._db.rollback()
+            self._persist_paused(task.id)
         except Exception as exc:  # noqa: BLE001
             self._db.rollback()
             logger.exception(
@@ -80,7 +108,60 @@ class ProjectTaskAppService:
             task = self._load_task(db, task_id)
             if task is None:
                 return
+            if self._cancel_requested(task):
+                raise ProjectTaskCancelled()
+            if self._pause_requested(task):
+                raise ProjectTaskPaused()
             task.progress_payload = dict(state)
+            task.updated_at = datetime.now(timezone.utc)
+            db.commit()
+
+    def _persist_cancelled(self, task_id: int, state: Optional[dict] = None) -> None:
+        with self._session_factory() as db:
+            task = self._load_task(db, task_id)
+            if task is None:
+                return
+            progress = dict(
+                state
+                or task.progress_payload
+                or empty_project_task_state(
+                    task.task_type,
+                    task.request_params,
+                    project_id=task.project_id,
+                )
+            )
+            progress["running"] = False
+            progress["cancel_requested"] = True
+            progress["message"] = "cancelled"
+            task.status = "cancelled"
+            task.progress_payload = progress
+            task.result_payload = progress
+            task.error_message = None
+            task.finished_at = datetime.now(timezone.utc)
+            task.updated_at = task.finished_at
+            db.commit()
+
+    def _persist_paused(self, task_id: int, state: Optional[dict] = None) -> None:
+        with self._session_factory() as db:
+            task = self._load_task(db, task_id)
+            if task is None:
+                return
+            progress = dict(
+                state
+                or task.progress_payload
+                or empty_project_task_state(
+                    task.task_type,
+                    task.request_params,
+                    project_id=task.project_id,
+                )
+            )
+            progress["running"] = False
+            progress["pause_requested"] = True
+            progress["message"] = "paused"
+            task.status = "paused"
+            task.progress_payload = progress
+            task.result_payload = progress
+            task.error_message = None
             task.updated_at = datetime.now(timezone.utc)
             db.commit()
 
@@ -112,6 +193,10 @@ class ProjectTaskAppService:
             db.commit()
 
     def _run_task(self, task: ProjectTask) -> dict:
+        if self._cancel_requested(task):
+            raise ProjectTaskCancelled()
+        if self._pause_requested(task):
+            raise ProjectTaskPaused()
         if task.task_type == TASK_TYPE_LIBRARY_SCAN:
             return self._run_library_scan(task)
         if task.task_type == TASK_TYPE_LIBRARY_REINDEX:
@@ -154,6 +239,10 @@ class ProjectTaskAppService:
             self._db,
             project_id=task.project_id,
             max_faces=max_faces,
+            progress_callback=lambda state: self._persist_progress(
+                task.id,
+                self._with_task_id(state, task.id),
+            ),
         )
         return build_face_cluster_result_payload(
             project_id=task.project_id,
@@ -184,16 +273,33 @@ class ProjectTaskAppService:
         )
 
     def _run_face_rematch_unknown(self, task: ProjectTask) -> dict:
-        max_faces = int((task.request_params or {}).get("max_faces") or 1000)
+        params = dict(task.request_params or {})
+        max_faces = int(params.get("max_faces") or 1000)
+        scope = str(params.get("scope") or "unknown")
+        person_id = int(params["person_id"]) if params.get("person_id") is not None else None
+        start_time = _parse_iso_datetime(params.get("start_time"))
+        end_time = _parse_iso_datetime(params.get("end_time"))
         result = rematch_unknown_faces(
             self._db,
             project_id=task.project_id,
             max_faces=max_faces,
+            scope=scope,
+            person_id=person_id,
+            start_time=start_time,
+            end_time=end_time,
+            progress_callback=lambda state: self._persist_progress(
+                task.id,
+                self._with_task_id(state, task.id),
+            ),
         )
         return build_face_rematch_result_payload(
             project_id=task.project_id,
             task_id=task.id,
             max_faces=max_faces,
+            scope=scope,
+            person_id=person_id,
+            start_time=start_time.isoformat() if start_time else None,
+            end_time=end_time.isoformat() if end_time else None,
             faces_considered=result.faces_considered,
             matched_faces=result.matched_faces,
             auto_assigned=result.auto_assigned,
@@ -203,3 +309,38 @@ class ProjectTaskAppService:
     @staticmethod
     def _load_task(db: Session, task_id: int) -> Optional[ProjectTask]:
         return db.query(ProjectTask).filter(ProjectTask.id == task_id).first()
+
+    @staticmethod
+    def _cancel_requested(task: ProjectTask) -> bool:
+        progress = task.progress_payload or {}
+        return bool(progress.get("cancel_requested"))
+
+    @staticmethod
+    def _pause_requested(task: ProjectTask) -> bool:
+        progress = task.progress_payload or {}
+        return bool(progress.get("pause_requested"))
+
+    @staticmethod
+    def _with_task_id(state: dict, task_id: int) -> dict:
+        payload = dict(state)
+        payload["task_id"] = task_id
+        return payload
+
+
+
+def _parse_iso_datetime(value: object) -> Optional[datetime]:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if not text:
+        return None
+    try:
+        if text.endswith("Z"):
+            text = text[:-1] + "+00:00"
+        return datetime.fromisoformat(text)
+    except ValueError:
+        return None

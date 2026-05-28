@@ -1,20 +1,13 @@
 from __future__ import annotations
 
-from dataclasses import asdict
-from datetime import datetime, timezone
-import json
 from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-import sqlalchemy as sa
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from ..api.deps import get_db, require_project, require_project_photo
-from ..models.ai import AIJob
-from ..face.providers import FaceRecognitionProviderUnavailableError
-from ..models.face import FaceDetection, FaceEmbedding
 from ..models.photo import Photo
 from ..models.project import Project
 from ..schemas.face import (
@@ -32,23 +25,31 @@ from ..schemas.face import (
     FaceScanProjectStatusResponse,
     FaceScanResponse,
 )
-from ..services.face_scan_batch_service import FaceScanBatchService
-from ..services.face_scan_service import FaceScanDisabledError, FaceScanService
-from ..services.unknown_face_clustering_service import cluster_unknown_faces
-from ..services.project_task_service import (
-    build_face_cluster_status,
-    build_face_rematch_status,
-    enqueue_face_cluster_task,
-    enqueue_face_rematch_unknown_task,
-    enqueue_face_scan_project_task,
-    get_active_face_cluster_task,
-    get_active_face_rematch_task,
-    get_active_face_scan_task,
-    get_latest_face_cluster_task,
-    get_latest_face_rematch_task,
-    get_latest_face_scan_task,
+from ..services.project_face_cluster_rematch_app_service import (
+    FaceClusterTaskNotFoundError,
+    FaceRematchTaskNotFoundError,
+    FaceRematchValidationError,
+    ProjectFaceClusterRematchAppService,
 )
-from ..services.project_face_settings_service import get_or_create_project_face_settings
+from ..services.project_face_scan_project_app_service import (
+    FaceScanProjectDisabledError,
+    FaceScanProjectTaskNotFoundError,
+    FaceScanProjectValidationError,
+    ProjectFaceScanProjectAppService,
+)
+from ..services.project_manual_face_scan_app_service import (
+    ManualFaceScanConflictError,
+    ManualFaceScanPhotoNotFoundError,
+    ManualFaceScanProviderUnavailableError,
+    ProjectManualFaceScanAppService,
+)
+from ..services.project_faces_query_service import (
+    FaceCropNotFoundError,
+    FaceNotFoundError,
+    ProjectFacesQueryService,
+)
+from ..services.face_scan_service import FaceScanService
+from ..services.unknown_face_clustering_service import cluster_unknown_faces
 
 router = APIRouter(prefix="/projects", tags=["project-faces"])
 
@@ -60,110 +61,19 @@ def scan_project_photo_faces(
     project: Project = Depends(require_project),
     db: Session = Depends(get_db),
 ) -> FaceScanResponse:
-    started_at = datetime.now(timezone.utc)
-    job = AIJob(
-        photo_id=photo.id,
-        project_id=project_id,
-        job_type="face_scan",
-        status="running",
-        retry_count=0,
-        started_at=started_at,
-        updated_at=started_at,
+    app_service = ProjectManualFaceScanAppService(
+        db,
+        scan_photo_fn=FaceScanService(db).scan_photo,
+        cluster_unknown_faces_fn=cluster_unknown_faces,
     )
-    db.add(job)
-    db.commit()
-
     try:
-        result = FaceScanService(db).scan_photo(project_id, photo.id)
-        cluster_assignments_created = 0
-        cluster_result = None
-        if result.faces_detected > 0:
-            cluster_result = cluster_unknown_faces(
-                db,
-                project_id=project_id,
-                max_faces=max(result.faces_detected, 1),
-                photo_ids=[photo.id],
-            )
-            assignments_created = getattr(cluster_result, "assignments_created", 0)
-            if isinstance(assignments_created, int):
-                cluster_assignments_created = max(assignments_created, 0)
-
-        response_payload = asdict(result)
-        total_review_pending = int(result.review_pending) + cluster_assignments_created
-        response_payload["review_pending"] = total_review_pending
-
-        if total_review_pending <= 0 and result.faces_detected > 0:
-            skipped_reason = getattr(cluster_result, "skipped_reason", None)
-            embedded_ready = int(result.embeddings_created) + int(result.embeddings_updated)
-            if skipped_reason == "missing_people_tables":
-                response_payload["message"] = (
-                    "Face scan completed: review unavailable because required tables "
-                    "persons/person_face_assignments are missing. Run alembic upgrade head."
-                )
-            elif int(result.auto_assigned) > 0:
-                response_payload["message"] = (
-                    f"Face scan completed: {int(result.auto_assigned)} faces were auto-assigned "
-                    "to existing people, so no review_pending entries were created."
-                )
-            elif embedded_ready <= 0:
-                response_payload["message"] = (
-                    "Face scan completed: no usable face embeddings were generated "
-                    "(common causes: face too small or thumbnail fallback)."
-                )
-            else:
-                response_payload["message"] = (
-                    "Face scan completed: no review_pending entries were created for this photo."
-                )
-        finished_at = datetime.now(timezone.utc)
-        job.status = "success"
-        job.error_message = None
-        job.parse_error = None
-        job.raw_model_output = json.dumps(response_payload, ensure_ascii=True)
-        job.finished_at = finished_at
-        job.updated_at = finished_at
-        db.commit()
-    except FaceScanDisabledError as exc:
-        db.rollback()
-        failed_at = datetime.now(timezone.utc)
-        job.status = "failed"
-        job.error_message = str(exc)[:4000]
-        job.parse_error = str(exc)[:4000]
-        job.finished_at = failed_at
-        job.updated_at = failed_at
-        db.commit()
+        return app_service.scan_project_photo(project_id=project_id, photo_id=photo.id)
+    except ManualFaceScanConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    except FaceRecognitionProviderUnavailableError as exc:
-        db.rollback()
-        failed_at = datetime.now(timezone.utc)
-        job.status = "failed"
-        job.error_message = str(exc)[:4000]
-        job.parse_error = str(exc)[:4000]
-        job.finished_at = failed_at
-        job.updated_at = failed_at
-        db.commit()
+    except ManualFaceScanProviderUnavailableError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
-    except FileNotFoundError as exc:
-        db.rollback()
-        failed_at = datetime.now(timezone.utc)
-        job.status = "failed"
-        job.error_message = str(exc)[:4000]
-        job.parse_error = str(exc)[:4000]
-        job.finished_at = failed_at
-        job.updated_at = failed_at
-        db.commit()
+    except ManualFaceScanPhotoNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except Exception as exc:  # noqa: BLE001
-        db.rollback()
-        failed_at = datetime.now(timezone.utc)
-        error_message = f"{type(exc).__name__}: {exc}"
-        job.status = "failed"
-        job.error_message = error_message[:4000]
-        job.parse_error = error_message[:4000]
-        job.finished_at = failed_at
-        job.updated_at = failed_at
-        db.commit()
-        raise
-    return FaceScanResponse.model_validate(response_payload)
 
 
 @router.post(
@@ -176,81 +86,16 @@ def start_project_face_scan_jobs(
     project: Project = Depends(require_project),
     db: Session = Depends(get_db),
 ) -> FaceScanProjectStartResponse:
-    settings = get_or_create_project_face_settings(db, project_id)
-    if not settings.face_recognition_enabled:
-        raise HTTPException(
-            status_code=409,
-            detail="Face recognition is disabled for this project. Enable it in face settings first.",
-        )
-
-    body = body or FaceScanProjectStartRequest()
-    if body.scope == "selected" and not body.photo_ids:
-        raise HTTPException(
-            status_code=400,
-            detail="photo_ids is required when scope is selected",
-        )
-
-    service = FaceScanBatchService(db)
-    plan = service.plan(
-        project_id,
-        scope=body.scope,
-        photo_ids=body.photo_ids,
-        force=body.force,
-    )
-
-    task_id = None
-    task_created = False
-    task_status = None
-    created_jobs = 0
-    skipped_active = plan.skipped_active
-    message = "Face scan batch plan generated"
-    if not body.dry_run and plan.candidate_photo_ids:
-        task_result = enqueue_face_scan_project_task(
-            db,
+    service = ProjectFaceScanProjectAppService(db)
+    try:
+        return service.start(
             project_id=project_id,
-            request_params={
-                "scope": plan.scope,
-                "photo_ids": plan.candidate_photo_ids,
-                "force": body.force,
-                "total_photos": plan.total_photos,
-                "candidate_count": plan.candidate_count,
-                "skipped_active_jobs": plan.skipped_active,
-                "skipped_already_scanned": plan.skipped_already_scanned,
-                "skipped_other_project": plan.skipped_other_project,
-                "stale_count": plan.stale_count,
-                "failed_count": plan.failed_count,
-            },
+            body=body or FaceScanProjectStartRequest(),
         )
-        task_id = task_result.task.id
-        task_created = task_result.created
-        task_status = task_result.task.status
-        if not task_result.created:
-            skipped_active += plan.candidate_count
-        message = (
-            "Project face scan task queued"
-            if task_result.created
-            else "Project face scan task already in progress"
-        )
-    elif not body.dry_run:
-        message = "No face scan jobs created"
-
-    return FaceScanProjectStartResponse(
-        project_id=project_id,
-        task_id=task_id,
-        task_created=task_created,
-        task_status=task_status,
-        created_jobs=created_jobs,
-        skipped_active_jobs=skipped_active,
-        scope=plan.scope,
-        total_photos=plan.total_photos,
-        candidate_count=plan.candidate_count,
-        skipped_already_scanned=plan.skipped_already_scanned,
-        skipped_other_project=plan.skipped_other_project,
-        stale_count=plan.stale_count,
-        failed_count=plan.failed_count,
-        dry_run=body.dry_run,
-        message=message,
-    )
+    except FaceScanProjectDisabledError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except FaceScanProjectValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get(
@@ -262,23 +107,22 @@ def get_project_face_scan_job_status(
     project: Project = Depends(require_project),
     db: Session = Depends(get_db),
 ) -> FaceScanProjectStatusResponse:
-    counts = FaceScanBatchService(db).status(project_id)
-    latest_task = get_active_face_scan_task(db, project_id) or get_latest_face_scan_task(
-        db,
-        project_id,
-    )
-    task_status = latest_task.status if latest_task is not None else None
-    if latest_task is not None and latest_task.status in ("queued", "running"):
-        counts[latest_task.status] = counts.get(latest_task.status, 0) + 1
-    return FaceScanProjectStatusResponse(
-        queued=counts.get("queued", 0),
-        running=counts.get("running", 0),
-        success=counts.get("success", 0),
-        failed=counts.get("failed", 0),
-        total=sum(counts.values()),
-        task_id=latest_task.id if latest_task is not None else None,
-        task_status=task_status,
-    )
+    return ProjectFaceScanProjectAppService(db).status(project_id=project_id)
+
+
+@router.post(
+    "/{project_id}/face-scan-project/cancel",
+    response_model=FaceScanProjectStatusResponse,
+)
+def cancel_project_face_scan_jobs(
+    project_id: int,
+    project: Project = Depends(require_project),
+    db: Session = Depends(get_db),
+) -> FaceScanProjectStatusResponse:
+    try:
+        return ProjectFaceScanProjectAppService(db).cancel(project_id=project_id)
+    except FaceScanProjectTaskNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.post(
@@ -291,18 +135,9 @@ def cluster_project_unknown_faces(
     project: Project = Depends(require_project),
     db: Session = Depends(get_db),
 ) -> FaceClusterUnknownResponse:
-    result = enqueue_face_cluster_task(
-        db,
+    return ProjectFaceClusterRematchAppService(db).enqueue_cluster(
         project_id=project_id,
         max_faces=body.max_faces,
-    )
-    return FaceClusterUnknownResponse(
-        message=(
-            "Unknown face clustering queued"
-            if result.created
-            else "Unknown face clustering already in progress"
-        ),
-        status=build_face_cluster_status(result.task),
     )
 
 
@@ -315,10 +150,22 @@ def get_cluster_project_unknown_faces_status(
     project: Project = Depends(require_project),
     db: Session = Depends(get_db),
 ) -> FaceClusterUnknownStatusResponse:
-    active_task = get_active_face_cluster_task(db, project_id)
-    if active_task is not None:
-        return build_face_cluster_status(active_task)
-    return build_face_cluster_status(get_latest_face_cluster_task(db, project_id))
+    return ProjectFaceClusterRematchAppService(db).cluster_status(project_id=project_id)
+
+
+@router.post(
+    "/{project_id}/face-cluster-unknown/cancel",
+    response_model=FaceClusterUnknownStatusResponse,
+)
+def cancel_cluster_project_unknown_faces(
+    project_id: int,
+    project: Project = Depends(require_project),
+    db: Session = Depends(get_db),
+) -> FaceClusterUnknownStatusResponse:
+    try:
+        return ProjectFaceClusterRematchAppService(db).cancel_cluster(project_id=project_id)
+    except FaceClusterTaskNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.post(
@@ -331,19 +178,17 @@ def rematch_project_unknown_faces(
     project: Project = Depends(require_project),
     db: Session = Depends(get_db),
 ) -> FaceRematchUnknownResponse:
-    result = enqueue_face_rematch_unknown_task(
-        db,
-        project_id=project_id,
-        max_faces=body.max_faces,
-    )
-    return FaceRematchUnknownResponse(
-        message=(
-            "Unknown face rematch queued"
-            if result.created
-            else "Unknown face rematch already in progress"
-        ),
-        status=build_face_rematch_status(result.task),
-    )
+    try:
+        return ProjectFaceClusterRematchAppService(db).enqueue_rematch(
+            project_id=project_id,
+            max_faces=body.max_faces,
+            scope=body.scope,
+            person_id=body.person_id,
+            start_time=body.start_time,
+            end_time=body.end_time,
+        )
+    except FaceRematchValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.get(
@@ -355,10 +200,22 @@ def get_rematch_project_unknown_faces_status(
     project: Project = Depends(require_project),
     db: Session = Depends(get_db),
 ) -> FaceRematchUnknownStatusResponse:
-    active_task = get_active_face_rematch_task(db, project_id)
-    if active_task is not None:
-        return build_face_rematch_status(active_task)
-    return build_face_rematch_status(get_latest_face_rematch_task(db, project_id))
+    return ProjectFaceClusterRematchAppService(db).rematch_status(project_id=project_id)
+
+
+@router.post(
+    "/{project_id}/face-rematch-unknown/cancel",
+    response_model=FaceRematchUnknownStatusResponse,
+)
+def cancel_rematch_project_unknown_faces(
+    project_id: int,
+    project: Project = Depends(require_project),
+    db: Session = Depends(get_db),
+) -> FaceRematchUnknownStatusResponse:
+    try:
+        return ProjectFaceClusterRematchAppService(db).cancel_rematch(project_id=project_id)
+    except FaceRematchTaskNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.get("/{project_id}/faces", response_model=FaceDetectionListResponse)
@@ -371,22 +228,14 @@ def list_project_faces(
     project: Project = Depends(require_project),
     db: Session = Depends(get_db),
 ) -> FaceDetectionListResponse:
-    page_size = max(1, min(page_size, 200))
-    offset = (page - 1) * page_size
-
-    query = db.query(FaceDetection).filter(FaceDetection.project_id == project_id)
-    if photo_id is not None:
-        query = query.filter(FaceDetection.photo_id == photo_id)
-    if status is not None:
-        query = query.filter(FaceDetection.status == status)
-
-    total = query.count()
-    items = (
-        query.order_by(FaceDetection.detected_at.desc().nullslast(), FaceDetection.id.desc())
-        .offset(offset)
-        .limit(page_size)
-        .all()
+    total, items = ProjectFacesQueryService(db).list_faces(
+        project_id=project_id,
+        page=page,
+        page_size=page_size,
+        photo_id=photo_id,
+        status=status,
     )
+    page_size = max(1, min(page_size, 200))
     return FaceDetectionListResponse(
         total=total,
         page=page,
@@ -402,23 +251,14 @@ def get_project_face(
     project: Project = Depends(require_project),
     db: Session = Depends(get_db),
 ) -> FaceDetectionDetailResponse:
-    face = (
-        db.query(FaceDetection)
-        .filter(FaceDetection.project_id == project_id, FaceDetection.id == face_id)
-        .first()
-    )
-    if face is None:
-        raise HTTPException(status_code=404, detail="Face not found in project")
-
-    embeddings = (
-        db.query(FaceEmbedding)
-        .filter(
-            FaceEmbedding.project_id == project_id,
-            FaceEmbedding.face_detection_id == face_id,
+    try:
+        face, embeddings = ProjectFacesQueryService(db).get_face_detail(
+            project_id=project_id,
+            face_id=face_id,
         )
-        .order_by(FaceEmbedding.created_at.desc(), FaceEmbedding.id.desc())
-        .all()
-    )
+    except FaceNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
     payload = FaceDetectionDetailResponse.model_validate(face)
     payload.embeddings = embeddings
     return payload
@@ -431,18 +271,16 @@ def get_project_face_crop(
     project: Project = Depends(require_project),
     db: Session = Depends(get_db),
 ):
-    face = (
-        db.query(FaceDetection)
-        .filter(FaceDetection.project_id == project_id, FaceDetection.id == face_id)
-        .first()
-    )
-    if face is None:
-        raise HTTPException(status_code=404, detail="Face not found in project")
-    if not face.face_crop_path:
-        raise HTTPException(status_code=404, detail="Face crop not stored for this detection")
-    crop_path = Path(face.face_crop_path)
-    if not crop_path.exists():
-        raise HTTPException(status_code=404, detail="Face crop file not found")
+    try:
+        crop_path = ProjectFacesQueryService(db).get_face_crop_path(
+            project_id=project_id,
+            face_id=face_id,
+        )
+    except FaceNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except FaceCropNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
     return FileResponse(
         str(crop_path),
         media_type="image/jpeg",

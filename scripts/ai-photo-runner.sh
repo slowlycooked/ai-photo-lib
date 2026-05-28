@@ -11,14 +11,21 @@ fi
 
 child_pid=""
 
+terminate_tree() {
+  local pid="$1"
+  local sig="${2:-TERM}"
+  local child
+
+  for child in $(pgrep -P "$pid" 2>/dev/null || true); do
+    terminate_tree "$child" "$sig"
+  done
+
+  kill "-$sig" "$pid" 2>/dev/null || true
+}
+
 forward_stop() {
   if [ -n "$child_pid" ] && kill -0 "$child_pid" 2>/dev/null; then
-    local pgid=""
-    pgid="$(ps -o pgid= -p "$child_pid" 2>/dev/null | tr -d ' ' || true)"
-    if [ -n "$pgid" ]; then
-      kill -TERM -"$pgid" 2>/dev/null || true
-    fi
-    kill -TERM "$child_pid" 2>/dev/null || true
+    terminate_tree "$child_pid" TERM
   fi
 }
 
