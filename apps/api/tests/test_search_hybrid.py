@@ -256,6 +256,59 @@ class VectorRecallServiceTest(unittest.TestCase):
         # 0.01 is well below default vector_min_score; should be filtered out
         self.assertEqual(scores, {})
 
+    def test_vector_field_search_supports_labeled_similarity_expression(self) -> None:
+        from app.services.search.vector_recall import _vector_field_search
+
+        rows = [(11, 0.88)]
+
+        class _QueryStub:
+            def __init__(self, rows_data=None, stale_count: int = 0):
+                self._rows_data = rows_data or []
+                self._stale_count = stale_count
+
+            def filter(self, *args, **kwargs):
+                return self
+
+            def with_entities(self, *args, **kwargs):
+                return self
+
+            def params(self, **kwargs):
+                return self
+
+            def order_by(self, *args, **kwargs):
+                return self
+
+            def limit(self, *args, **kwargs):
+                return self
+
+            def all(self):
+                return self._rows_data
+
+            def count(self):
+                return self._stale_count
+
+        base_query = _QueryStub(rows_data=rows)
+        stale_query = _QueryStub(stale_count=2)
+
+        db = MagicMock()
+        db.query.side_effect = [base_query, stale_query]
+
+        scores, stale = _vector_field_search(
+            db,
+            project_id=1,
+            query_vector_literal="[0.1,0.2]",
+            field_name="content_embedding",
+            folder_photo_subquery=None,
+            constrained_photo_ids=None,
+            limit=5,
+            embedding_model="Qwen3-Embedding-0.6B",
+            embedding_dimension=1024,
+            embedding_input_version="photo_semantic_qwen3_v2",
+        )
+
+        self.assertEqual(scores, {11: 0.88})
+        self.assertEqual(stale, 2)
+
 
 class SearchPhotosTest(unittest.TestCase):
     """Integration-style tests for app_service.search_photos fallback/debug."""

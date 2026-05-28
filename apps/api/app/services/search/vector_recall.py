@@ -98,8 +98,8 @@ def _vector_field_search(
         base_query = base_query.filter(PhotoEmbedding.embedding_input_version == embedding_input_version)
 
     similarity_expr = text(
-        f"(1 - (photo_embeddings.{field_name} <=> CAST(:query_vector AS vector)))"
-    ).label("similarity")
+        f"(1 - (photo_embeddings.{field_name} <=> CAST(:query_vector AS vector))) AS similarity"
+    )
     order_expr = text(f"photo_embeddings.{field_name} <=> CAST(:query_vector AS vector)")
 
     rows = (

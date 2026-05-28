@@ -340,7 +340,9 @@ export interface SearchDebugPayload {
     exact_terms?: string[];
     expanded_terms?: string[];
     semantic_query_text?: string;
+    query_planner?: Record<string, unknown>;
   };
+  query_planner?: Record<string, unknown>;
   original_query: string;
   normalized_query: string;
   semantic_query_text?: string;
@@ -1015,3 +1017,36 @@ export interface ProjectSearchSettings {
 export type ProjectSearchSettingsUpdate = Partial<
   Omit<ProjectSearchSettings, 'id' | 'project_id' | 'created_at' | 'updated_at'>
 >;
+
+// ─── Project Query Planner Settings ─────────────────────────────────────────
+
+export interface ProjectQueryPlannerSettings {
+  id: number;
+  project_id: number;
+  enabled: boolean;
+  provider: string;
+  endpoint_url: string | null;
+  api_key: string | null;
+  model_name: string | null;
+  temperature: number;
+  top_p: number;
+  max_tokens: number;
+  timeout_seconds: number;
+  json_parse_strategy: string;
+  planner_version: string;
+  prompt_template: string | null;
+  system_prompt: string | null;
+  fallback_mode: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export type ProjectQueryPlannerSettingsUpdate = Partial<
+  Omit<ProjectQueryPlannerSettings, "id" | "project_id" | "created_at" | "updated_at">
+>;
+
+export interface QueryPlannerTestResponse {
+  query: string;
+  planner_debug: Record<string, unknown>;
+  parsed_query_plan: Record<string, unknown>;
+}

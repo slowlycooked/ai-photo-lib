@@ -504,6 +504,24 @@ class ProjectIsolationEndpointsTest(unittest.TestCase):
         self.assertEqual(body["failed"], 0)
         self.assertEqual(body["total"], 2)
 
+    def test_project_ai_status_counts_distinct_analyzed_photos(self) -> None:
+        with self._engine.begin() as conn:
+            conn.execute(sa.text("DELETE FROM photo_ai_analysis WHERE project_id = 1"))
+            conn.execute(
+                sa.text(
+                    """
+                    INSERT INTO photo_ai_analysis (id, project_id, photo_id, caption)
+                    VALUES (5001, 1, 101, 'first analysis'),
+                           (5002, 1, 101, 'duplicate analysis')
+                    """
+                )
+            )
+
+        res = self.client.get("/projects/1/ai/status")
+        self.assertEqual(res.status_code, 200)
+        body = res.json()
+        self.assertEqual(body["analyzed_count"], 1)
+
     def test_active_prompt_fk_blocks_cross_project_template(self) -> None:
         with self._engine.begin() as conn:
             with self.assertRaises(sa.exc.IntegrityError):

@@ -417,9 +417,11 @@ class SearchOrchestrator:
         if vector_stage.error is not None:
             exc = vector_stage.error
             logger.warning(
-                "Vector search fallback to keyword. project_id=%s query=%r error=%s",
+                "Vector search fallback to keyword. project_id=%s query=%r error=%s error_type=%s error_repr=%r",
                 project_id,
                 query,
+                exc,
+                type(exc).__name__,
                 exc,
             )
             return self._fallback_policy.handle_vector_stage_error(

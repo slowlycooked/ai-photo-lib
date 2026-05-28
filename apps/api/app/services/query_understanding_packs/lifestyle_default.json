@@ -47,7 +47,7 @@
       "猫": {"expanded": ["小猫", "猫咪"], "broad": ["宠物", "动物"], "negative": ["狗", "小狗", "狗狗", "兔子"], "facets": ["object"]},
       "狗": {"expanded": ["小狗", "狗狗"], "broad": ["宠物", "动物"], "negative": ["猫", "小猫", "猫咪"], "facets": ["object"]},
       "鸟": {"expanded": ["小鸟", "飞鸟", "禽鸟"], "broad": ["动物"], "facets": ["object"]},
-      "动物": {"expanded": ["猫", "狗", "鸟", "马", "鹿", "兔子", "鱼"], "broad": ["宠物", "野生动物", "动物园"], "facets": ["object"]},
+      "动物": {"expanded": ["猫", "狗", "鸟", "马", "鹿", "兔子", "鱼"], "broad": ["宠物", "野生动物", "动物园"], "facets": ["object"], "core_facet_generic_terms": ["动物", "宠物", "野生动物", "动物园", "小动物", "animal", "野外"], "core_facet_entity_hints": ["猫", "小猫", "猫咪", "狗", "小狗", "狗狗", "鸟", "小鸟", "飞鸟", "禽鸟", "马", "骏马", "鹿", "梅花鹿", "野鹿", "兔", "兔子", "小兔", "鱼", "水族", "蝴蝶", "昆虫"], "core_facet_weak_scene_terms": ["动物园", "宠物店"]},
       "宠物": {"expanded": ["猫", "狗", "兔子"], "broad": ["动物"], "facets": ["object"]},
       "小动物": {"expanded": ["猫", "狗", "兔子", "鸟"], "broad": ["宠物", "动物"], "facets": ["object"]},
       "野生动物": {"expanded": ["动物", "野外"], "broad": ["自然", "户外"], "facets": ["object", "scene"]},
@@ -100,7 +100,7 @@
       "sunrise": {"expanded": ["日出", "清晨", "朝霞"], "broad": [], "negative": ["夜晚", "黑暗"], "facets": ["time", "lighting"]}
     },
     "indoor": {
-      "室内": {"expanded": ["客厅", "卧室", "厨房", "房间", "家具"], "support": ["家", "家庭", "屋内"], "broad": [], "negative": ["户外", "自然", "海边"], "facets": ["scene"]},
+      "室内": {"expanded": ["客厅", "卧室", "厨房", "房间", "家具"], "support": ["家", "家庭", "屋内"], "broad": [], "negative": ["户外", "自然", "海边"], "facets": ["scene"], "core_facet_positive": ["室内", "屋内", "室内场景", "房间", "客厅", "卧室", "厨房", "餐厅", "家具", "沙发", "床", "椅子", "桌子", "书架", "柜子", "台灯", "indoor", "indoors", "interior", "living room", "bedroom", "kitchen"], "core_facet_negative": ["户外", "室外", "自然", "风景", "海边", "山地", "街道", "建筑外观", "outdoor", "outside", "landscape", "street", "exterior"], "core_facet_query_triggers": ["室内", "屋内", "indoor", "indoors", "interior"]},
       "家": {"expanded": ["室内", "客厅", "卧室"], "support": ["家庭", "生活"], "broad": ["家具"], "facets": ["scene"]},
       "客厅": {"expanded": ["沙发", "室内"], "broad": ["家"], "facets": ["scene"]},
       "卧室": {"expanded": ["床", "室内"], "broad": ["家"], "facets": ["scene"]},

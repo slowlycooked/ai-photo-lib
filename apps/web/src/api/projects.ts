@@ -43,6 +43,9 @@ import type {
   ProjectEmbeddingSettings,
   ProjectEmbeddingSettingsUpdate,
   ProjectReadinessResponse,
+  QueryPlannerTestResponse,
+  ProjectQueryPlannerSettings,
+  ProjectQueryPlannerSettingsUpdate,
   ProjectFaceSettings,
   ProjectFaceSettingsUpdate,
   ProjectListResponse,
@@ -644,5 +647,29 @@ export const projectsApi = {
   resetSearchSettings: (id: number) =>
     request<ProjectSearchSettings>(`/projects/${id}/search-settings/reset`, {
       method: "POST",
+    }),
+
+  // ── Query Planner Settings ───────────────────────────────────────────────
+
+  getQueryPlannerSettings: (id: number) =>
+    request<ProjectQueryPlannerSettings>(`/projects/${id}/query-planner-settings`),
+
+  updateQueryPlannerSettings: (id: number, body: ProjectQueryPlannerSettingsUpdate) =>
+    request<ProjectQueryPlannerSettings>(`/projects/${id}/query-planner-settings`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+
+  resetQueryPlannerSettings: (id: number) =>
+    request<ProjectQueryPlannerSettings>(`/projects/${id}/query-planner-settings/reset`, {
+      method: "POST",
+    }),
+
+  testQueryPlanner: (id: number, query: string) =>
+    request<QueryPlannerTestResponse>(`/projects/${id}/query-planner-settings/test`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query }),
     }),
 };

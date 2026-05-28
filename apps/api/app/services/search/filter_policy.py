@@ -21,17 +21,6 @@ from .types import (
 # Normal vector threshold for support-assisted C (below vector_strict_score)
 _VECTOR_NORMAL_THRESHOLD = 0.32
 
-_INDOOR_CORE_POSITIVE: frozenset[str] = frozenset({
-    "室内", "屋内", "室内场景", "房间", "客厅", "卧室", "厨房", "餐厅",
-    "家具", "沙发", "床", "椅子", "桌子", "书架", "柜子", "台灯",
-    "indoor", "indoors", "interior", "living room", "bedroom", "kitchen",
-})
-
-_INDOOR_CORE_NEGATIVE: frozenset[str] = frozenset({
-    "户外", "室外", "自然", "风景", "海边", "山地", "街道", "建筑外观",
-    "outdoor", "outside", "landscape", "street", "exterior",
-})
-
 _INDOOR_RICH_FIELDS: tuple[str, ...] = (
     "caption",
     "scene_tags",
@@ -43,15 +32,31 @@ _INDOOR_WEAK_ONLY_FIELDS: tuple[str, ...] = (
     "location_clues",
 )
 
-_ANIMAL_ENTITY_HINTS: frozenset[str] = frozenset({
-    "猫", "小猫", "猫咪", "狗", "小狗", "狗狗", "鸟", "小鸟", "飞鸟", "禽鸟",
-    "马", "骏马", "鹿", "梅花鹿", "野鹿", "兔", "兔子", "小兔", "鱼", "水族",
-    "蝴蝶", "昆虫",
-})
+def _core_terms_for_domain(
+    query_plan: SearchQueryPlan,
+    domain: str,
+) -> tuple[frozenset[str], frozenset[str]]:
+    evidence = query_plan.core_facet_evidence or {}
+    domain_payload = evidence.get(domain) or {}
 
-_ANIMAL_GENERIC_TERMS: frozenset[str] = frozenset({
-    "动物", "宠物", "野生动物", "动物园", "小动物", "animal", "野外",
-})
+    positive_terms = frozenset(
+        str(term).lower().strip()
+        for term in (domain_payload.get("positive_terms") or [])
+        if str(term).strip()
+    )
+    negative_terms = frozenset(
+        str(term).lower().strip()
+        for term in (domain_payload.get("negative_terms") or [])
+        if str(term).strip()
+    )
+
+    return positive_terms, negative_terms
+
+
+def _animal_evidence_payload(query_plan: SearchQueryPlan) -> dict:
+    evidence = query_plan.core_facet_evidence or {}
+    payload = evidence.get("animal")
+    return payload if isinstance(payload, dict) else {}
 
 
 def resolve_folder_photo_subquery(
@@ -152,10 +157,17 @@ def resolve_face_filter_photo_ids(
 def is_explicit_indoor_query(query_plan: SearchQueryPlan) -> bool:
     exact_lower = {t.lower() for t in query_plan.exact_terms}
     matched_lower = {t.lower() for t in query_plan.matched_keys}
+    core_facet_evidence = query_plan.core_facet_evidence or {}
+    indoor_payload = core_facet_evidence.get("indoor") or {}
+    indoor_query_triggers = {
+        str(term).lower().strip()
+        for term in (indoor_payload.get("query_triggers") or [])
+        if str(term).strip()
+    }
     return (
         query_plan.filters.get("indoor_outdoor") == "indoor"
         and "scene" in query_plan.core_facets
-        and bool({"室内", "indoor", "indoors"} & (exact_lower | matched_lower))
+        and bool(indoor_query_triggers & (exact_lower | matched_lower))
     )
 
 
@@ -196,12 +208,29 @@ def animal_core_facet_passes(
     rich_text = " ".join(rich_parts)
     weak_text = " ".join(weak_parts)
 
+    animal_payload = _animal_evidence_payload(query_plan)
+    animal_generic_terms = frozenset(
+        str(term).lower().strip()
+        for term in (animal_payload.get("generic_terms") or [])
+        if str(term).strip()
+    )
+    animal_entity_hints = frozenset(
+        str(term).lower().strip()
+        for term in (animal_payload.get("entity_hints") or [])
+        if str(term).strip()
+    )
+    animal_weak_scene_terms = frozenset(
+        str(term).lower().strip()
+        for term in (animal_payload.get("weak_scene_terms") or [])
+        if str(term).strip()
+    )
+
     entity_terms = [
         term.lower()
         for term in (query_plan.exact_terms + query_plan.expanded_terms)
-        if term.lower() not in _ANIMAL_GENERIC_TERMS
+        if term.lower() not in animal_generic_terms
     ]
-    positive_terms = entity_terms or list(_ANIMAL_ENTITY_HINTS)
+    positive_terms = entity_terms or list(animal_entity_hints)
 
     entity_tag_set: set[str] = set()
     for field_name in ("object_tags", "search_keywords"):
@@ -229,7 +258,7 @@ def animal_core_facet_passes(
         or any(len(term) >= 2 and term in semantic_text for term in positive_terms)
     )
 
-    weak_scene_only = any(term in weak_text for term in ("动物园", "宠物店")) and not has_positive
+    weak_scene_only = any(term in weak_text for term in animal_weak_scene_terms) and not has_positive
 
     if (
         settings.allow_vector_only_for_facet_query
@@ -278,8 +307,12 @@ def indoor_core_facet_passes(
     weak_text = " ".join(weak_parts)
     combined_text = f"{rich_text} {weak_text}".strip()
 
-    has_positive = any(term in rich_text for term in _INDOOR_CORE_POSITIVE)
-    has_negative = any(term in combined_text for term in _INDOOR_CORE_NEGATIVE)
+    indoor_positive_terms, indoor_negative_terms = _core_terms_for_domain(query_plan, "indoor")
+    if not indoor_positive_terms and not indoor_negative_terms:
+        return True, ""
+
+    has_positive = any(term in rich_text for term in indoor_positive_terms)
+    has_negative = any(term in combined_text for term in indoor_negative_terms)
     weak_only_match = (
         not has_positive
         and any(field in (candidate.keyword_explain or {}) for field in _INDOOR_WEAK_ONLY_FIELDS)
@@ -321,17 +354,19 @@ def core_facet_passes(
     if "time" not in core_facets and "lighting" not in core_facets:
         return True, ""
 
-    core_facet_evidence = query_plan.core_facet_evidence or {}
-    positive_terms = frozenset(
-        str(term).lower().strip()
-        for term in (core_facet_evidence.get("positive_terms") or [])
-        if str(term).strip()
-    )
-    negative_terms = frozenset(
-        str(term).lower().strip()
-        for term in (core_facet_evidence.get("negative_terms") or [])
-        if str(term).strip()
-    )
+    positive_terms, negative_terms = _core_terms_for_domain(query_plan, "night")
+    if not positive_terms and not negative_terms:
+        core_facet_evidence = query_plan.core_facet_evidence or {}
+        positive_terms = frozenset(
+            str(term).lower().strip()
+            for term in (core_facet_evidence.get("positive_terms") or [])
+            if str(term).strip()
+        )
+        negative_terms = frozenset(
+            str(term).lower().strip()
+            for term in (core_facet_evidence.get("negative_terms") or [])
+            if str(term).strip()
+        )
     if not positive_terms and not negative_terms:
         return True, ""
 

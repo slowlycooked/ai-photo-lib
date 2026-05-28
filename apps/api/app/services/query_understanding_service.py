@@ -735,6 +735,8 @@ class SearchQueryPlan:
     core_facet_evidence: dict = field(default_factory=dict)
     # ── EXIF / Photo metadata filters (parsed from query) ─────────────────────
     metadata_filters: dict = field(default_factory=dict)
+    # ── Query planner diagnostics (LLM vs fallback) ───────────────────────────
+    planner_debug: dict = field(default_factory=dict)
 
     # ── convenience aliases ───────────────────────────────────────────────────
 
@@ -833,8 +835,24 @@ def understand_query(
     # intent_facets: facet → list of associated terms from the query
     facet_terms: dict[str, list[str]] = {}  # facet → terms
     matched_keys_set: list[str] = []  # tiered dict keys found in cleaned query
-    core_facet_positive_set: set[str] = set()
-    core_facet_negative_set: set[str] = set()
+    core_facet_evidence_map: dict[str, dict[str, set[str]]] = {
+        "night": {
+            "positive_terms": set(),
+            "negative_terms": set(),
+        },
+        "indoor": {
+            "positive_terms": set(),
+            "negative_terms": set(),
+            "query_triggers": set(),
+        },
+        "animal": {
+            "positive_terms": set(),
+            "negative_terms": set(),
+            "generic_terms": set(),
+            "entity_hints": set(),
+            "weak_scene_terms": set(),
+        },
+    }
 
     for primary_facet, tiered_dict in runtime_rules.all_tiered_dicts_with_facets:
         for key, tiers in tiered_dict.items():
@@ -875,12 +893,48 @@ def understand_query(
                 tl = t.lower()
                 if tl not in exact_lower:
                     negative_set.add(t)
-            for t in tiers.get("core_facet_positive", []):
-                if str(t).strip():
-                    core_facet_positive_set.add(str(t).strip())
-            for t in tiers.get("core_facet_negative", []):
-                if str(t).strip():
-                    core_facet_negative_set.add(str(t).strip())
+            evidence_domain: Optional[str] = None
+            if "time" in entry_facets or "lighting" in entry_facets:
+                evidence_domain = "night"
+            elif tiered_dict is runtime_rules.indoor_terms_tiered:
+                evidence_domain = "indoor"
+            elif tiered_dict is runtime_rules.animal_terms_tiered:
+                evidence_domain = "animal"
+
+            if evidence_domain:
+                for t in tiers.get("core_facet_positive", []):
+                    if str(t).strip():
+                        core_facet_evidence_map[evidence_domain]["positive_terms"].add(
+                            str(t).strip()
+                        )
+                for t in tiers.get("core_facet_negative", []):
+                    if str(t).strip():
+                        core_facet_evidence_map[evidence_domain]["negative_terms"].add(
+                            str(t).strip()
+                        )
+                if evidence_domain == "animal":
+                    for t in tiers.get("core_facet_generic_terms", []):
+                        if str(t).strip():
+                            core_facet_evidence_map["animal"]["generic_terms"].add(
+                                str(t).strip()
+                            )
+                    for t in tiers.get("core_facet_entity_hints", []):
+                        if str(t).strip():
+                            core_facet_evidence_map["animal"]["entity_hints"].add(
+                                str(t).strip()
+                            )
+                    for t in tiers.get("core_facet_weak_scene_terms", []):
+                        if str(t).strip():
+                            core_facet_evidence_map["animal"]["weak_scene_terms"].add(
+                                str(t).strip()
+                            )
+                if evidence_domain == "indoor":
+                    triggers = tiers.get("core_facet_query_triggers") or [key]
+                    for t in triggers:
+                        if str(t).strip():
+                            core_facet_evidence_map["indoor"]["query_triggers"].add(
+                                str(t).strip()
+                            )
 
     # Apply project-level concept taxonomy after built-in dictionaries.
     normalized_concept_taxonomy = _normalise_concept_taxonomy(
@@ -946,12 +1000,56 @@ def understand_query(
                         if fct not in core_facets:
                             core_facets.append(fct)
 
+    # Ensure animal facet evidence has stable defaults for entity-vs-generic checks.
+    if intent == "animal_search":
+        animal_evidence = core_facet_evidence_map["animal"]
+        animal_evidence["generic_terms"].update(_ANIMAL_CATEGORY_TERMS)
+        if not animal_evidence["entity_hints"]:
+            for term in expanded_set:
+                text = str(term).strip()
+                if text and text not in _ANIMAL_CATEGORY_TERMS:
+                    animal_evidence["entity_hints"].add(text)
+
     core_facet_evidence: dict = {}
-    if core_facet_positive_set or core_facet_negative_set:
-        core_facet_evidence = {
-            "positive_terms": sorted(core_facet_positive_set),
-            "negative_terms": sorted(core_facet_negative_set),
+    for domain, payload in core_facet_evidence_map.items():
+        positive_terms = sorted(payload.get("positive_terms") or set())
+        negative_terms = sorted(payload.get("negative_terms") or set())
+        generic_terms = sorted(payload.get("generic_terms") or set())
+        entity_hints = sorted(payload.get("entity_hints") or set())
+        weak_scene_terms = sorted(payload.get("weak_scene_terms") or set())
+        query_triggers = sorted(payload.get("query_triggers") or set())
+
+        if not (
+            positive_terms
+            or negative_terms
+            or generic_terms
+            or entity_hints
+            or weak_scene_terms
+            or query_triggers
+        ):
+            continue
+
+        core_facet_evidence[domain] = {
+            "positive_terms": positive_terms,
+            "negative_terms": negative_terms,
         }
+        if generic_terms:
+            core_facet_evidence[domain]["generic_terms"] = generic_terms
+        if entity_hints:
+            core_facet_evidence[domain]["entity_hints"] = entity_hints
+        if weak_scene_terms:
+            core_facet_evidence[domain]["weak_scene_terms"] = weak_scene_terms
+        if query_triggers:
+            core_facet_evidence[domain]["query_triggers"] = query_triggers
+
+    # Keep flat fields for backward compatibility with existing callers.
+    if "night" in core_facet_evidence:
+        core_facet_evidence["positive_terms"] = list(
+            core_facet_evidence["night"].get("positive_terms") or []
+        )
+        core_facet_evidence["negative_terms"] = list(
+            core_facet_evidence["night"].get("negative_terms") or []
+        )
 
     # Normalised query = all terms joined (for vector embedding)
     all_for_norm: list[str] = exact_terms + expanded_terms + support_terms + broad_terms

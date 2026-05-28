@@ -137,6 +137,63 @@ class ProjectEmbeddingSettings(Base):
     )
 
 
+class ProjectQueryPlannerSettings(Base):
+    """Per-project configuration for LLM query planner runtime."""
+
+    __tablename__ = "project_query_planner_settings"
+    __table_args__ = (
+        sa.UniqueConstraint(
+            "project_id",
+            name="uq_project_query_planner_settings_project_id",
+        ),
+        sa.Index("ix_project_query_planner_settings_project_id", "project_id"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    project_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    enabled: Mapped[bool] = mapped_column(Boolean, server_default="false", nullable=False)
+    provider: Mapped[str] = mapped_column(Text, server_default="llama-server", nullable=False)
+    endpoint_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    api_key: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    model_name: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    temperature: Mapped[float] = mapped_column(Float, server_default="0", nullable=False)
+    top_p: Mapped[float] = mapped_column(Float, server_default="0.8", nullable=False)
+    max_tokens: Mapped[int] = mapped_column(Integer, server_default="700", nullable=False)
+    timeout_seconds: Mapped[int] = mapped_column(Integer, server_default="20", nullable=False)
+    json_parse_strategy: Mapped[str] = mapped_column(
+        Text,
+        server_default="strict_json_then_extract",
+        nullable=False,
+    )
+    planner_version: Mapped[str] = mapped_column(
+        Text,
+        server_default="llm_query_planner_v1",
+        nullable=False,
+    )
+    prompt_template: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    system_prompt: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    fallback_mode: Mapped[str] = mapped_column(
+        Text,
+        server_default="rule_fallback",
+        nullable=False,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP,
+        server_default=func.now(),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP,
+        server_default=func.now(),
+        nullable=False,
+    )
+
+
 class AIJob(Base):
     __tablename__ = "ai_jobs"
 

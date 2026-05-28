@@ -10,6 +10,7 @@ import { EmbeddingSettingsSection } from "@/components/project-ai-settings/Embed
 import { Label, SettingsCard } from "@/components/project-ai-settings/SettingsPrimitives";
 import { PromptSettingsSection } from "@/components/project-ai-settings/PromptSettingsSection";
 import { ProjectFaceSettingsPanel } from "./ProjectFaceSettingsPanel";
+import ProjectQueryPlannerSettingsPanel from "./ProjectQueryPlannerSettingsPanel";
 import ProjectSearchSettingsPanel from "./ProjectSearchSettingsPanel";
 
 interface ModelForm {
@@ -249,6 +250,10 @@ export function ProjectAISettingsPanel({ projectId }: { projectId: number }) {
       {/* Search Settings Section */}
       <SettingsCard title="搜索参数设置">
         <ProjectSearchSettingsPanel projectId={projectId} />
+      </SettingsCard>
+
+      <SettingsCard title="Query Planner 设置">
+        <ProjectQueryPlannerSettingsPanel projectId={projectId} />
       </SettingsCard>
     </div>
   );

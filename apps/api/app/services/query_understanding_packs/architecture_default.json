@@ -22,7 +22,7 @@
       "材质": {"expanded": ["混凝土", "玻璃", "金属", "木材", "石材"], "broad": ["细节"], "facets": ["object"]}
     },
     "indoor": {
-      "室内": {"expanded": ["室内空间", "大厅", "走廊", "中庭"], "support": ["采光", "材质", "家具"], "broad": ["建筑"], "facets": ["scene"]}
+      "室内": {"expanded": ["室内空间", "大厅", "走廊", "中庭"], "support": ["采光", "材质", "家具"], "broad": ["建筑"], "facets": ["scene"], "core_facet_positive": ["室内", "室内空间", "大厅", "走廊", "中庭", "室内采光", "interior", "atrium", "lobby"], "core_facet_negative": ["户外", "外立面", "街景", "outdoor", "exterior"], "core_facet_query_triggers": ["室内", "室内空间", "interior", "indoor"]}
     }
   },
   "concept_taxonomy": [

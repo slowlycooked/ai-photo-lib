@@ -99,6 +99,10 @@ def _load_pack(pack_id: str) -> dict[str, Any]:
                 "facets": _normalise_str_list(value.get("facets")),
                 "core_facet_positive": _normalise_str_list(value.get("core_facet_positive")),
                 "core_facet_negative": _normalise_str_list(value.get("core_facet_negative")),
+                "core_facet_generic_terms": _normalise_str_list(value.get("core_facet_generic_terms")),
+                "core_facet_entity_hints": _normalise_str_list(value.get("core_facet_entity_hints")),
+                "core_facet_weak_scene_terms": _normalise_str_list(value.get("core_facet_weak_scene_terms")),
+                "core_facet_query_triggers": _normalise_str_list(value.get("core_facet_query_triggers")),
             }
         normalized_terms[bucket] = cleaned_bucket
 

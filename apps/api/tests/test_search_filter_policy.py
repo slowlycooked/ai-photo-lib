@@ -66,6 +66,125 @@ class SearchFilterPolicyTest(unittest.TestCase):
         self.assertFalse(passes)
         self.assertEqual(reason, "night_conflicting_evidence")
 
+    def test_indoor_core_facet_uses_pack_positive_terms(self) -> None:
+        settings = replace(
+            SearchSettingsResolver.defaults(),
+            require_core_facet_match=True,
+            allow_vector_only_for_facet_query=False,
+        )
+        query_plan = understand_query("室内")
+        candidate = SearchCandidate(photo_id=3, vector_score=0.1, evidence_level="C")
+        ai_analysis = SimpleNamespace(
+            caption="",
+            ocr_text="",
+            scene_tags=["室内场景"],
+            object_tags=[],
+            activity_tags=[],
+            search_keywords=[],
+            location_clues=[],
+        )
+
+        passes, reason = core_facet_passes(candidate, ai_analysis, query_plan, settings)
+
+        self.assertTrue(passes)
+        self.assertEqual(reason, "indoor_positive_visual_evidence")
+
+    def test_indoor_core_facet_uses_pack_negative_terms(self) -> None:
+        settings = replace(
+            SearchSettingsResolver.defaults(),
+            require_core_facet_match=True,
+            allow_vector_only_for_facet_query=False,
+        )
+        query_plan = understand_query("室内")
+        candidate = SearchCandidate(photo_id=4, vector_score=0.1, evidence_level="C")
+        ai_analysis = SimpleNamespace(
+            caption="",
+            ocr_text="",
+            scene_tags=["室内场景", "户外"],
+            object_tags=[],
+            activity_tags=[],
+            search_keywords=[],
+            location_clues=[],
+        )
+
+        passes, reason = core_facet_passes(candidate, ai_analysis, query_plan, settings)
+
+        self.assertFalse(passes)
+        self.assertEqual(reason, "indoor_conflicting_evidence")
+
+    def test_indoor_core_facet_uses_pack_query_trigger_terms(self) -> None:
+        settings = replace(
+            SearchSettingsResolver.defaults(),
+            require_core_facet_match=True,
+            allow_vector_only_for_facet_query=False,
+        )
+        query_plan = understand_query("室内空间", rule_base_pack_id="architecture_default")
+        candidate = SearchCandidate(photo_id=7, vector_score=0.1, evidence_level="C")
+        ai_analysis = SimpleNamespace(
+            caption="",
+            ocr_text="",
+            scene_tags=["室内采光"],
+            object_tags=[],
+            activity_tags=[],
+            search_keywords=[],
+            location_clues=[],
+        )
+
+        passes, reason = core_facet_passes(candidate, ai_analysis, query_plan, settings)
+
+        self.assertTrue(passes)
+        self.assertEqual(reason, "indoor_positive_visual_evidence")
+
+    def test_animal_core_facet_uses_pack_generic_terms(self) -> None:
+        settings = replace(
+            SearchSettingsResolver.defaults(),
+            require_core_facet_match=True,
+            allow_vector_only_for_facet_query=False,
+        )
+        query_plan = understand_query("动物")
+        candidate = SearchCandidate(photo_id=5, vector_score=0.1, evidence_level="C")
+        ai_analysis = SimpleNamespace(
+            caption="",
+            ocr_text="",
+            scene_tags=[],
+            object_tags=["宠物"],
+            activity_tags=[],
+            search_keywords=[],
+            location_clues=[],
+            semantic_concepts=[],
+            raw_result={},
+        )
+
+        passes, reason = core_facet_passes(candidate, ai_analysis, query_plan, settings)
+
+        self.assertFalse(passes)
+        self.assertEqual(reason, "animal_no_entity_evidence")
+
+    def test_animal_core_facet_uses_pack_weak_scene_terms(self) -> None:
+        settings = replace(
+            SearchSettingsResolver.defaults(),
+            require_core_facet_match=True,
+            allow_vector_only_for_facet_query=False,
+        )
+        query_plan = understand_query("动物")
+        candidate = SearchCandidate(photo_id=6, vector_score=0.1, evidence_level="C")
+        ai_analysis = SimpleNamespace(
+            caption="",
+            ocr_text="",
+            scene_tags=["动物园"],
+            object_tags=[],
+            activity_tags=[],
+            search_keywords=[],
+            location_clues=[],
+            semantic_concepts=[],
+            raw_result={},
+        )
+
+        passes, reason = core_facet_passes(candidate, ai_analysis, query_plan, settings)
+
+        self.assertFalse(passes)
+        self.assertEqual(reason, "animal_scene_without_entity")
+
 
 if __name__ == "__main__":
     unittest.main()

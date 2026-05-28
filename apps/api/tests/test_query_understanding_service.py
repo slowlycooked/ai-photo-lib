@@ -288,6 +288,24 @@ def test_query_understanding_unknown_rule_pack_fails_explicitly():
 def test_query_understanding_night_query_emits_pack_driven_core_facet_evidence():
     plan = understand_query("夜景")
 
-    assert "night" not in plan.core_facet_evidence  # shape guard: plain dict payload only
-    assert "灯光" in plan.core_facet_evidence["positive_terms"]
-    assert "白天" in plan.core_facet_evidence["negative_terms"]
+    assert "night" in plan.core_facet_evidence
+    assert "灯光" in plan.core_facet_evidence["night"]["positive_terms"]
+    assert "白天" in plan.core_facet_evidence["night"]["negative_terms"]
+
+
+def test_query_understanding_indoor_query_emits_domain_evidence():
+    plan = understand_query("室内")
+
+    assert "indoor" in plan.core_facet_evidence
+    assert "室内" in plan.core_facet_evidence["indoor"]["positive_terms"]
+    assert "户外" in plan.core_facet_evidence["indoor"]["negative_terms"]
+    assert "室内" in plan.core_facet_evidence["indoor"]["query_triggers"]
+
+
+def test_query_understanding_animal_query_emits_generic_and_entity_hints():
+    plan = understand_query("动物")
+
+    assert "animal" in plan.core_facet_evidence
+    assert "动物" in plan.core_facet_evidence["animal"]["generic_terms"]
+    assert "猫" in plan.core_facet_evidence["animal"]["entity_hints"]
+    assert "动物园" in plan.core_facet_evidence["animal"]["weak_scene_terms"]

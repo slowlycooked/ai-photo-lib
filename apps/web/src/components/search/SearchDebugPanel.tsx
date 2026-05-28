@@ -10,6 +10,7 @@ interface SearchDebugPanelProps {
 export function SearchDebugPanel({ payload }: SearchDebugPanelProps) {
   const [showSettings, setShowSettings] = useState(false);
   const queryPlan = payload.query_plan ?? {};
+  const planner = (payload.query_planner ?? queryPlan.query_planner ?? {}) as Record<string, unknown>;
 
   return (
     <div className="rounded-md border border-amber-400/50 bg-amber-50 dark:bg-amber-950/30 p-3 text-[11px] font-mono space-y-1.5 text-amber-900 dark:text-amber-200">
@@ -32,6 +33,21 @@ export function SearchDebugPanel({ payload }: SearchDebugPanelProps) {
         <div>concept_terms: {(payload.concept_terms ?? []).join(", ") || "—"}</div>
         <div>concept_entity_terms: {(payload.concept_entity_terms ?? []).join(", ") || "—"}</div>
       </div>
+
+      {Object.keys(planner).length > 0 && (
+        <div className="rounded border border-indigo-400/50 bg-indigo-50 dark:bg-indigo-950/30 px-2 py-1 text-[10px] text-indigo-900 dark:text-indigo-200 space-y-0.5">
+          <div className="font-semibold text-[11px]">🧭 Query Planner</div>
+          <div><span className="opacity-70">provider:</span> {String(planner.provider ?? "—")}</div>
+          <div><span className="opacity-70">model:</span> {String(planner.model ?? "—")}</div>
+          <div><span className="opacity-70">planner_version:</span> {String(planner.planner_version ?? "—")}</div>
+          <div><span className="opacity-70">latency_ms:</span> {String(planner.latency_ms ?? "—")}</div>
+          <div><span className="opacity-70">used_fallback:</span> {String(planner.used_fallback ?? false)}</div>
+          <div><span className="opacity-70">fallback_reason:</span> {String(planner.fallback_reason ?? "") || "—"}</div>
+          <div><span className="opacity-70">parsed:</span> {String(planner.parsed ?? false)}</div>
+          <div><span className="opacity-70">confidence:</span> {String(planner.confidence ?? "—")}</div>
+          <div><span className="opacity-70">raw_output_preview:</span> {String(planner.raw_output_preview ?? "") || "—"}</div>
+        </div>
+      )}
 
       <div className="flex flex-wrap gap-x-4 gap-y-0.5">
         <span><span className="opacity-60">意图:</span> {payload.intent}</span>

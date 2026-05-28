@@ -85,7 +85,18 @@ def merge_keyword_with_aux_candidates(
 
         for field_name, values in aux.keyword_explain.items():
             current = existing.keyword_explain.setdefault(field_name, [])
-            for value in values:
+            if not isinstance(current, list):
+                current = [] if current is None else [current]
+                existing.keyword_explain[field_name] = current
+
+            if values is None:
+                continue
+            if isinstance(values, (list, tuple, set)):
+                iter_values = values
+            else:
+                iter_values = [values]
+
+            for value in iter_values:
                 if value not in current:
                     current.append(value)
 

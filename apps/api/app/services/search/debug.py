@@ -158,6 +158,7 @@ def build_debug_payload(
             "exact_terms": query_plan.exact_terms,
             "expanded_terms": query_plan.expanded_terms,
             "semantic_query_text": query_plan.semantic_query_text,
+            "query_planner": query_plan.planner_debug,
         },
         "original_query": query_plan.original_query,
         "normalized_query": query_plan.normalized_query,
@@ -180,6 +181,7 @@ def build_debug_payload(
         "matched_keys": query_plan.matched_keys,
         "query_constraints": query_plan.query_constraints,
         "core_facets": query_plan.core_facets,
+        "query_planner": query_plan.planner_debug,
         # Penalise tags snapshot
         "penalize_tags": query_plan.penalize_tags,
         "intent": query_plan.intent,

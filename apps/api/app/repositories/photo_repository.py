@@ -132,7 +132,7 @@ class PhotoRepository:
         from sqlalchemy import func
 
         return (
-            self._db.query(func.count(PhotoAIAnalysis.id))
+            self._db.query(func.count(func.distinct(PhotoAIAnalysis.photo_id)))
             .filter(PhotoAIAnalysis.project_id == project_id)
             .scalar()
             or 0

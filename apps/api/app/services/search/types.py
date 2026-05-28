@@ -119,6 +119,21 @@ class EffectiveSearchSettings:
     # Rule-pack selection for query understanding dictionaries/synonyms.
     query_understanding_base_pack: str = "lifestyle_default"
     query_understanding_extension_packs: List[str] = field(default_factory=list)
+    # LLM query planner controls (configured via search_quality_settings JSONB).
+    query_planner_enabled: bool = False
+    query_planner_provider: str = "llama-server"
+    query_planner_endpoint_url: str = ""
+    query_planner_api_key: str = ""
+    query_planner_model_name: str = ""
+    query_planner_temperature: float = 0.0
+    query_planner_top_p: float = 0.8
+    query_planner_max_tokens: int = 700
+    query_planner_timeout_seconds: int = 20
+    query_planner_json_parse_strategy: str = "strict_json_then_extract"
+    query_planner_planner_version: str = "llm_query_planner_v1"
+    query_planner_prompt_template: str = ""
+    query_planner_system_prompt: str = ""
+    query_planner_fallback_mode: str = "rule_fallback"
 
 
 # ── Candidate / score dataclasses ─────────────────────────────────────────────

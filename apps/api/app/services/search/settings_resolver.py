@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from ...config import settings as global_settings
 from ...models.ai import ProjectEmbeddingSettings
 from ...models.project_search_settings import ProjectSearchSettings
+from ..project_query_planner_settings_service import resolve_query_planner_settings
 from ..query_understanding_rule_packs import DEFAULT_BASE_PACK_ID, normalise_extension_pack_ids
 from .types import (
     DEFAULT_KEYWORD_FIELD_WEIGHTS,
@@ -103,6 +104,20 @@ class SearchSettingsResolver:
             concept_taxonomy=[],
             query_understanding_base_pack=DEFAULT_BASE_PACK_ID,
             query_understanding_extension_packs=[],
+            query_planner_enabled=False,
+            query_planner_provider="llama-server",
+            query_planner_endpoint_url="",
+            query_planner_api_key="",
+            query_planner_model_name="",
+            query_planner_temperature=0.0,
+            query_planner_top_p=0.8,
+            query_planner_max_tokens=700,
+            query_planner_timeout_seconds=20,
+            query_planner_json_parse_strategy="strict_json_then_extract",
+            query_planner_planner_version="llm_query_planner_v1",
+            query_planner_prompt_template="",
+            query_planner_system_prompt="",
+            query_planner_fallback_mode="rule_fallback",
         )
 
     # ── Main resolver ─────────────────────────────────────────────────────────
@@ -120,6 +135,11 @@ class SearchSettingsResolver:
         if row is not None:
             # Read optional search_quality_settings JSONB overrides
             _q: dict = row.search_quality_settings or {}
+            query_planner_settings = resolve_query_planner_settings(
+                db,
+                project_id,
+                search_quality_settings=_q,
+            )
             return EffectiveSearchSettings(
                 default_mode=_safe_mode(row.default_mode),
                 keyword_top_k=row.keyword_top_k,
@@ -158,6 +178,20 @@ class SearchSettingsResolver:
                         _q.get("query_understanding_extension_packs")
                     )
                 ),
+                query_planner_enabled=bool(query_planner_settings["enabled"]),
+                query_planner_provider=str(query_planner_settings["provider"]),
+                query_planner_endpoint_url=str(query_planner_settings["endpoint_url"]),
+                query_planner_api_key=str(query_planner_settings["api_key"]),
+                query_planner_model_name=str(query_planner_settings["model_name"]),
+                query_planner_temperature=float(query_planner_settings["temperature"]),
+                query_planner_top_p=float(query_planner_settings["top_p"]),
+                query_planner_max_tokens=int(query_planner_settings["max_tokens"]),
+                query_planner_timeout_seconds=int(query_planner_settings["timeout_seconds"]),
+                query_planner_json_parse_strategy=str(query_planner_settings["json_parse_strategy"]),
+                query_planner_planner_version=str(query_planner_settings["planner_version"]),
+                query_planner_prompt_template=str(query_planner_settings["prompt_template"]),
+                query_planner_system_prompt=str(query_planner_settings["system_prompt"]),
+                query_planner_fallback_mode=str(query_planner_settings["fallback_mode"]),
             )
 
         # 2. project_embedding_settings (partial fallback — vector weights only)
@@ -182,6 +216,12 @@ class SearchSettingsResolver:
             })
 
         # 3. Global config for everything else
+        query_planner_settings = resolve_query_planner_settings(
+            db,
+            project_id,
+            search_quality_settings=None,
+        )
+
         return EffectiveSearchSettings(
             default_mode="hybrid",
             keyword_top_k=global_settings.search_keyword_top_k,
@@ -199,6 +239,20 @@ class SearchSettingsResolver:
             concept_taxonomy=[],
             query_understanding_base_pack=DEFAULT_BASE_PACK_ID,
             query_understanding_extension_packs=[],
+            query_planner_enabled=bool(query_planner_settings["enabled"]),
+            query_planner_provider=str(query_planner_settings["provider"]),
+            query_planner_endpoint_url=str(query_planner_settings["endpoint_url"]),
+            query_planner_api_key=str(query_planner_settings["api_key"]),
+            query_planner_model_name=str(query_planner_settings["model_name"]),
+            query_planner_temperature=float(query_planner_settings["temperature"]),
+            query_planner_top_p=float(query_planner_settings["top_p"]),
+            query_planner_max_tokens=int(query_planner_settings["max_tokens"]),
+            query_planner_timeout_seconds=int(query_planner_settings["timeout_seconds"]),
+            query_planner_json_parse_strategy=str(query_planner_settings["json_parse_strategy"]),
+            query_planner_planner_version=str(query_planner_settings["planner_version"]),
+            query_planner_prompt_template=str(query_planner_settings["prompt_template"]),
+            query_planner_system_prompt=str(query_planner_settings["system_prompt"]),
+            query_planner_fallback_mode=str(query_planner_settings["fallback_mode"]),
         )
 
 

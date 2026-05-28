@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import Optional
 
 from ..query_understanding_service import SearchQueryPlan, understand_query as default_understand_query
+from .query_planner import resolve_query_plan_llm_first
 from .types import EffectiveSearchSettings
 
 
@@ -13,15 +14,15 @@ def resolve_search_query_plan(
     project_id: Optional[int],
     settings: EffectiveSearchSettings,
     understander=default_understand_query,
+    planner_resolver=resolve_query_plan_llm_first,
 ) -> SearchQueryPlan:
     """Resolve a query plan while honoring per-project search settings."""
     if settings.enable_query_understanding:
-        return understander(
+        return planner_resolver(
             query,
             project_id=project_id,
-            concept_taxonomy=settings.concept_taxonomy,
-            rule_base_pack_id=settings.query_understanding_base_pack,
-            rule_extension_pack_ids=settings.query_understanding_extension_packs,
+            settings=settings,
+            understander=understander,
         )
 
     return SearchQueryPlan(
@@ -29,6 +30,11 @@ def resolve_search_query_plan(
         normalized_query=query,
         exact_terms=[word for word in query.split() if word],
         intent="semantic_photo_search",
+        planner_debug={
+            "enabled": False,
+            "used_fallback": True,
+            "fallback_reason": "query_understanding_disabled",
+        },
     )
 
 
@@ -55,4 +61,6 @@ def build_query_plan_trace_event(
     }
     if include_recommended_profile:
         event["recommended_profile"] = query_plan.recommended_profile
+    if query_plan.planner_debug:
+        event["query_planner"] = query_plan.planner_debug
     return event

@@ -2,7 +2,7 @@
 # scripts/svc.sh — macOS native service manager
 # 用法: ./scripts/svc.sh {start|stop|restart|status|logs} [服务名...]
 #
-# 服务名: postgres ai embed api worker web all（默认全部）
+# 服务名: postgres planner ai embed api worker web all（默认全部）
 
 set -euo pipefail
 
@@ -54,6 +54,15 @@ LLAMA_CTX="${LLAMA_CTX:-8192}"
 LLAMA_CACHE_RAM="${LLAMA_CACHE_RAM:-0}"
 LLAMA_MEDIA_PATH="${LLAMA_MEDIA_PATH:-${PHOTO_LIBRARY_PATH:-}}"
 LLAMA_STOP_TIMEOUT="${LLAMA_STOP_TIMEOUT:-15}"
+
+QUERY_PLANNER_SERVER="${QUERY_PLANNER_SERVER:-${LLAMA_SERVER:-}}"
+QUERY_PLANNER_MODEL="${QUERY_PLANNER_MODEL:-}"
+QUERY_PLANNER_ALIAS="${QUERY_PLANNER_ALIAS:-qwen3-4b-query-planner}"
+QUERY_PLANNER_PORT="${QUERY_PLANNER_PORT:-8084}"
+QUERY_PLANNER_CTX="${QUERY_PLANNER_CTX:-4096}"
+QUERY_PLANNER_THREADS="${QUERY_PLANNER_THREADS:-6}"
+QUERY_PLANNER_CACHE_RAM="${QUERY_PLANNER_CACHE_RAM:-0}"
+QUERY_PLANNER_STOP_TIMEOUT="${QUERY_PLANNER_STOP_TIMEOUT:-15}"
 
 EMBED_SERVER="${EMBED_SERVER:-${LLAMA_SERVER:-}}"
 EMBED_MODEL="${EMBED_MODEL:-}"
@@ -120,6 +129,7 @@ service_port() {
     api)      echo "$API_PORT" ;;
     web)      echo "$WEB_PORT" ;;
     ai)       echo "$LLAMA_PORT" ;;
+    planner)  echo "$QUERY_PLANNER_PORT" ;;
     embed)    echo "$EMBED_PORT" ;;
     *)        echo "" ;;
   esac
@@ -131,6 +141,7 @@ service_cmd_pattern() {
     api)      echo 'ai-photo-api|uvicorn .*(app\.main:app|main:app)' ;;
     web)      echo 'ai-photo-web|vite|npm run (dev|preview)' ;;
     ai)       echo 'ai-photo-llama|llama-server' ;;
+    planner)  echo 'ai-photo-query-planner|llama-server' ;;
     embed)    echo 'ai-photo-embed|llama-server' ;;
     worker)   echo 'ai-photo-worker|python(3)? .*main\.py' ;;
     *)        echo '' ;;
@@ -463,7 +474,7 @@ start_api() {
   local py_bin
   py_bin="$(api_python_bin)"
 
-  log_info "启动 API (host=$API_HOST, port=$API_PORT, reload=$SVC_RELOAD)..."
+  log_info "启动 API (host=$API_HOST, port=$API_PORT, reload=$API_RELOAD)..."
   cd "$ROOT/apps/api"
   local uvicorn_args=(
     -m uvicorn
@@ -472,7 +483,7 @@ start_api() {
     --port "$API_PORT"
     --no-access-log
   )
-  if [ "$SVC_RELOAD" = "1" ] || [ "$SVC_RELOAD" = "true" ]; then
+  if [ "$API_RELOAD" = "1" ] || [ "$API_RELOAD" = "true" ]; then
     uvicorn_args+=(--reload)
   fi
 
@@ -666,6 +677,76 @@ stop_ai() {
   kill_listener_by_service_port ai
 }
 
+start_query_planner() {
+  if is_running planner; then
+    log_ok "query-planner 已在运行 (PID $(cat "$(pid_file planner)"), port $QUERY_PLANNER_PORT)"
+    return 0
+  fi
+
+  local occupied_pid=""
+  occupied_pid="$(get_listen_pid_by_port "$QUERY_PLANNER_PORT")"
+  if [ -n "$occupied_pid" ]; then
+    local occupied_cmd=""
+    occupied_cmd="$(ps -p "$occupied_pid" -o command= 2>/dev/null || true)"
+    log_error "端口 $QUERY_PLANNER_PORT 已被占用 (PID $occupied_pid): $occupied_cmd"
+    return 1
+  fi
+
+  if [ -z "$QUERY_PLANNER_SERVER" ] || [ -z "$QUERY_PLANNER_MODEL" ]; then
+    log_warn "QUERY_PLANNER_SERVER / QUERY_PLANNER_MODEL 未配置，跳过启动"
+    return 0
+  fi
+
+  local args=(
+    "$QUERY_PLANNER_SERVER"
+    -m "$QUERY_PLANNER_MODEL"
+    --alias "$QUERY_PLANNER_ALIAS"
+    --host 127.0.0.1
+    --port "$QUERY_PLANNER_PORT"
+    -c "$QUERY_PLANNER_CTX"
+    --threads "$QUERY_PLANNER_THREADS"
+    --parallel 1
+    --cache-ram "$QUERY_PLANNER_CACHE_RAM"
+  )
+
+  log_info "启动 query-planner llama-server (port $QUERY_PLANNER_PORT)..."
+  run_named_process "ai-photo-query-planner" "${args[@]}" > "$(log_file planner)" 2>&1 &
+  save_bg_pid planner
+  sleep 2
+
+  if is_running planner; then
+    log_ok "query-planner 已启动 (PID $(cat "$(pid_file planner)"), log: .logs/planner.log)"
+  else
+    log_error "query-planner 启动失败，请查看 .logs/planner.log"
+    return 1
+  fi
+}
+
+stop_query_planner() {
+  if is_running planner; then
+    local pid
+    pid="$(cat "$(pid_file planner)")"
+    local waited=0
+
+    log_info "停止 query-planner (PID $pid)..."
+    kill -TERM "$pid" 2>/dev/null || true
+    while kill -0 "$pid" 2>/dev/null; do
+      if [ "$waited" -ge "$QUERY_PLANNER_STOP_TIMEOUT" ]; then
+        kill -KILL "$pid" 2>/dev/null || true
+        break
+      fi
+      sleep 1
+      waited=$((waited + 1))
+    done
+    rm -f "$(pid_file planner)"
+    log_ok "query-planner 已停止"
+  else
+    log_warn "query-planner 未在运行"
+  fi
+  kill_prefixed_processes '(^| )ai-photo-query-planner( |$)' 'query-planner'
+  kill_listener_by_service_port planner
+}
+
 start_embed() {
   if is_running embed; then
     log_ok "llama-embed 已在运行 (PID $(cat "$(pid_file embed)"), port $EMBED_PORT)"
@@ -810,6 +891,7 @@ show_status() {
   status_process "api" "API" "$API_PORT"
   status_process "web" "Web" "$WEB_PORT"
   status_process "worker" "Worker" "-"
+  status_process "planner" "llm-plan" "$QUERY_PLANNER_PORT"
   status_process "ai" "llama-srv" "$LLAMA_PORT"
   status_ai
   status_process "embed" "llama-emb" "$EMBED_PORT"
@@ -819,13 +901,13 @@ show_status() {
 
 resolve_services() {
   if [ "$#" -eq 0 ]; then
-    echo "postgres ai embed api worker web"
+    echo "postgres planner ai embed api worker web"
   else
     local expanded=()
     local svc
     for svc in "$@"; do
       if [ "$svc" = "all" ]; then
-        expanded+=(postgres ai embed api worker web)
+        expanded+=(postgres planner ai embed api worker web)
       else
         expanded+=("$svc")
       fi
@@ -859,6 +941,7 @@ do_start() {
   for svc in "${requested[@]}"; do
     case "$svc" in
       postgres) start_postgres ;;
+      planner)  start_query_planner ;;
       ai)       start_ai ;;
       embed)    start_embed ;;
       api)      start_api ;;
@@ -878,7 +961,7 @@ do_stop() {
   local requested=( $services )
   local ordered=()
 
-  for s in web worker api embed ai postgres; do
+  for s in web worker api embed ai planner postgres; do
     if contains_service "$s" "${requested[@]}"; then
       ordered+=("$s")
     fi
@@ -891,6 +974,7 @@ do_stop() {
   for svc in "${ordered[@]}"; do
     case "$svc" in
       postgres) stop_postgres ;;
+      planner)  stop_query_planner ;;
       ai)       stop_ai ;;
       embed)    stop_embed ;;
       api)      stop_api ;;
@@ -939,6 +1023,7 @@ case "$COMMAND" in
     echo ""
     echo -e "${BOLD}服务名:${RESET}"
     echo "  postgres  — PostgreSQL（本地进程，数据目录见 POSTGRES_DATA_DIR）"
+    echo "  planner   — Query Planner llama-server（Qwen3-4B-Instruct）"
     echo "  ai        — llama-server"
     echo "  embed     — llama embedding server"
     echo "  api       — FastAPI / uvicorn"
@@ -951,7 +1036,7 @@ case "$COMMAND" in
     echo ""
     echo -e "${BOLD}示例:${RESET}"
     echo "  ./scripts/svc.sh start"
-    echo "  ./scripts/svc.sh start postgres api web"
+    echo "  ./scripts/svc.sh start postgres planner api web"
     echo "  DEPLOY_PROFILE=runtime ./scripts/svc.sh start"
     echo "  ./scripts/svc.sh logs postgres"
     echo ""

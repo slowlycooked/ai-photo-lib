@@ -21,6 +21,7 @@ from app.services.search.people_query_resolver import (  # noqa: E402
     ResolvedPersonRef,
 )
 from app.services.search.recall_pipeline import (  # noqa: E402
+    merge_keyword_with_aux_candidates,
     run_metadata_stage,
     run_people_stage,
     run_vector_stage,
@@ -168,6 +169,47 @@ class RecallPipelineStageTest(unittest.TestCase):
         self.assertIsNotNone(result.error)
         self.assertIn("embedding down", result.fallback_reason)
         self.assertTrue(trace[-1]["fallback"])
+
+    def test_merge_keyword_with_aux_candidates_accepts_scalar_keyword_explain_values(self) -> None:
+        keyword_results = [
+            SearchCandidate(
+                photo_id=11,
+                keyword_score=0.2,
+                matched_tags=["动物"],
+                match_source=["keyword"],
+                keyword_explain={"semantic_concepts": ["动物"]},
+                term_level_hits={"exact": ["猫"]},
+            )
+        ]
+        aux_results = [
+            SearchCandidate(
+                photo_id=11,
+                keyword_score=0.6,
+                matched_tags=["猫"],
+                match_source=["concept"],
+                keyword_explain={
+                    "semantic_entities": ["猫"],
+                    "concept_term_coverage": 0.5,
+                },
+                term_level_hits={"strong": ["猫"]},
+            )
+        ]
+
+        merged = merge_keyword_with_aux_candidates(
+            keyword_results,
+            aux_results,
+            aux_source="concept",
+        )
+
+        self.assertEqual(len(merged), 1)
+        merged_candidate = merged[0]
+        self.assertEqual(merged_candidate.photo_id, 11)
+        self.assertEqual(merged_candidate.keyword_score, 0.6)
+        self.assertIn("concept", merged_candidate.match_source)
+        self.assertEqual(
+            merged_candidate.keyword_explain.get("concept_term_coverage"),
+            [0.5],
+        )
 
 
 if __name__ == "__main__":
