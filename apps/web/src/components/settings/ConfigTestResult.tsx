@@ -1,4 +1,5 @@
-import { AlertTriangle, CheckCircle2, Clock3 } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Clipboard, Clock3 } from "lucide-react";
+import { useState } from "react";
 
 interface SummaryItem {
   label: string;
@@ -16,6 +17,8 @@ interface ConfigTestResultProps {
   requestPayload?: unknown;
   rawOutput?: unknown;
   parsedOutput?: unknown;
+  copyPayload?: unknown;
+  copyLabel?: string;
 }
 
 function renderBlockValue(value: unknown): string {
@@ -50,7 +53,24 @@ export function ConfigTestResult({
   requestPayload,
   rawOutput,
   parsedOutput,
+  copyPayload,
+  copyLabel = "复制 Payload",
 }: ConfigTestResultProps) {
+  const [copyMessage, setCopyMessage] = useState<string | null>(null);
+
+  async function handleCopy() {
+    if (copyPayload == null || !navigator.clipboard?.writeText) return;
+    try {
+      const text = typeof copyPayload === "string" ? copyPayload : JSON.stringify(copyPayload, null, 2);
+      await navigator.clipboard.writeText(text);
+      setCopyMessage("已复制");
+      window.setTimeout(() => setCopyMessage(null), 1500);
+    } catch {
+      setCopyMessage("复制失败");
+      window.setTimeout(() => setCopyMessage(null), 1500);
+    }
+  }
+
   return (
     <section className="rounded-md border border-hairline bg-surface-soft p-3 space-y-3">
       <div className="flex flex-wrap items-center gap-2">
@@ -73,6 +93,17 @@ export function ConfigTestResult({
         {model ? (
           <span className="text-xs px-2 py-0.5 rounded bg-secondary-bg text-ink font-mono">{model}</span>
         ) : null}
+        {copyPayload != null ? (
+          <button
+            type="button"
+            onClick={handleCopy}
+            className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded border border-hairline text-ink hover:bg-secondary-bg"
+          >
+            <Clipboard className="w-3 h-3" />
+            {copyLabel}
+          </button>
+        ) : null}
+        {copyMessage ? <span className="text-xs text-mute">{copyMessage}</span> : null}
       </div>
 
       {errorMessage ? (

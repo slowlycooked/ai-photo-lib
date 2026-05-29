@@ -467,3 +467,197 @@ def test_llm_query_planner_returns_cached_plan_for_complex_query() -> None:
     assert planner_call.call_count == 1
     assert first_plan.planner_debug.get("used_fallback") is False
     assert second_plan.planner_debug.get("cache_hit") is True
+
+
+# ---------------------------------------------------------------------------
+# P0-1 regression: compound queries must NOT be fast-pathed
+# ---------------------------------------------------------------------------
+
+def test_compound_metadata_semantic_query_must_call_llm() -> None:
+    """'去年张家口滑雪' has metadata (year) AND semantic residual (滑雪).
+    It must NOT use the rule fast path — the LLM must be called.
+    Acceptance criterion: used_fallback=false, parsed=true, latency_ms>0.
+    """
+    settings = replace(
+        SearchSettingsResolver.defaults(),
+        query_planner_enabled=True,
+        query_planner_endpoint_url="http://127.0.0.1:18084/v1/chat/completions",
+        query_planner_model_name="qwen3-4b-query-planner",
+    )
+
+    llm_json = """
+    {
+      "intent": "activity_location_time_search",
+      "search_mode": "hybrid",
+      "normalized_query": "去年张家口滑雪",
+      "semantic_query_text": "滑雪 雪地 滑雪场 冬季运动 户外运动 张家口冬季",
+      "terms": {
+        "exact": ["滑雪", "张家口"],
+        "expanded": ["滑雪场", "雪地", "冬季运动"],
+        "support": ["户外", "冬天", "旅行"],
+        "broad": [],
+        "negative": []
+      },
+      "facets": {
+        "object": ["雪"],
+        "scene": ["雪地", "滑雪场"],
+        "activity": ["滑雪"],
+        "people": [],
+        "weather": ["雪"],
+        "time": ["冬季", "2025"],
+        "location": ["张家口"]
+      },
+      "filters": {"indoor_outdoor": "outdoor"},
+      "metadata_filters": {
+        "year": 2025,
+        "date_from": "2025-01-01",
+        "date_to": "2026-01-01",
+        "place_terms": ["张家口"],
+        "metadata_only": false,
+        "matched_metadata_terms": ["去年", "张家口"]
+      },
+      "concept_terms": ["滑雪", "冬季运动", "雪地活动"],
+      "semantic_tags": ["冬季运动", "雪景"],
+      "core_facets": ["activity", "scene", "location", "time"],
+      "core_facet_evidence": {
+        "positive_terms": ["滑雪", "雪地", "张家口"],
+        "negative_terms": []
+      },
+      "query_constraints": {
+        "requires_visual_evidence": true,
+        "allow_weak_only_match": true,
+        "min_evidence_level": "C",
+        "query_core_facets": ["activity", "location", "time"]
+      },
+      "confidence": 0.92,
+      "fallback_reason": ""
+    }
+    """
+
+    with patch(
+        "app.services.search.query_planner.llm_query_planner.call_chat_completion",
+        return_value=llm_json,
+    ) as planner_call:
+        plan = resolve_query_plan_llm_first(
+            "去年张家口滑雪",
+            project_id=1,
+            settings=settings,
+            understander=understand_query,
+        )
+
+    # LLM must have been called — not fast-pathed
+    planner_call.assert_called_once()
+    assert plan.planner_debug.get("used_fallback") is False
+    assert plan.planner_debug.get("parsed") is True
+    assert int(plan.planner_debug.get("latency_ms", -1)) >= 0
+    assert plan.planner_debug.get("planner_route") == "llm"
+
+    # Exact terms must be LLM-decomposed anchors, NOT the original sentence
+    assert "去年张家口滑雪" not in plan.exact_terms
+    assert "滑雪" in plan.exact_terms
+    assert "张家口" in plan.exact_terms
+
+    # Metadata filters must be correct
+    assert plan.metadata_filters.get("year") == 2025
+    assert plan.metadata_filters.get("metadata_only") is False
+    assert "张家口" in (plan.metadata_filters.get("place_terms") or [])
+
+    # allow_weak_only_match must be True for compound query
+    assert plan.query_constraints.get("allow_weak_only_match") is True
+
+
+def test_pure_metadata_query_uses_fast_path() -> None:
+    """'去年' is pure metadata — should use rule fast path without calling LLM."""
+    settings = replace(
+        SearchSettingsResolver.defaults(),
+        query_planner_enabled=True,
+        query_planner_endpoint_url="http://127.0.0.1:18084/v1/chat/completions",
+        query_planner_model_name="qwen3-4b-query-planner",
+    )
+
+    with patch(
+        "app.services.search.query_planner.llm_query_planner.call_chat_completion",
+    ) as planner_call:
+        plan = resolve_query_plan_llm_first(
+            "去年",
+            project_id=1,
+            settings=settings,
+            understander=understand_query,
+        )
+
+    planner_call.assert_not_called()
+    assert plan.planner_debug.get("used_fallback") is True
+    assert plan.planner_debug.get("planner_route") == "rule_fast_path"
+    assert "去年" not in plan.exact_terms or plan.metadata_filters.get("year") is not None
+
+
+# ---------------------------------------------------------------------------
+# P0-3 regression: mapper must not pollute LLM exact terms with fallback sentence
+# ---------------------------------------------------------------------------
+
+def test_mapper_llm_exact_terms_not_polluted_by_fallback_sentence() -> None:
+    """When LLM is parsed=true with confidence >= 0.6, the fallback rule engine's
+    whole-sentence exact term (e.g. '去年张家口滑雪') must NOT appear in the final
+    exact_terms — only the LLM-decomposed anchors should be present.
+    """
+    settings = replace(
+        SearchSettingsResolver.defaults(),
+        query_planner_enabled=True,
+        query_planner_endpoint_url="http://127.0.0.1:18084/v1/chat/completions",
+        query_planner_model_name="qwen3-4b-query-planner",
+    )
+
+    llm_json = """
+    {
+      "intent": "semantic_photo_search",
+      "search_mode": "hybrid",
+      "normalized_query": "去年张家口滑雪",
+      "semantic_query_text": "滑雪 雪地 滑雪场 冬季运动",
+      "terms": {
+        "exact": ["滑雪", "张家口"],
+        "expanded": ["滑雪场", "雪地"],
+        "support": ["冬天"],
+        "broad": [],
+        "negative": []
+      },
+      "facets": {"object": [], "scene": ["雪地"], "activity": ["滑雪"], "people": [], "weather": [], "time": [], "location": ["张家口"]},
+      "filters": {},
+      "metadata_filters": {
+        "year": 2025,
+        "place_terms": ["张家口"],
+        "metadata_only": false,
+        "matched_metadata_terms": ["去年", "张家口"]
+      },
+      "concept_terms": ["滑雪"],
+      "semantic_tags": [],
+      "core_facets": ["activity", "location"],
+      "core_facet_evidence": {"positive_terms": ["滑雪", "张家口"], "negative_terms": []},
+      "query_constraints": {"requires_visual_evidence": true, "allow_weak_only_match": true, "min_evidence_level": "C", "query_core_facets": ["activity", "location"]},
+      "confidence": 0.88,
+      "fallback_reason": ""
+    }
+    """
+
+    with patch(
+        "app.services.search.query_planner.llm_query_planner.call_chat_completion",
+        return_value=llm_json,
+    ):
+        plan = resolve_query_plan_llm_first(
+            "去年张家口滑雪",
+            project_id=1,
+            settings=settings,
+            understander=understand_query,
+            include_raw_output=True,
+        )
+
+    # The whole query string must NOT appear as an exact term
+    assert "去年张家口滑雪" not in plan.exact_terms, (
+        f"fallback sentence polluted exact_terms: {plan.exact_terms}"
+    )
+    # LLM anchors must be present
+    assert "滑雪" in plan.exact_terms
+    assert "张家口" in plan.exact_terms
+    # LLM expanded terms should not be merged with fallback
+    assert "滑雪场" in plan.expanded_terms
+    assert "雪地" in plan.expanded_terms
+

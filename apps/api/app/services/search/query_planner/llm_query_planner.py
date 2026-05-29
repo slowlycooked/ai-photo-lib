@@ -26,7 +26,9 @@ _QUERY_PLAN_CACHE_MAX_SIZE = 512
 _QUERY_PLAN_CACHE_TTL_SECONDS = 600
 _QUERY_PLAN_CACHE: "OrderedDict[tuple, tuple[float, SearchQueryPlan]]" = OrderedDict()
 
-_FAST_PATH_INTENTS = {
+# Intent set that is safe to use in rule fast path when there is NO metadata
+# (e.g. a short, clear single-domain query like "动物", "合照", "夜景")
+_FAST_PATH_SINGLE_DOMAIN_INTENTS = {
     "animal_search",
     "group_photo_search",
     "people_search",
@@ -37,18 +39,6 @@ _FAST_PATH_INTENTS = {
     "location_search",
 }
 
-_FAST_PATH_TOKEN_HINTS = {
-    "动物",
-    "宠物",
-    "猫",
-    "狗",
-    "合照",
-    "夜景",
-    "iphone",
-    "去年",
-    "去年1月",
-}
-
 _DEFAULT_SYSTEM_PROMPT = (
     "你是 ai-photo-lib 的照片搜索 Query Planner。"
     "你的任务是把用户自然语言查询转换成严格 JSON 搜索计划。"
@@ -57,14 +47,39 @@ _DEFAULT_SYSTEM_PROMPT = (
 
 _DEFAULT_USER_PROMPT_TEMPLATE = """请为以下照片搜索请求生成 JSON 搜索计划。
 
-用户 query:
-{{query}}
-
-输出语言: zh-CN
+用户 query: {{query}}
 当前日期: {{today}}
 项目 ID: {{project_id}}
 
-必须输出 JSON，且包含以下字段：
+分析步骤（必须按顺序执行）：
+1. 识别 metadata 条件：时间（年/月/季节/日期范围）、地点（place_terms）、相机型号、GPS。
+2. 去掉 metadata 词后，剩余的核心视觉语义是什么（semantic residual）。
+3. 若 semantic residual 为空 → metadata_filters.metadata_only=true；否则 false。
+4. 将 semantic residual 展开为 facets（activity/scene/object/people/weather/time/location）和 terms。
+5. semantic_query_text：只描述视觉内容，不重复 metadata 词，供向量检索使用。
+6. 复合查询（既有 metadata 又有 semantic residual）时，query_constraints.allow_weak_only_match=true。
+
+terms 规则：
+- exact：核心视觉语义锚点词，不含 metadata 词，不含整句原文。示例：["滑雪","张家口"]
+- expanded：exact 的近义词和场景词。示例：["滑雪场","雪地","冬季运动"]
+- support：上下文辅助词，不单独召回。示例：["户外","冬天","旅行"]
+- negative：明确排除词。
+
+示例 1 — "去年张家口滑雪"（复合查询）：
+metadata_filters: {year:2025, date_from:"2025-01-01", date_to:"2026-01-01", place_terms:["张家口"], metadata_only:false, matched_metadata_terms:["去年","张家口"]}
+semantic residual: "滑雪"
+terms.exact: ["滑雪","张家口"]
+terms.expanded: ["滑雪场","雪地","冬季运动"]
+semantic_query_text: "滑雪 雪地 滑雪场 冬季运动 户外运动 张家口冬季"
+query_constraints.allow_weak_only_match: true
+
+示例 2 — "去年"（纯 metadata 查询）：
+metadata_filters: {year:2025, metadata_only:true, matched_metadata_terms:["去年"]}
+terms.exact: []
+semantic_query_text: ""
+query_constraints.allow_weak_only_match: false
+
+必须输出合法 JSON，包含字段：
 intent, search_mode, normalized_query, semantic_query_text,
 terms(exact, expanded, support, broad, negative),
 facets(object, scene, activity, people, weather, time, location),
@@ -200,27 +215,9 @@ def _cache_put(cache_key: tuple, query_plan: SearchQueryPlan) -> None:
             _QUERY_PLAN_CACHE.popitem(last=False)
 
 
-def _query_looks_structured(query: str) -> bool:
-    q = query.strip().lower()
-    if not q:
-        return False
-    if re.search(r"\d{4}年|\d{1,2}月|\d{4}-\d{1,2}-\d{1,2}", q):
-        return True
-    if any(token in q for token in ("iphone", "相机", "拍的", "拍摄", "去年", "今年")):
-        return True
-    return False
-
-
-def _should_use_rule_fast_path(query: str, fallback_plan: SearchQueryPlan) -> tuple[bool, str]:
-    normalized_query = query.strip().lower()
-    if not normalized_query:
-        return True, "empty_query"
-
-    if fallback_plan.intent in _FAST_PATH_INTENTS:
-        return True, f"intent_clear:{fallback_plan.intent}"
-
-    metadata_filters = fallback_plan.metadata_filters or {}
-    if any(
+def _has_metadata_filters(metadata_filters: dict) -> bool:
+    """Return True if any structured metadata filter was populated."""
+    return any(
         metadata_filters.get(key) not in (None, "", [], {})
         for key in (
             "year",
@@ -232,21 +229,48 @@ def _should_use_rule_fast_path(query: str, fallback_plan: SearchQueryPlan) -> tu
             "iso_min",
             "iso_max",
         )
-    ):
-        return True, "structured_metadata_filter"
+    ) or bool(metadata_filters.get("place_terms"))
 
+
+def _should_use_rule_fast_path(query: str, fallback_plan: SearchQueryPlan) -> tuple[bool, str]:
+    """Determine whether the rule planner result can be used without calling the LLM.
+
+    Rule:
+    * Empty query                                   → fast path (trivial)
+    * metadata_only == True                         → fast path (pure EXIF filter)
+    * has metadata AND NOT metadata_only            → LLM required (compound query)
+    * short + no metadata + clear single intent     → fast path
+    * Everything else                               → LLM required
+    """
+    normalized_query = query.strip().lower()
+    if not normalized_query:
+        return True, "empty_query"
+
+    metadata_filters = fallback_plan.metadata_filters or {}
+
+    # Pure metadata query (no semantic residual detected by rule engine)
+    if metadata_filters.get("metadata_only") is True:
+        return True, "metadata_only"
+
+    # Compound query: has structured metadata but also has semantic residual
+    # These MUST go to LLM so the planner can output residual semantic tasks.
+    if _has_metadata_filters(metadata_filters):
+        return False, ""
+
+    # No metadata at all — allow fast path for short, unambiguous single-domain queries
     exact_terms = fallback_plan.exact_terms or []
-    if len(exact_terms) <= 2 and len(normalized_query) <= 10:
-        return True, "short_query"
+    is_short = len(normalized_query) <= 10 and len(exact_terms) <= 2
+    has_clear_intent = (
+        fallback_plan.intent is not None
+        and fallback_plan.intent not in ("semantic_photo_search",)
+        and fallback_plan.intent in _FAST_PATH_SINGLE_DOMAIN_INTENTS
+    )
+    if is_short and has_clear_intent:
+        return True, f"short_clear_intent:{fallback_plan.intent}"
 
-    if fallback_plan.matched_keys and len(normalized_query) <= 20:
-        return True, "matched_dictionary_key"
-
-    if any(token in normalized_query for token in _FAST_PATH_TOKEN_HINTS):
-        return True, "common_term_fast_path"
-
-    if _query_looks_structured(query):
-        return True, "structured_query"
+    # Very short query that matched dictionary keys
+    if fallback_plan.matched_keys and len(normalized_query) <= 8:
+        return True, "short_matched_dictionary"
 
     return False, ""
 
@@ -305,6 +329,7 @@ def resolve_query_plan_llm_first(
     if not settings.query_planner_enabled:
         planner_debug["used_fallback"] = True
         planner_debug["fallback_reason"] = "query_planner_disabled"
+        planner_debug["planner_route"] = "rule_only"
         return build_fallback_plan(
             query=query,
             project_id=project_id,
@@ -332,6 +357,7 @@ def resolve_query_plan_llm_first(
             planner_debug["used_fallback"] = True
             planner_debug["fallback_reason"] = f"rule_fast_path:{fast_path_reason}"
             planner_debug["fast_path"] = True
+            planner_debug["planner_route"] = "rule_fast_path"
             fallback_plan.planner_debug = dict(planner_debug)
             return fallback_plan
 
@@ -356,6 +382,7 @@ def resolve_query_plan_llm_first(
     if not settings.query_planner_endpoint_url.strip() or not settings.query_planner_model_name.strip():
         planner_debug["used_fallback"] = True
         planner_debug["fallback_reason"] = "query_planner_missing_endpoint_or_model"
+        planner_debug["planner_route"] = "rule_only"
         fallback_plan.planner_debug = dict(planner_debug)
         return fallback_plan
 
@@ -395,6 +422,7 @@ def resolve_query_plan_llm_first(
         planner_debug["confidence"] = float(parsed.confidence or 0.0)
         planner_debug["used_fallback"] = False
         planner_debug["fallback_reason"] = ""
+        planner_debug["planner_route"] = "llm"
 
         query_plan = planner_output_to_query_plan(
             query=query,
@@ -414,6 +442,7 @@ def resolve_query_plan_llm_first(
             if is_timeout
             else f"planner_error:{exc.__class__.__name__}"
         )
+        planner_debug["planner_route"] = "fallback_after_error"
         planner_debug["error"] = str(exc)
         fallback_plan.planner_debug = dict(planner_debug)
         logger.warning(

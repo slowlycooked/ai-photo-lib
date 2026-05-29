@@ -134,6 +134,25 @@ export default function ProjectQueryPlannerSettingsPanel({ projectId }: Props) {
         </div>
       </div>
 
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
+        <div className="rounded border border-hairline bg-surface-soft px-3 py-2">
+          <p className="text-caption-sm text-mute">Enabled</p>
+          <p className="text-body-sm text-ink">{effective.enabled ? "Yes" : "No"}</p>
+        </div>
+        <div className="rounded border border-hairline bg-surface-soft px-3 py-2">
+          <p className="text-caption-sm text-mute">Provider</p>
+          <p className="text-body-sm text-ink break-all">{effective.provider ?? "-"}</p>
+        </div>
+        <div className="rounded border border-hairline bg-surface-soft px-3 py-2">
+          <p className="text-caption-sm text-mute">Model</p>
+          <p className="text-body-sm text-ink break-all">{effective.model_name ?? "-"}</p>
+        </div>
+        <div className="rounded border border-hairline bg-surface-soft px-3 py-2">
+          <p className="text-caption-sm text-mute">Fallback Mode</p>
+          <p className="text-body-sm text-ink break-all">{effective.fallback_mode ?? "-"}</p>
+        </div>
+      </div>
+
       <section className="space-y-3">
         <label className="flex items-center gap-2 text-sm cursor-pointer">
           <input
@@ -303,6 +322,14 @@ export default function ProjectQueryPlannerSettingsPanel({ projectId }: Props) {
             model={modelName}
             errorMessage={usedFallback && plannerError ? plannerError : null}
             warningMessage={usedFallback ? `已触发 fallback${fallbackReason ? `：${fallbackReason}` : ""}` : null}
+            copyPayload={{
+              query: testResult.query,
+              provider: effective.provider,
+              endpoint_url: effective.endpoint_url,
+              model_name: effective.model_name,
+              planner_version: effective.planner_version,
+              fallback_mode: effective.fallback_mode,
+            }}
             summary={[
               { label: "Used Fallback", value: String(usedFallback) },
               { label: "Fallback Reason", value: fallbackReason || "—" },

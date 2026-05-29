@@ -91,6 +91,15 @@ export function EmbeddingSettingsSection({ projectId }: { projectId: number }) {
 
   if (isLoading) return null;
 
+  const statusSummary = status
+    ? [
+        { label: "READY", value: String(status.ready) },
+        { label: "MISSING", value: String(status.missing) },
+        { label: "STALE", value: String(status.stale) },
+        { label: "FAILED", value: String(status.failed) },
+      ]
+    : [];
+
   return (
     <SettingsCard
       title={
@@ -100,6 +109,23 @@ export function EmbeddingSettingsSection({ projectId }: { projectId: number }) {
         </span>
       }
     >
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-2 mb-4">
+        <div className="rounded border border-hairline bg-surface-soft px-3 py-2">
+          <p className="text-caption-sm text-mute">Enabled</p>
+          <p className="text-body-sm text-ink">{form.enabled === false ? "No" : "Yes"}</p>
+        </div>
+        <div className="rounded border border-hairline bg-surface-soft px-3 py-2">
+          <p className="text-caption-sm text-mute">Provider</p>
+          <p className="text-body-sm text-ink break-all">{form.provider ?? "-"}</p>
+        </div>
+        <div className="rounded border border-hairline bg-surface-soft px-3 py-2">
+          <p className="text-caption-sm text-mute">Model / Dimension</p>
+          <p className="text-body-sm text-ink break-all">
+            {form.model_name ?? "-"} / {form.embedding_dimension ?? "-"}
+          </p>
+        </div>
+      </div>
+
       <div className="grid grid-cols-2 gap-3">
         <div>
           <Label>Endpoint URL</Label>
@@ -216,6 +242,7 @@ export function EmbeddingSettingsSection({ projectId }: { projectId: number }) {
             latencyMs={testResult.duration_ms}
             model={testResult.model_name}
             errorMessage={testResult.error}
+            copyPayload={{ text: testText.trim() }}
             summary={[
               { label: "Dimension", value: String(testResult.embedding_dimension) },
               { label: "Sample Length", value: String(testResult.sample?.length ?? 0) },

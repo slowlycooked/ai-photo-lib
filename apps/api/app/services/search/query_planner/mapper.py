@@ -175,14 +175,32 @@ def planner_output_to_query_plan(
     planner_debug: dict,
     fallback_plan: SearchQueryPlan,
 ) -> SearchQueryPlan:
-    exact_terms = _merge_list_terms(
-        _dedupe_terms(output.terms.exact) or _fallback_exact_terms(query),
-        fallback_plan.exact_terms,
-    )
-    expanded_terms = _merge_list_terms(_dedupe_terms(output.terms.expanded), fallback_plan.expanded_terms)
-    support_terms = _merge_list_terms(_dedupe_terms(output.terms.support), fallback_plan.support_terms)
-    broad_terms = _merge_list_terms(_dedupe_terms(output.terms.broad), fallback_plan.broad_terms)
-    negative_terms = _merge_list_terms(_dedupe_terms(output.terms.negative), fallback_plan.negative_terms)
+    # When LLM parsed successfully with adequate confidence, use LLM terms as the
+    # primary source and do NOT merge fallback exact/expanded/support/broad terms.
+    # This prevents the rule-engine's whole-sentence exact term (e.g. "去年张家口滑雪")
+    # from polluting the keyword recall after the LLM has cleanly decomposed it into
+    # semantic anchors (e.g. ["滑雪", "张家口"]).
+    llm_parsed = bool(planner_debug.get("parsed"))
+    llm_confidence = float(planner_debug.get("confidence") or 0.0)
+    use_llm_terms = llm_parsed and llm_confidence >= 0.6
+
+    if use_llm_terms:
+        llm_exact = _dedupe_terms(output.terms.exact)
+        exact_terms = llm_exact if llm_exact else _fallback_exact_terms(query)
+        expanded_terms = _dedupe_terms(output.terms.expanded)
+        support_terms = _dedupe_terms(output.terms.support)
+        broad_terms = _dedupe_terms(output.terms.broad)
+        # Negative terms are additive — always safe to merge both sources
+        negative_terms = _merge_list_terms(_dedupe_terms(output.terms.negative), fallback_plan.negative_terms)
+    else:
+        exact_terms = _merge_list_terms(
+            _dedupe_terms(output.terms.exact) or _fallback_exact_terms(query),
+            fallback_plan.exact_terms,
+        )
+        expanded_terms = _merge_list_terms(_dedupe_terms(output.terms.expanded), fallback_plan.expanded_terms)
+        support_terms = _merge_list_terms(_dedupe_terms(output.terms.support), fallback_plan.support_terms)
+        broad_terms = _merge_list_terms(_dedupe_terms(output.terms.broad), fallback_plan.broad_terms)
+        negative_terms = _merge_list_terms(_dedupe_terms(output.terms.negative), fallback_plan.negative_terms)
 
     metadata_filters = merge_metadata_filters(
         output.metadata_filters.model_dump(),

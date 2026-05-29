@@ -82,6 +82,15 @@ def apply_post_fusion_pipeline(
     requires_visual_evidence = bool(query_constraints.get("requires_visual_evidence", True))
     allow_weak_only_match = bool(query_constraints.get("allow_weak_only_match", False))
     is_entity_object_query = _is_entity_object_query(query_plan)
+
+    # Detect whether metadata filters are actively constraining the result set.
+    # When metadata strongly narrows candidates (e.g. year + place), a high-score
+    # vector-only match is more trustworthy than in an unconstrained search.
+    _metadata_filters = query_plan.metadata_filters or {}
+    metadata_filter_active = any(
+        _metadata_filters.get(k) not in (None, "", [], {})
+        for k in ("year", "month", "date_from", "date_to", "camera_make", "camera_model")
+    ) or bool(_metadata_filters.get("place_terms"))
     vector_only_rejected_count = 0
     vector_only_reject_reasons: dict[str, int] = {}
 
@@ -114,6 +123,11 @@ def apply_post_fusion_pipeline(
 
         if requires_visual_evidence and not allow_weak_only_match:
             if candidate.evidence_level == "C" and float(candidate.keyword_score or 0.0) <= 0.0:
+                # Allow through when metadata is strongly active AND vector score is high:
+                # evidence chain = time/place metadata hit + high visual vector → reliable
+                if metadata_filter_active and float(candidate.vector_score or 0.0) >= settings.vector_strict_score:
+                    kept.append(candidate)
+                    continue
                 candidate.filter_reason = "query_constraints:no_vector_only_weak_match"
                 filtered_out.append(candidate)
                 continue
