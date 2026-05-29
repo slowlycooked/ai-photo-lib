@@ -89,7 +89,7 @@ _PLACE_SPLIT_RE = re.compile(r"[\s,/，、]+")
 _GENERIC_NON_PLACE_TERMS: frozenset[str] = frozenset({
     "夜景", "夜晚", "室内", "室外", "风景", "美食", "食物", "人物", "建筑", "街景",
     "动物", "宠物", "野生动物", "小动物", "猫", "狗", "鸟", "马", "鹿", "兔", "兔子", "鱼",
-    "下雨天", "晴天", "雪天", "海边", "日落", "日出", "晚霞", "自拍",
+    "下雨天", "晴天", "雪天", "海边", "日落", "日出", "晚霞", "自拍", "滑雪",
 })
 
 # Strong semantic intents should never be treated as metadata-only requests,
@@ -101,7 +101,6 @@ _METADATA_ONLY_BLOCKED_INTENTS: frozenset[str] = frozenset({
     "food_search",
     "weather_search",
     "activity_search",
-    "semantic_photo_search",
 })
 
 _ANIMAL_CATEGORY_TERMS: frozenset[str] = frozenset({
@@ -1081,6 +1080,10 @@ def understand_query(
     filters = _infer_filters(query, intent, runtime_rules)
     penalize_tags = _build_penalize_tags(intent, filters)
 
+    metadata_filters = _parse_metadata_filters(original_query)
+    if intent in _METADATA_ONLY_BLOCKED_INTENTS:
+        metadata_filters["metadata_only"] = False
+
     # query_constraints: per-query evidence requirements (can be project-overridden later)
     query_constraints: dict = {
         "requires_visual_evidence": True,
@@ -1088,10 +1091,11 @@ def understand_query(
         "min_evidence_level": "C",
         "query_core_facets": core_facets,
     }
-
-    metadata_filters = _parse_metadata_filters(original_query)
-    if intent in _METADATA_ONLY_BLOCKED_INTENTS:
-        metadata_filters["metadata_only"] = False
+    # Pure metadata/time queries should not be forced to carry keyword visual evidence,
+    # otherwise hybrid post-filter can drop all vector-only candidates.
+    if bool(metadata_filters.get("metadata_only")):
+        query_constraints["requires_visual_evidence"] = False
+        query_constraints["allow_weak_only_match"] = True
 
     return SearchQueryPlan(
         original_query=original_query,

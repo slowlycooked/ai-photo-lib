@@ -9,12 +9,50 @@ interface SearchDebugPanelProps {
 
 export function SearchDebugPanel({ payload }: SearchDebugPanelProps) {
   const [showSettings, setShowSettings] = useState(false);
+  const [copyStatus, setCopyStatus] = useState<"idle" | "copied" | "error">("idle");
   const queryPlan = payload.query_plan ?? {};
   const planner = (payload.query_planner ?? queryPlan.query_planner ?? {}) as Record<string, unknown>;
 
+  const handleCopyAll = async () => {
+    const content = JSON.stringify(payload, null, 2);
+    try {
+      if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(content);
+      } else if (typeof document !== "undefined") {
+        const textarea = document.createElement("textarea");
+        textarea.value = content;
+        textarea.style.position = "fixed";
+        textarea.style.left = "-9999px";
+        document.body.appendChild(textarea);
+        textarea.focus();
+        textarea.select();
+        const ok = document.execCommand("copy");
+        document.body.removeChild(textarea);
+        if (!ok) {
+          throw new Error("copy failed");
+        }
+      } else {
+        throw new Error("clipboard unavailable");
+      }
+      setCopyStatus("copied");
+    } catch {
+      setCopyStatus("error");
+    } finally {
+      setTimeout(() => setCopyStatus("idle"), 1600);
+    }
+  };
+
   return (
-    <div className="rounded-md border border-amber-400/50 bg-amber-50 dark:bg-amber-950/30 p-3 text-[11px] font-mono space-y-1.5 text-amber-900 dark:text-amber-200">
-      <div className="font-semibold text-xs mb-1.5">🔍 Search Debug</div>
+    <div className="relative rounded-md border border-amber-400/50 bg-amber-50 dark:bg-amber-950/30 p-3 text-[11px] font-mono space-y-1.5 text-amber-900 dark:text-amber-200">
+      <button
+        type="button"
+        className="absolute right-3 top-3 rounded border border-amber-400/70 bg-white/80 px-2 py-0.5 text-[10px] leading-none text-amber-900 hover:bg-white dark:bg-black/20 dark:text-amber-100 dark:hover:bg-black/30"
+        onClick={handleCopyAll}
+      >
+        {copyStatus === "copied" ? "已复制" : copyStatus === "error" ? "复制失败" : "复制全部"}
+      </button>
+
+      <div className="font-semibold text-xs mb-1.5 pr-20">🔍 Search Debug</div>
 
       <div className="rounded border border-amber-300/50 bg-white/60 dark:bg-black/20 px-2 py-1 text-[10px] space-y-0.5">
         <div>query_plan.intent: {String(queryPlan.intent ?? payload.intent ?? "")}</div>

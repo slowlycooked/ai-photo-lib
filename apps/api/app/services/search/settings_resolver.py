@@ -101,6 +101,10 @@ class SearchSettingsResolver:
             enable_query_understanding=True,
             enable_structured_filters=False,
             enable_semantic_tag_boost=False,
+            entity_object_vector_only_min_score=0.62,
+            entity_object_tag_min_score=0.62,
+            entity_object_caption_min_score=0.58,
+            animal_search_min_display_evidence_level="B",
             concept_taxonomy=[],
             query_understanding_base_pack=DEFAULT_BASE_PACK_ID,
             query_understanding_extension_packs=[],
@@ -110,8 +114,8 @@ class SearchSettingsResolver:
             query_planner_api_key="",
             query_planner_model_name=global_settings.query_planner_alias,
             query_planner_temperature=0.0,
-            query_planner_top_p=0.8,
-            query_planner_max_tokens=700,
+            query_planner_top_p=0.1,
+            query_planner_max_tokens=220,
             query_planner_timeout_seconds=20,
             query_planner_json_parse_strategy="strict_json_then_extract",
             query_planner_planner_version="llm_query_planner_v1",
@@ -169,6 +173,16 @@ class SearchSettingsResolver:
                 negative_term_penalty=float(_q.get("negative_term_penalty", 0.01)),
                 require_core_facet_match=bool(_q.get("require_core_facet_match", False)),
                 allow_vector_only_for_facet_query=bool(_q.get("allow_vector_only_for_facet_query", True)),
+                entity_object_vector_only_min_score=float(
+                    _q.get("entity_object_vector_only_min_score", 0.62)
+                ),
+                entity_object_tag_min_score=float(_q.get("entity_object_tag_min_score", 0.62)),
+                entity_object_caption_min_score=float(
+                    _q.get("entity_object_caption_min_score", 0.58)
+                ),
+                animal_search_min_display_evidence_level=str(
+                    _q.get("animal_search_min_display_evidence_level", "B")
+                ),
                 concept_taxonomy=_normalise_concept_taxonomy(_q.get("concept_taxonomy")),
                 query_understanding_base_pack=str(
                     _q.get("query_understanding_base_pack") or DEFAULT_BASE_PACK_ID

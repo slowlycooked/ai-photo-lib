@@ -20,11 +20,42 @@ from .types import EffectiveSearchSettings, SearchCandidate, evidence_level_pass
 logger = logging.getLogger(__name__)
 
 
+def _resolve_min_display_level(settings: EffectiveSearchSettings, query_plan: SearchQueryPlan) -> str:
+    q_min = str((query_plan.query_constraints or {}).get("min_evidence_level") or "").strip().upper()
+    if q_min in ("HIGH", "A"):
+        return "A"
+    if q_min in ("MEDIUM", "B"):
+        return "B"
+    if q_min in ("LOW", "C"):
+        return "C"
+
+    if query_plan.intent == "animal_search":
+        animal_level = str(settings.animal_search_min_display_evidence_level or "").strip().upper()
+        if animal_level in ("A", "B", "C"):
+            return animal_level
+
+    return settings.min_display_evidence_level
+
+
+def _is_entity_object_query(query_plan: SearchQueryPlan) -> bool:
+    return query_plan.intent == "animal_search" or query_plan.recommended_profile == "entity_object"
+
+
+def _vector_component(candidate: SearchCandidate, key: str) -> float:
+    explain = candidate.vector_explain or {}
+    try:
+        return float(explain.get(key, 0.0) or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 @dataclass(frozen=True)
 class PostFusionPipelineResult:
     candidates: list[SearchCandidate]
     filtered_out: list[SearchCandidate]
     filtered_count: int
+    vector_only_rejected_count: int
+    vector_only_reject_reasons: dict[str, int]
     trace_events: list[dict]
 
 
@@ -46,10 +77,46 @@ def apply_post_fusion_pipeline(
         merged = apply_evidence_scoring(merged, settings)
 
     pre_filter_count = len(merged)
-    min_level = settings.min_display_evidence_level
+    min_level = _resolve_min_display_level(settings, query_plan)
+    query_constraints = query_plan.query_constraints or {}
+    requires_visual_evidence = bool(query_constraints.get("requires_visual_evidence", True))
+    allow_weak_only_match = bool(query_constraints.get("allow_weak_only_match", False))
+    is_entity_object_query = _is_entity_object_query(query_plan)
+    vector_only_rejected_count = 0
+    vector_only_reject_reasons: dict[str, int] = {}
+
+    def _mark_vector_only_reject(candidate: SearchCandidate, reason: str) -> None:
+        nonlocal vector_only_rejected_count
+        candidate.filter_reason = reason
+        filtered_out.append(candidate)
+        vector_only_rejected_count += 1
+        vector_only_reject_reasons[reason] = vector_only_reject_reasons.get(reason, 0) + 1
+
     filtered_out: list[SearchCandidate] = []
     kept: list[SearchCandidate] = []
     for candidate in merged:
+        is_vector_only = float(candidate.keyword_score or 0.0) <= 0.0 and float(candidate.vector_score or 0.0) > 0.0
+
+        if is_entity_object_query and is_vector_only:
+            tag_score = _vector_component(candidate, "tag")
+            caption_score = _vector_component(candidate, "caption")
+
+            if float(candidate.vector_score or 0.0) < settings.entity_object_vector_only_min_score:
+                _mark_vector_only_reject(candidate, "vector_only_below_entity_total_min")
+                continue
+
+            if (
+                tag_score < settings.entity_object_tag_min_score
+                and caption_score < settings.entity_object_caption_min_score
+            ):
+                _mark_vector_only_reject(candidate, "vector_only_missing_tag_or_caption_evidence")
+                continue
+
+        if requires_visual_evidence and not allow_weak_only_match:
+            if candidate.evidence_level == "C" and float(candidate.keyword_score or 0.0) <= 0.0:
+                candidate.filter_reason = "query_constraints:no_vector_only_weak_match"
+                filtered_out.append(candidate)
+                continue
         if evidence_level_passes(candidate.evidence_level or "E", min_level):
             kept.append(candidate)
         else:
@@ -73,6 +140,10 @@ def apply_post_fusion_pipeline(
             "stage": "evidence_filter",
             "pre_filter": pre_filter_count,
             "min_display_level": min_level,
+            "requires_visual_evidence": requires_visual_evidence,
+            "allow_weak_only_match": allow_weak_only_match,
+            "vector_only_rejected_count": vector_only_rejected_count,
+            "vector_only_reject_reasons": vector_only_reject_reasons,
             "filtered_count": filtered_count,
             "remaining": len(merged),
             "level_distribution": {
@@ -149,5 +220,7 @@ def apply_post_fusion_pipeline(
         candidates=merged,
         filtered_out=filtered_out,
         filtered_count=filtered_count,
+        vector_only_rejected_count=vector_only_rejected_count,
+        vector_only_reject_reasons=vector_only_reject_reasons,
         trace_events=trace_events,
     )

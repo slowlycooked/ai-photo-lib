@@ -13,15 +13,13 @@ from app.services.search.query_planner.llm_client import (
 
 def test_call_chat_completion_wraps_timeout_as_query_planner_client_error() -> None:
     mock_client = MagicMock()
-    mock_client.__enter__.return_value = mock_client
-    mock_client.__exit__.return_value = None
     mock_client.post.side_effect = httpx.ReadTimeout(
         "timed out",
         request=httpx.Request("POST", "http://127.0.0.1:18084/v1/chat/completions"),
     )
 
     with patch(
-        "app.services.search.query_planner.llm_client.httpx.Client",
+        "app.services.search.query_planner.llm_client._get_http_client",
         return_value=mock_client,
     ):
         with pytest.raises(QueryPlannerClientError, match="timed out"):

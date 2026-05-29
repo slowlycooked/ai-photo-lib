@@ -1,6 +1,7 @@
 """HTTP client for OpenAI-compatible query planner LLM calls."""
 from __future__ import annotations
 
+import threading
 from typing import Any
 
 import httpx
@@ -8,6 +9,21 @@ import httpx
 
 class QueryPlannerClientError(RuntimeError):
     """Raised when query planner chat completion call fails."""
+
+
+_CLIENT_LOCK = threading.Lock()
+_CLIENTS_BY_TIMEOUT: dict[float, httpx.Client] = {}
+
+
+def _get_http_client(timeout_seconds: int) -> httpx.Client:
+    timeout_value = float(max(1, timeout_seconds))
+    with _CLIENT_LOCK:
+        client = _CLIENTS_BY_TIMEOUT.get(timeout_value)
+        if client is not None:
+            return client
+        client = httpx.Client(timeout=timeout_value)
+        _CLIENTS_BY_TIMEOUT[timeout_value] = client
+        return client
 
 
 def normalize_chat_url(endpoint_url: str) -> str:
@@ -74,27 +90,27 @@ def call_chat_completion(
         "Content-Type": "application/json",
     }
 
-    with httpx.Client(timeout=float(max(1, timeout_seconds))) as client:
-        try:
-            response = client.post(url, json=payload, headers=headers)
-            if response.status_code == 400:
-                body = response.text.lower()
-                if "response_format" in body:
-                    compat_payload = dict(payload)
-                    compat_payload.pop("response_format", None)
-                    response = client.post(url, json=compat_payload, headers=headers)
-        except httpx.TimeoutException as exc:
-            raise QueryPlannerClientError(
-                f"Query planner request timed out after {max(1, timeout_seconds)}s"
-            ) from exc
-        except httpx.RequestError as exc:
-            raise QueryPlannerClientError(f"Query planner request failed: {exc}") from exc
-        try:
-            response.raise_for_status()
-        except httpx.HTTPStatusError as exc:
-            raise QueryPlannerClientError(
-                f"Query planner HTTP {response.status_code}: {response.text[:600]}"
-            ) from exc
+    client = _get_http_client(timeout_seconds)
+    try:
+        response = client.post(url, json=payload, headers=headers)
+        if response.status_code == 400:
+            body = response.text.lower()
+            if "response_format" in body:
+                compat_payload = dict(payload)
+                compat_payload.pop("response_format", None)
+                response = client.post(url, json=compat_payload, headers=headers)
+    except httpx.TimeoutException as exc:
+        raise QueryPlannerClientError(
+            f"Query planner request timed out after {max(1, timeout_seconds)}s"
+        ) from exc
+    except httpx.RequestError as exc:
+        raise QueryPlannerClientError(f"Query planner request failed: {exc}") from exc
+    try:
+        response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        raise QueryPlannerClientError(
+            f"Query planner HTTP {response.status_code}: {response.text[:600]}"
+        ) from exc
 
     try:
         data = response.json()

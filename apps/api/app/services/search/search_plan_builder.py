@@ -19,8 +19,16 @@ _METADATA_ONLY_BLOCKED_INTENTS: frozenset[str] = frozenset({
     "food_search",
     "weather_search",
     "activity_search",
-    "semantic_photo_search",
 })
+
+_TEMPORAL_METADATA_KEYS: tuple[str, ...] = (
+    "year",
+    "month",
+    "months",
+    "season",
+    "date_from",
+    "date_to",
+)
 
 
 @dataclass(frozen=True)
@@ -121,15 +129,30 @@ def build_search_plan(
     else:
         effective_mode = mode  # type: ignore[assignment]
 
-    metadata_filters = search_query_plan.metadata_filters
-    if (not effective_settings.enable_structured_filters) or people_resolution.is_people_only:
+    metadata_filters = dict(search_query_plan.metadata_filters or {})
+    people_context_active = (
+        bool(people_resolution.is_people_only)
+        or str(people_resolution.people_filter_mode or "none") != "none"
+    )
+    force_temporal_metadata_filters = any(
+        metadata_filters.get(key) not in (None, "", [], {})
+        for key in _TEMPORAL_METADATA_KEYS
+    ) and (not people_context_active)
+
+    if people_context_active:
+        metadata_filters = {}
+    elif (not effective_settings.enable_structured_filters) and (not force_temporal_metadata_filters):
         metadata_filters = {}
 
     metadata_only_requested = bool(metadata_filters.get("metadata_only")) and not face_filter_active
     metadata_only_allowed = search_query_plan.intent not in _METADATA_ONLY_BLOCKED_INTENTS
     metadata_filter_skipped_reason = "not_skipped"
-    if not effective_settings.enable_structured_filters:
+    if people_context_active:
+        metadata_filter_skipped_reason = "people_only_query"
+    elif not effective_settings.enable_structured_filters and not force_temporal_metadata_filters:
         metadata_filter_skipped_reason = "structured_filters_disabled"
+    elif not effective_settings.enable_structured_filters and force_temporal_metadata_filters:
+        metadata_filter_skipped_reason = "forced_temporal_metadata"
     elif search_query_plan.intent in _METADATA_ONLY_BLOCKED_INTENTS:
         metadata_filter_skipped_reason = "strong_semantic_intent"
     elif not metadata_filters:

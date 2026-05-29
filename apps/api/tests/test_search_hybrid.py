@@ -256,6 +256,45 @@ class VectorRecallServiceTest(unittest.TestCase):
         # 0.01 is well below default vector_min_score; should be filtered out
         self.assertEqual(scores, {})
 
+    def test_entity_object_profile_uses_field_specific_top_k(self) -> None:
+        from app.services.search.vector_recall import VectorRecallService
+
+        db = self._make_db_stub()
+        settings = _default_settings()
+        svc = VectorRecallService(db, settings)
+
+        with patch(
+            "app.services.search.vector_recall.resolve_embedding_settings_strict",
+            return_value={
+                "endpoint_url": "http://127.0.0.1:18083/v1",
+                "api_key": "sk-local",
+                "model_name": "test-embed",
+                "embedding_dimension": 1024,
+                "timeout_seconds": 30,
+                "input_prefix_query": None,
+            },
+        ), patch(
+            "app.services.search.vector_recall.embed_text",
+            return_value=[0.1] * 1024,
+        ), patch(
+            "app.services.search.vector_recall._vector_field_search",
+            return_value=({}, 0),
+        ) as field_search:
+            svc.search(
+                query="动物",
+                normalized_query="动物",
+                semantic_query_text="查找包含动物主体的照片",
+                is_ocr_query=False,
+                query_intent="animal_search",
+                recommended_profile="entity_object",
+                project_id=7,
+                folder_photo_subquery=None,
+                limit=50,
+            )
+
+        limits = [call.kwargs["limit"] for call in field_search.call_args_list]
+        self.assertEqual(limits, [15, 25, 30, 5])
+
     def test_vector_field_search_supports_labeled_similarity_expression(self) -> None:
         from app.services.search.vector_recall import _vector_field_search
 
@@ -793,6 +832,62 @@ class SearchPhotosTest(unittest.TestCase):
         self.assertEqual(items[0]["photo_id"], 9)
         metadata_service_cls.assert_not_called()
         self.assertIsNone(keyword_search_mock.call_args.kwargs.get("constrained_photo_ids"))
+
+    def test_temporal_metadata_still_applies_when_structured_filters_disabled(self) -> None:
+        candidate = self._make_candidate(photo_id=9, score=0.7)
+        query_plan = SearchQueryPlan(
+            original_query="去年的照片",
+            normalized_query="去年",
+            exact_terms=["去年"],
+            intent="semantic_photo_search",
+            metadata_filters={
+                "year": 2025,
+                "date_from": "2025-01-01",
+                "date_to": "2026-01-01",
+                "metadata_only": True,
+                "matched_metadata_terms": ["去年"],
+            },
+        )
+
+        with (
+            patch(
+                "app.services.search.app_service.SearchSettingsResolver.resolve",
+                return_value=replace(_default_settings(), enable_structured_filters=False),
+            ),
+            patch(
+                "app.services.search.app_service.understand_query",
+                return_value=query_plan,
+            ),
+            patch(
+                "app.services.search.app_service.build_folder_photo_ids_subquery",
+                return_value=None,
+            ),
+            patch(
+                "app.services.search.app_service.MetadataRecallService.search",
+                return_value=[candidate],
+            ) as metadata_only_search_mock,
+            patch(
+                "app.services.search.app_service.KeywordRecallService.search",
+                return_value=[candidate],
+            ) as keyword_search_mock,
+            patch(
+                "app.services.search.app_service.build_result_items",
+                return_value=(1, [{"photo_id": 9, "score": 0.7}]),
+            ),
+        ):
+            total, items, _debug = search_photos(
+                db=MagicMock(),
+                query="去年的照片",
+                page=1,
+                page_size=20,
+                project_id=1,
+                mode="keyword",
+            )
+
+        self.assertEqual(total, 1)
+        self.assertIsInstance(items, list)
+        metadata_only_search_mock.assert_called_once()
+        keyword_search_mock.assert_not_called()
 
     def test_metadata_only_is_blocked_for_animal_intent(self) -> None:
         candidate = self._make_candidate(photo_id=9, score=0.7)

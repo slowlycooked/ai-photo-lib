@@ -1,10 +1,13 @@
 """LLM-first query planner with deterministic rule fallback."""
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import re
+import threading
 import time
+from collections import OrderedDict
 from datetime import date
 from typing import Callable, Optional
 
@@ -17,6 +20,34 @@ from .mapper import planner_output_to_query_plan
 from .schema import LLMQueryPlannerOutput
 
 logger = logging.getLogger(__name__)
+
+_QUERY_PLAN_CACHE_LOCK = threading.Lock()
+_QUERY_PLAN_CACHE_MAX_SIZE = 512
+_QUERY_PLAN_CACHE_TTL_SECONDS = 600
+_QUERY_PLAN_CACHE: "OrderedDict[tuple, tuple[float, SearchQueryPlan]]" = OrderedDict()
+
+_FAST_PATH_INTENTS = {
+    "animal_search",
+    "group_photo_search",
+    "people_search",
+    "ocr_text_search",
+    "food_search",
+    "weather_search",
+    "activity_search",
+    "location_search",
+}
+
+_FAST_PATH_TOKEN_HINTS = {
+    "动物",
+    "宠物",
+    "猫",
+    "狗",
+    "合照",
+    "夜景",
+    "iphone",
+    "去年",
+    "去年1月",
+}
 
 _DEFAULT_SYSTEM_PROMPT = (
     "你是 ai-photo-lib 的照片搜索 Query Planner。"
@@ -129,6 +160,97 @@ def _sanitize_preview(raw_text: str) -> str:
     return compact[:320]
 
 
+def _build_cache_key(
+    *,
+    query: str,
+    project_id: Optional[int],
+    settings: EffectiveSearchSettings,
+) -> tuple:
+    return (
+        int(project_id or 0),
+        query.strip().lower(),
+        settings.query_planner_provider,
+        settings.query_planner_endpoint_url.strip(),
+        settings.query_planner_model_name.strip(),
+        settings.query_planner_planner_version,
+        settings.query_understanding_base_pack,
+        tuple(settings.query_understanding_extension_packs),
+    )
+
+
+def _cache_get(cache_key: tuple) -> Optional[SearchQueryPlan]:
+    now = time.monotonic()
+    with _QUERY_PLAN_CACHE_LOCK:
+        hit = _QUERY_PLAN_CACHE.get(cache_key)
+        if not hit:
+            return None
+        created_at, cached_plan = hit
+        if now - created_at > _QUERY_PLAN_CACHE_TTL_SECONDS:
+            _QUERY_PLAN_CACHE.pop(cache_key, None)
+            return None
+        _QUERY_PLAN_CACHE.move_to_end(cache_key)
+        return copy.deepcopy(cached_plan)
+
+
+def _cache_put(cache_key: tuple, query_plan: SearchQueryPlan) -> None:
+    with _QUERY_PLAN_CACHE_LOCK:
+        _QUERY_PLAN_CACHE[cache_key] = (time.monotonic(), copy.deepcopy(query_plan))
+        _QUERY_PLAN_CACHE.move_to_end(cache_key)
+        while len(_QUERY_PLAN_CACHE) > _QUERY_PLAN_CACHE_MAX_SIZE:
+            _QUERY_PLAN_CACHE.popitem(last=False)
+
+
+def _query_looks_structured(query: str) -> bool:
+    q = query.strip().lower()
+    if not q:
+        return False
+    if re.search(r"\d{4}年|\d{1,2}月|\d{4}-\d{1,2}-\d{1,2}", q):
+        return True
+    if any(token in q for token in ("iphone", "相机", "拍的", "拍摄", "去年", "今年")):
+        return True
+    return False
+
+
+def _should_use_rule_fast_path(query: str, fallback_plan: SearchQueryPlan) -> tuple[bool, str]:
+    normalized_query = query.strip().lower()
+    if not normalized_query:
+        return True, "empty_query"
+
+    if fallback_plan.intent in _FAST_PATH_INTENTS:
+        return True, f"intent_clear:{fallback_plan.intent}"
+
+    metadata_filters = fallback_plan.metadata_filters or {}
+    if any(
+        metadata_filters.get(key) not in (None, "", [], {})
+        for key in (
+            "year",
+            "month",
+            "date_from",
+            "date_to",
+            "camera_make",
+            "camera_model",
+            "iso_min",
+            "iso_max",
+        )
+    ):
+        return True, "structured_metadata_filter"
+
+    exact_terms = fallback_plan.exact_terms or []
+    if len(exact_terms) <= 2 and len(normalized_query) <= 10:
+        return True, "short_query"
+
+    if fallback_plan.matched_keys and len(normalized_query) <= 20:
+        return True, "matched_dictionary_key"
+
+    if any(token in normalized_query for token in _FAST_PATH_TOKEN_HINTS):
+        return True, "common_term_fast_path"
+
+    if _query_looks_structured(query):
+        return True, "structured_query"
+
+    return False, ""
+
+
 def _normalize_empty_list_scalars(raw_json: dict) -> dict:
     """Normalize LLM placeholder [] into null for scalar filter fields.
 
@@ -203,6 +325,34 @@ def resolve_query_plan_llm_first(
         planner_debug=planner_debug,
     )
 
+    cache_key: Optional[tuple] = None
+    if not include_raw_output:
+        use_rule_fast_path, fast_path_reason = _should_use_rule_fast_path(query, fallback_plan)
+        if use_rule_fast_path:
+            planner_debug["used_fallback"] = True
+            planner_debug["fallback_reason"] = f"rule_fast_path:{fast_path_reason}"
+            planner_debug["fast_path"] = True
+            fallback_plan.planner_debug = dict(planner_debug)
+            return fallback_plan
+
+        cache_key = _build_cache_key(query=query, project_id=project_id, settings=settings)
+        cached_plan = _cache_get(cache_key)
+        if cached_plan is not None:
+            cached_debug = dict(cached_plan.planner_debug or {})
+            cached_debug.update(
+                {
+                    "enabled": settings.query_planner_enabled,
+                    "provider": settings.query_planner_provider,
+                    "model": settings.query_planner_model_name,
+                    "planner_version": settings.query_planner_planner_version,
+                    "cache_hit": True,
+                    "used_fallback": False,
+                    "fallback_reason": "",
+                }
+            )
+            cached_plan.planner_debug = cached_debug
+            return cached_plan
+
     if not settings.query_planner_endpoint_url.strip() or not settings.query_planner_model_name.strip():
         planner_debug["used_fallback"] = True
         planner_debug["fallback_reason"] = "query_planner_missing_endpoint_or_model"
@@ -219,6 +369,8 @@ def resolve_query_plan_llm_first(
 
     started = time.monotonic()
     try:
+        planner_timeout_seconds = max(1, int(settings.query_planner_timeout_seconds))
+
         raw_text = call_chat_completion(
             endpoint_url=settings.query_planner_endpoint_url,
             api_key=settings.query_planner_api_key or global_settings.openai_api_key,
@@ -228,7 +380,7 @@ def resolve_query_plan_llm_first(
             temperature=settings.query_planner_temperature,
             top_p=settings.query_planner_top_p,
             max_tokens=settings.query_planner_max_tokens,
-            timeout_seconds=settings.query_planner_timeout_seconds,
+            timeout_seconds=planner_timeout_seconds,
         )
         planner_debug["latency_ms"] = int((time.monotonic() - started) * 1000)
         planner_debug["raw_output_preview"] = _sanitize_preview(raw_text)
@@ -244,16 +396,24 @@ def resolve_query_plan_llm_first(
         planner_debug["used_fallback"] = False
         planner_debug["fallback_reason"] = ""
 
-        return planner_output_to_query_plan(
+        query_plan = planner_output_to_query_plan(
             query=query,
             output=parsed,
             planner_debug=planner_debug,
             fallback_plan=fallback_plan,
         )
+        if cache_key is not None:
+            _cache_put(cache_key, query_plan)
+        return query_plan
     except (QueryPlannerClientError, ValueError, json.JSONDecodeError) as exc:
         planner_debug["latency_ms"] = int((time.monotonic() - started) * 1000)
         planner_debug["used_fallback"] = True
-        planner_debug["fallback_reason"] = f"planner_error:{exc.__class__.__name__}"
+        is_timeout = isinstance(exc, QueryPlannerClientError) and "timed out" in str(exc).lower()
+        planner_debug["fallback_reason"] = (
+            "planner_timeout_fallback"
+            if is_timeout
+            else f"planner_error:{exc.__class__.__name__}"
+        )
         planner_debug["error"] = str(exc)
         fallback_plan.planner_debug = dict(planner_debug)
         logger.warning(

@@ -125,6 +125,88 @@ class SearchPlanBuilderTest(unittest.TestCase):
 
         self.assertEqual(plan.effective_mode, "keyword")
 
+    def test_metadata_only_is_allowed_for_semantic_metadata_query(self) -> None:
+        settings = replace(
+            SearchSettingsResolver.defaults(),
+            enable_structured_filters=True,
+        )
+        query_plan = SearchQueryPlan(
+            original_query="去年的照片",
+            normalized_query="去年",
+            exact_terms=["去年"],
+            intent="semantic_photo_search",
+            metadata_filters={"metadata_only": True, "year": 2025},
+        )
+        people_resolution = PeopleQueryResolution(
+            query="去年的照片",
+            residual_query="去年的照片",
+            people_filter_mode="none",
+            matched_people=[],
+        )
+
+        resolver = MagicMock()
+        resolver.resolve.return_value = settings
+        resolver.defaults.return_value = settings
+
+        plan = build_search_plan(
+            db=MagicMock(),
+            query="去年的照片",
+            mode="auto",
+            project_id=1,
+            face_filter_active=False,
+            settings_resolver_cls=resolver,
+            query_plan_resolver=MagicMock(return_value=query_plan),
+            people_query_resolver=MagicMock(return_value=people_resolution),
+        )
+
+        self.assertTrue(plan.metadata_only_allowed)
+        self.assertEqual(plan.metadata_filter_skipped_reason, "not_skipped")
+        self.assertTrue(plan.metadata_filters.get("metadata_only"))
+
+    def test_temporal_metadata_filters_are_forced_when_structured_filters_disabled(self) -> None:
+        settings = replace(
+            SearchSettingsResolver.defaults(),
+            enable_structured_filters=False,
+        )
+        query_plan = SearchQueryPlan(
+            original_query="去年的照片",
+            normalized_query="去年",
+            exact_terms=["去年"],
+            intent="semantic_photo_search",
+            metadata_filters={
+                "metadata_only": True,
+                "year": 2025,
+                "date_from": "2025-01-01",
+                "date_to": "2026-01-01",
+            },
+        )
+        people_resolution = PeopleQueryResolution(
+            query="去年的照片",
+            residual_query="去年的照片",
+            people_filter_mode="none",
+            matched_people=[],
+        )
+
+        resolver = MagicMock()
+        resolver.resolve.return_value = settings
+        resolver.defaults.return_value = settings
+
+        plan = build_search_plan(
+            db=MagicMock(),
+            query="去年的照片",
+            mode="auto",
+            project_id=1,
+            face_filter_active=False,
+            settings_resolver_cls=resolver,
+            query_plan_resolver=MagicMock(return_value=query_plan),
+            people_query_resolver=MagicMock(return_value=people_resolution),
+        )
+
+        self.assertTrue(plan.metadata_filter_active)
+        self.assertEqual(plan.metadata_filter_skipped_reason, "forced_temporal_metadata")
+        self.assertEqual(plan.metadata_filters.get("year"), 2025)
+        self.assertTrue(plan.metadata_filters.get("metadata_only"))
+
 
 if __name__ == "__main__":
     unittest.main()

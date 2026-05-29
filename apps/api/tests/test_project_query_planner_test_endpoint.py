@@ -68,9 +68,9 @@ CREATE TABLE project_query_planner_settings (
   api_key TEXT,
   model_name TEXT,
   temperature REAL NOT NULL DEFAULT 0,
-  top_p REAL NOT NULL DEFAULT 0.8,
-  max_tokens INTEGER NOT NULL DEFAULT 700,
-  timeout_seconds INTEGER NOT NULL DEFAULT 20,
+  top_p REAL NOT NULL DEFAULT 0.1,
+  max_tokens INTEGER NOT NULL DEFAULT 220,
+  timeout_seconds INTEGER NOT NULL DEFAULT 3,
   json_parse_strategy TEXT NOT NULL DEFAULT 'strict_json_then_extract',
   planner_version TEXT NOT NULL DEFAULT 'llm_query_planner_v1',
   prompt_template TEXT,
@@ -104,7 +104,7 @@ INSERT INTO project_query_planner_settings (
 )
 VALUES (
   1, 1, 1, 'llama-server', 'http://127.0.0.1:18084/v1/chat/completions', 'test', 'qwen3-4b-query-planner',
-  0, 0.8, 700, 20,
+  0, 0.1, 220, 3,
   'strict_json_then_extract', 'llm_query_planner_v1', '', '', 'rule_fallback'
 );
 """
@@ -231,7 +231,7 @@ class ProjectQueryPlannerTestEndpointE2ETest(unittest.TestCase):
         body = res.json()
         self.assertEqual(body["query"], "动物")
         self.assertFalse(body["planner_debug"].get("used_fallback"))
-        self.assertEqual(body["parsed_query_plan"]["intent"], "semantic_photo_search")
+        self.assertEqual(body["parsed_query_plan"]["intent"], "animal_search")
         self.assertIn("动物", body["parsed_query_plan"]["exact_terms"])
 
     def test_query_planner_test_endpoint_fallback_on_planner_error(self) -> None:

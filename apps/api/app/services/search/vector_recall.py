@@ -126,6 +126,8 @@ class VectorRecallService:
         normalized_query: str,
         semantic_query_text: str = "",
         is_ocr_query: bool,
+        query_intent: str = "",
+        recommended_profile: str = "",
         project_id: int,
         folder_photo_subquery: Optional[Select],
         constrained_photo_ids: Optional[set[int]] = None,
@@ -174,6 +176,21 @@ class VectorRecallService:
             field_weights = self._settings.vector_field_weights
 
         top_k = limit if limit is not None else self._settings.vector_top_k
+        is_entity_object_profile = (
+            (recommended_profile or "") == "entity_object"
+            or (query_intent or "") == "animal_search"
+        ) and not is_ocr_query
+
+        if is_entity_object_profile:
+            content_top_k = max(5, min(top_k, 15))
+            caption_top_k = max(8, min(top_k, 25))
+            tag_top_k = max(10, min(top_k, 30))
+            ocr_top_k = max(0, min(top_k, 5))
+        else:
+            content_top_k = top_k
+            caption_top_k = top_k
+            tag_top_k = top_k
+            ocr_top_k = top_k
 
         content_scores, stale_content = _vector_field_search(
             self._db,
@@ -182,7 +199,7 @@ class VectorRecallService:
             field_name="content_embedding",
             folder_photo_subquery=folder_photo_subquery,
             constrained_photo_ids=constrained_photo_ids,
-            limit=top_k,
+            limit=content_top_k,
             embedding_model=embedding_model,
             embedding_dimension=embed_cfg.get("embedding_dimension"),
             embedding_input_version=EMBEDDING_INPUT_VERSION,
@@ -194,7 +211,7 @@ class VectorRecallService:
             field_name="caption_embedding",
             folder_photo_subquery=folder_photo_subquery,
             constrained_photo_ids=constrained_photo_ids,
-            limit=top_k,
+            limit=caption_top_k,
             embedding_model=embedding_model,
             embedding_dimension=embed_cfg.get("embedding_dimension"),
             embedding_input_version=EMBEDDING_INPUT_VERSION,
@@ -206,7 +223,7 @@ class VectorRecallService:
             field_name="tag_embedding",
             folder_photo_subquery=folder_photo_subquery,
             constrained_photo_ids=constrained_photo_ids,
-            limit=top_k,
+            limit=tag_top_k,
             embedding_model=embedding_model,
             embedding_dimension=embed_cfg.get("embedding_dimension"),
             embedding_input_version=EMBEDDING_INPUT_VERSION,
@@ -218,7 +235,7 @@ class VectorRecallService:
             field_name="ocr_embedding",
             folder_photo_subquery=folder_photo_subquery,
             constrained_photo_ids=constrained_photo_ids,
-            limit=top_k,
+            limit=ocr_top_k,
             embedding_model=embedding_model,
             embedding_dimension=embed_cfg.get("embedding_dimension"),
             embedding_input_version=EMBEDDING_INPUT_VERSION,
@@ -227,9 +244,12 @@ class VectorRecallService:
         stale_filtered_total = stale_content + stale_caption + stale_tag + stale_ocr
 
         logger.debug(
-            "[vector_recall] field_hits content=%d caption=%d tag=%d ocr=%d top_k=%d stale_filtered=%d",
+            "[vector_recall] field_hits content=%d caption=%d tag=%d ocr=%d top_k=%d profile=%s intent=%s stale_filtered=%d",
             len(content_scores), len(caption_scores), len(tag_scores), len(ocr_scores),
-            top_k, stale_filtered_total,
+            top_k,
+            recommended_profile,
+            query_intent,
+            stale_filtered_total,
         )
 
         all_photo_ids = (

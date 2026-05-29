@@ -13,6 +13,7 @@ from .types import EffectiveSearchSettings, SearchCandidate, SearchMode
 @dataclass
 class SearchExecutionContext:
     project_id: Optional[int]
+    page_size: int
     effective_settings: EffectiveSearchSettings
     query_plan: object
     search_query_plan: object
@@ -46,9 +47,11 @@ class SearchExecutionContext:
         trace: list[dict],
         *,
         project_id: Optional[int],
+        page_size: int,
     ) -> "SearchExecutionContext":
         return cls(
             project_id=project_id,
+            page_size=page_size,
             effective_settings=plan.effective_settings,
             query_plan=plan.query_plan,
             search_query_plan=plan.search_query_plan,

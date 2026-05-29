@@ -10,6 +10,7 @@ It is used for:
 """
 from __future__ import annotations
 
+from datetime import date, datetime, time
 import logging
 from typing import Optional
 
@@ -21,6 +22,43 @@ from ...models.photo import Photo
 from .types import SearchCandidate
 
 logger = logging.getLogger(__name__)
+
+
+def _coerce_datetime_boundary(value: object) -> Optional[datetime]:
+    """Convert date-like metadata values to naive datetime boundaries.
+
+    Accepts ``datetime``, ``date``, or ISO strings like ``YYYY-MM-DD`` /
+    ``YYYY-MM-DDTHH:MM:SS``. Returns ``None`` for invalid inputs.
+    """
+    if value is None:
+        return None
+
+    if isinstance(value, datetime):
+        # ``taken_at`` is stored as TIMESTAMP without timezone.
+        return value.replace(tzinfo=None)
+
+    if isinstance(value, date):
+        return datetime.combine(value, time.min)
+
+    if not isinstance(value, str):
+        return None
+
+    text = value.strip()
+    if not text:
+        return None
+
+    # Normalize "Z" suffix for ISO 8601 UTC values.
+    normalized = text[:-1] + "+00:00" if text.endswith("Z") else text
+    try:
+        return datetime.fromisoformat(normalized).replace(tzinfo=None)
+    except ValueError:
+        pass
+
+    try:
+        parsed_date = date.fromisoformat(text)
+    except ValueError:
+        return None
+    return datetime.combine(parsed_date, time.min)
 
 
 class MetadataRecallService:
@@ -106,12 +144,22 @@ class MetadataRecallService:
         place_terms: list[str] = metadata_filters.get("place_terms") or []
 
         # ── Date / time ────────────────────────────────────────────────────────
-        if date_from and date_to:
-            # Precise date range takes priority over individual year/month filters
-            q = q.filter(
-                Photo.taken_at >= date_from,
-                Photo.taken_at < date_to,
+        date_from_dt = _coerce_datetime_boundary(date_from)
+        date_to_dt = _coerce_datetime_boundary(date_to)
+
+        if (date_from is not None and date_from_dt is None) or (date_to is not None and date_to_dt is None):
+            logger.warning(
+                "[MetadataRecallService] invalid date boundary ignored: date_from=%r date_to=%r",
+                date_from,
+                date_to,
             )
+
+        if date_from_dt is not None or date_to_dt is not None:
+            # Precise date range takes priority over individual year/month filters
+            if date_from_dt is not None:
+                q = q.filter(Photo.taken_at >= date_from_dt)
+            if date_to_dt is not None:
+                q = q.filter(Photo.taken_at < date_to_dt)
         elif year is not None:
             q = q.filter(extract("year", Photo.taken_at) == year)
             if month is not None:

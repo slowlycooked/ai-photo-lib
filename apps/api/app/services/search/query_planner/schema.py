@@ -1,6 +1,7 @@
 """Pydantic schema for LLM query planner output."""
 from __future__ import annotations
 
+import re
 from typing import Any, Dict, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -24,6 +25,41 @@ def _coerce_empty_list_to_none(cls: Any, data: Any) -> Any:
             if origin is not list:
                 result[field_name] = None
     return result
+
+
+_MONTH_TOKEN_RE = re.compile(r"\d{1,2}")
+
+
+def _coerce_month_value(value: Any) -> Optional[int]:
+    """Normalize model month output into Optional[int] in range 1..12.
+
+    Small/quantized LLMs sometimes emit month as range/list-like strings
+    such as "1-3" or "1/2/3". We keep the first valid month token.
+    """
+    if value is None:
+        return None
+    if isinstance(value, int):
+        return value if 1 <= value <= 12 else None
+    if isinstance(value, float):
+        month = int(value)
+        return month if 1 <= month <= 12 else None
+    if isinstance(value, list):
+        if not value:
+            return None
+        return _coerce_month_value(value[0])
+
+    text = str(value).strip()
+    if not text:
+        return None
+    if text.isdigit():
+        month = int(text)
+        return month if 1 <= month <= 12 else None
+
+    for token in _MONTH_TOKEN_RE.findall(text):
+        month = int(token)
+        if 1 <= month <= 12:
+            return month
+    return None
 
 
 class PlannerTerms(BaseModel):
@@ -85,7 +121,13 @@ class PlannerMetadataFilters(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def _coerce_lists(cls, data: Any) -> Any:
-        return _coerce_empty_list_to_none(cls, data)
+        normalized = _coerce_empty_list_to_none(cls, data)
+        if not isinstance(normalized, dict):
+            return normalized
+        result = dict(normalized)
+        if "month" in result:
+            result["month"] = _coerce_month_value(result.get("month"))
+        return result
 
 
 class PlannerCoreFacetEvidence(BaseModel):

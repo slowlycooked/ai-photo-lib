@@ -105,8 +105,8 @@ describe("PromptSettingsSection", () => {
 
     renderSection(1);
 
-    expect(screen.getByText("Prompt 测试 · 待收敛")).toBeInTheDocument();
-    expect(screen.getByText(/关键链路可用，交互与历史管理规则仍在持续收敛/)).toBeInTheDocument();
+    expect(screen.getByText("Prompt 测试 · 稳定")).toBeInTheDocument();
+    expect(screen.getByText(/Prompt 测试支持项目模板、测试图片、解析结果与本地历史回看/)).toBeInTheDocument();
     expect(await screen.findByDisplayValue("模板 B")).toBeInTheDocument();
     expect(promptTemplatesMock).toHaveBeenCalledWith(1);
   });
@@ -336,6 +336,6 @@ describe("PromptSettingsSection", () => {
 
     await screen.findByDisplayValue("项目2模板");
     expect(screen.queryByText("project1 output")).not.toBeInTheDocument();
-    expect(screen.getAllByText("(暂无)").length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByText("(暂无测试结果)")).toBeInTheDocument();
   });
 });

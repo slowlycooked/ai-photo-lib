@@ -305,6 +305,14 @@ def run_vector_stage(
     """Run vector recall stage with graceful fallback signaling."""
     vector_service = VectorRecallService(db, execution_context.effective_settings)
     is_ocr_query = execution_context.search_query_plan.intent == "ocr_text_search"
+    raw_vector_top_k_per_field = max(
+        1,
+        min(
+            int(execution_context.effective_settings.vector_top_k),
+            max(1, int(execution_context.page_size) * 2),
+        ),
+    )
+    final_vector_top_k = max(1, int(execution_context.page_size))
 
     logger.debug(
         "[search] vector_recall start is_ocr=%s project_id=%s",
@@ -318,14 +326,28 @@ def run_vector_stage(
             normalized_query=execution_context.search_query_plan.normalized_query,
             semantic_query_text=execution_context.search_query_plan.semantic_query_text,
             is_ocr_query=is_ocr_query,
+            query_intent=execution_context.search_query_plan.intent,
+            recommended_profile=execution_context.search_query_plan.recommended_profile,
             project_id=execution_context.project_id,  # type: ignore[arg-type]
             folder_photo_subquery=execution_context.folder_photo_subquery,
             constrained_photo_ids=execution_context.constrained_photo_ids,
+            limit=raw_vector_top_k_per_field,
         )
+
+        if len(vector_scores) > final_vector_top_k:
+            top_items = sorted(
+                vector_scores.items(),
+                key=lambda item: item[1].total_score,
+                reverse=True,
+            )[:final_vector_top_k]
+            vector_scores = {photo_id: scores for photo_id, scores in top_items}
+
         trace_writer.write_stage(
             "vector_recall",
             candidates=len(vector_scores),
             vector_candidates=len(vector_scores),
+            raw_vector_top_k_per_field=raw_vector_top_k_per_field,
+            final_vector_top_k=final_vector_top_k,
             embedding_model=embedding_model,
             is_ocr=is_ocr_query,
             stale_embedding_filtered=stale_embedding_filtered,
@@ -354,6 +376,8 @@ def run_vector_stage(
             embedding_model="",
             stale_embedding_filtered=0,
             vector_candidates=0,
+            raw_vector_top_k_per_field=raw_vector_top_k_per_field,
+            final_vector_top_k=final_vector_top_k,
         )
         return VectorStageResult(
             vector_scores={},

@@ -47,9 +47,9 @@ CREATE TABLE project_query_planner_settings (
   api_key TEXT,
   model_name TEXT,
   temperature REAL NOT NULL DEFAULT 0,
-  top_p REAL NOT NULL DEFAULT 0.8,
-  max_tokens INTEGER NOT NULL DEFAULT 700,
-  timeout_seconds INTEGER NOT NULL DEFAULT 20,
+    top_p REAL NOT NULL DEFAULT 0.1,
+    max_tokens INTEGER NOT NULL DEFAULT 220,
+    timeout_seconds INTEGER NOT NULL DEFAULT 3,
   json_parse_strategy TEXT NOT NULL DEFAULT 'strict_json_then_extract',
   planner_version TEXT NOT NULL DEFAULT 'llm_query_planner_v1',
   prompt_template TEXT,
@@ -92,7 +92,7 @@ def test_get_or_create_project_query_planner_settings_defaults() -> None:
         assert row.provider == "llama-server"
         assert row.endpoint_url == "http://127.0.0.1:18084/v1"
         assert row.model_name == "qwen3-4b-query-planner"
-        assert row.max_tokens == 700
+        assert row.max_tokens == 220
     finally:
         db.close()
 
@@ -125,6 +125,6 @@ def test_update_and_reset_project_query_planner_settings() -> None:
         assert reset.enabled is True
         assert reset.model_name == "qwen3-4b-query-planner"
         assert reset.endpoint_url == "http://127.0.0.1:18084/v1"
-        assert reset.max_tokens == 700
+        assert reset.max_tokens == 220
     finally:
         db.close()

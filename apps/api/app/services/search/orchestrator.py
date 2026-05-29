@@ -111,6 +111,7 @@ class SearchOrchestrator:
             plan,
             trace,
             project_id=project_id,
+            page_size=page_size,
         )
 
         trace_writer.write_stage(
@@ -572,6 +573,8 @@ class SearchOrchestrator:
                 fallback_reason="",
                 displayed_candidates=total,
                 filtered_candidates=filtered_count,
+                vector_only_rejected_count=post_fusion.vector_only_rejected_count,
+                vector_only_reject_reasons=post_fusion.vector_only_reject_reasons,
                 filtered_out_samples=filtered_samples,
                 stale_embedding_filtered=stale_embedding_filtered,
             )

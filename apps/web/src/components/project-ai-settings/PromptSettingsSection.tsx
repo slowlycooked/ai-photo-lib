@@ -1,9 +1,10 @@
-import { AlertCircle, Bot, Check, Clipboard, FlaskConical, Loader2, RotateCcw, Save, Sparkles, Trash2 } from "lucide-react";
+import { AlertCircle, Check, Clipboard, FlaskConical, Loader2, RotateCcw, Save, Trash2 } from "lucide-react";
 import {
   useProjectPromptSettings,
   type ModelFormSnapshot,
 } from "@/hooks/useProjectPromptSettings";
 import { CapabilityMaturityBadge } from "@/components/common/CapabilityMaturityBadge";
+import { ConfigTestResult } from "@/components/settings/ConfigTestResult";
 import { CAPABILITY_MATURITY } from "@/lib/capabilityMaturity";
 import { Label, SettingsCard } from "./SettingsPrimitives";
 
@@ -272,36 +273,34 @@ export function PromptSettingsSection({
           </div>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
-          <div className="border border-hairline rounded-md p-3 bg-surface-soft">
-            <p className="text-caption-sm text-mute mb-2 flex items-center gap-1"><Bot className="w-3.5 h-3.5" />模型原始输出</p>
-            <pre className="max-h-64 overflow-auto text-caption-sm whitespace-pre-wrap break-all">
-              {testResult?.raw_output || "(暂无)"}
-            </pre>
+        {testResult ? (
+          <ConfigTestResult
+            title="Vision Prompt 测试结果"
+            success={testResult.success}
+            latencyMs={testResult.duration_ms}
+            errorMessage={testResult.error}
+            summary={[
+              { label: "Template Version", value: currentTemplate ? `v${currentTemplate.version}` : "-" },
+              { label: "JSON Parse Strategy", value: modelForm.json_parse_strategy },
+              { label: "Image ID", value: testPhotoId != null ? String(testPhotoId) : "-" },
+            ]}
+            requestPayload={{
+              image_id: testPhotoId,
+              prompt_template_id: currentTemplate?.id ?? null,
+              override_prompt: effectivePrompt,
+              provider: modelForm.provider,
+              endpoint_url: modelForm.endpoint_url,
+              model_name: modelForm.model_name,
+              json_parse_strategy: modelForm.json_parse_strategy,
+            }}
+            rawOutput={testResult.raw_output}
+            parsedOutput={testResult.parsed_json}
+          />
+        ) : (
+          <div className="border border-hairline rounded-md p-3 bg-surface-soft text-body-sm text-mute">
+            (暂无测试结果)
           </div>
-          <div className="border border-hairline rounded-md p-3 bg-surface-soft">
-            <p className="text-caption-sm text-mute mb-2 flex items-center gap-1"><Sparkles className="w-3.5 h-3.5" />JSON 解析结果</p>
-            <pre className="max-h-64 overflow-auto text-caption-sm whitespace-pre-wrap break-all">
-              {testResult?.parsed_json ? JSON.stringify(testResult.parsed_json, null, 2) : "(暂无)"}
-            </pre>
-          </div>
-          <div className="border border-hairline rounded-md p-3 bg-surface-soft">
-            <p className="text-caption-sm text-mute mb-2">校验状态</p>
-            {testResult ? (
-              <div className="space-y-2 text-body-sm">
-                <p className={testResult.success ? "text-green-700" : "text-amber-700"}>
-                  {testResult.success ? "解析成功" : "解析失败"}
-                </p>
-                <p className="text-mute">耗时：{testResult.duration_ms} ms</p>
-                {!testResult.success && (
-                  <p className="text-danger whitespace-pre-wrap break-all">{testResult.error}</p>
-                )}
-              </div>
-            ) : (
-              <p className="text-body-sm text-mute">(暂无)</p>
-            )}
-          </div>
-        </div>
+        )}
 
         <div className="pt-2 border-t border-hairline">
           <div className="flex items-center justify-between gap-2 mb-2">

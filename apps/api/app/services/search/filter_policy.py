@@ -32,11 +32,57 @@ _INDOOR_WEAK_ONLY_FIELDS: tuple[str, ...] = (
     "location_clues",
 )
 
+_DEFAULT_INDOOR_QUERY_TRIGGERS: frozenset[str] = frozenset({
+    "室内",
+    "室内空间",
+    "indoor",
+    "indoors",
+    "interior",
+})
+
+_DEFAULT_INDOOR_POSITIVE_TERMS: frozenset[str] = frozenset({
+    "室内",
+    "屋内",
+    "室内场景",
+    "房间",
+    "客厅",
+    "卧室",
+    "厨房",
+    "indoor",
+    "interior",
+})
+
+_DEFAULT_INDOOR_NEGATIVE_TERMS: frozenset[str] = frozenset({
+    "户外",
+    "室外",
+    "自然",
+    "风景",
+    "outdoor",
+    "outside",
+    "landscape",
+    "exterior",
+})
+
+_DEFAULT_ANIMAL_GENERIC_TERMS: frozenset[str] = frozenset({
+    "动物",
+    "宠物",
+    "野生动物",
+    "动物园",
+    "小动物",
+    "animal",
+    "animals",
+})
+
+_DEFAULT_ANIMAL_WEAK_SCENE_TERMS: frozenset[str] = frozenset({
+    "动物园",
+    "宠物店",
+})
+
 def _core_terms_for_domain(
     query_plan: SearchQueryPlan,
     domain: str,
 ) -> tuple[frozenset[str], frozenset[str]]:
-    evidence = query_plan.core_facet_evidence or {}
+    evidence = getattr(query_plan, "core_facet_evidence", None) or {}
     domain_payload = evidence.get(domain) or {}
 
     positive_terms = frozenset(
@@ -54,7 +100,7 @@ def _core_terms_for_domain(
 
 
 def _animal_evidence_payload(query_plan: SearchQueryPlan) -> dict:
-    evidence = query_plan.core_facet_evidence or {}
+    evidence = getattr(query_plan, "core_facet_evidence", None) or {}
     payload = evidence.get("animal")
     return payload if isinstance(payload, dict) else {}
 
@@ -157,13 +203,15 @@ def resolve_face_filter_photo_ids(
 def is_explicit_indoor_query(query_plan: SearchQueryPlan) -> bool:
     exact_lower = {t.lower() for t in query_plan.exact_terms}
     matched_lower = {t.lower() for t in query_plan.matched_keys}
-    core_facet_evidence = query_plan.core_facet_evidence or {}
+    core_facet_evidence = getattr(query_plan, "core_facet_evidence", None) or {}
     indoor_payload = core_facet_evidence.get("indoor") or {}
     indoor_query_triggers = {
         str(term).lower().strip()
         for term in (indoor_payload.get("query_triggers") or [])
         if str(term).strip()
     }
+    if not indoor_query_triggers:
+        indoor_query_triggers = _DEFAULT_INDOOR_QUERY_TRIGGERS
     return (
         query_plan.filters.get("indoor_outdoor") == "indoor"
         and "scene" in query_plan.core_facets
@@ -214,6 +262,8 @@ def animal_core_facet_passes(
         for term in (animal_payload.get("generic_terms") or [])
         if str(term).strip()
     )
+    if not animal_generic_terms:
+        animal_generic_terms = _DEFAULT_ANIMAL_GENERIC_TERMS
     animal_entity_hints = frozenset(
         str(term).lower().strip()
         for term in (animal_payload.get("entity_hints") or [])
@@ -224,6 +274,8 @@ def animal_core_facet_passes(
         for term in (animal_payload.get("weak_scene_terms") or [])
         if str(term).strip()
     )
+    if not animal_weak_scene_terms:
+        animal_weak_scene_terms = _DEFAULT_ANIMAL_WEAK_SCENE_TERMS
 
     entity_terms = [
         term.lower()
@@ -308,8 +360,10 @@ def indoor_core_facet_passes(
     combined_text = f"{rich_text} {weak_text}".strip()
 
     indoor_positive_terms, indoor_negative_terms = _core_terms_for_domain(query_plan, "indoor")
-    if not indoor_positive_terms and not indoor_negative_terms:
-        return True, ""
+    if not indoor_positive_terms:
+        indoor_positive_terms = _DEFAULT_INDOOR_POSITIVE_TERMS
+    if not indoor_negative_terms:
+        indoor_negative_terms = _DEFAULT_INDOOR_NEGATIVE_TERMS
 
     has_positive = any(term in rich_text for term in indoor_positive_terms)
     has_negative = any(term in combined_text for term in indoor_negative_terms)
@@ -347,7 +401,7 @@ def core_facet_passes(
     if is_explicit_indoor_query(query_plan):
         return indoor_core_facet_passes(candidate, ai_analysis, query_plan, settings)
 
-    if query_plan.intent == "animal_search":
+    if getattr(query_plan, "intent", "") == "animal_search":
         return animal_core_facet_passes(candidate, ai_analysis, query_plan, settings)
 
     core_facets = query_plan.core_facets

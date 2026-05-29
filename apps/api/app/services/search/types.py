@@ -116,6 +116,11 @@ class EffectiveSearchSettings:
     require_core_facet_match: bool = False
     # Allow high-confidence vector-only matches to pass core facet gate
     allow_vector_only_for_facet_query: bool = True
+    # Profile-aware vector-only controls for entity/object-heavy intents.
+    entity_object_vector_only_min_score: float = 0.62
+    entity_object_tag_min_score: float = 0.62
+    entity_object_caption_min_score: float = 0.58
+    animal_search_min_display_evidence_level: str = "B"
     # Project-level concept taxonomy used by query understanding / concept recall.
     concept_taxonomy: List[Dict] = field(default_factory=list)
     # Rule-pack selection for query understanding dictionaries/synonyms.
@@ -128,8 +133,8 @@ class EffectiveSearchSettings:
     query_planner_api_key: str = ""
     query_planner_model_name: str = global_settings.query_planner_alias
     query_planner_temperature: float = 0.0
-    query_planner_top_p: float = 0.8
-    query_planner_max_tokens: int = 700
+    query_planner_top_p: float = 0.1
+    query_planner_max_tokens: int = 220
     query_planner_timeout_seconds: int = 20
     query_planner_json_parse_strategy: str = "strict_json_then_extract"
     query_planner_planner_version: str = "llm_query_planner_v1"

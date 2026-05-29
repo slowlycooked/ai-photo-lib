@@ -249,6 +249,32 @@ def test_query_understanding_behavior_contract_time_and_place_query():
     assert metadata["place_terms"] == ["杭州"]
 
 
+def test_query_understanding_time_only_semantic_query_relaxes_visual_constraints():
+    plan = understand_query("去年的照片")
+
+    metadata = plan.metadata_filters
+    constraints = plan.query_constraints
+
+    assert plan.intent == "semantic_photo_search"
+    assert metadata["metadata_only"] is True
+    assert metadata["year"] is not None
+    assert constraints["requires_visual_evidence"] is False
+    assert constraints["allow_weak_only_match"] is True
+
+
+def test_query_understanding_last_year_activity_is_not_misread_as_place_only():
+    plan = understand_query("去年滑雪")
+
+    metadata = plan.metadata_filters
+    constraints = plan.query_constraints
+
+    assert metadata["year"] is not None
+    assert metadata["place_terms"] == []
+    assert metadata["metadata_only"] is False
+    assert constraints["requires_visual_evidence"] is True
+    assert constraints["allow_weak_only_match"] is False
+
+
 def test_query_understanding_behavior_contract_folder_filter_agnostic():
     """Folder filtering is handled in search SQL layer, not query understanding."""
     plan = understand_query("夜景")
