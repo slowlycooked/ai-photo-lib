@@ -275,6 +275,19 @@ def test_query_understanding_last_year_activity_is_not_misread_as_place_only():
     assert constraints["allow_weak_only_match"] is False
 
 
+def test_query_understanding_zhangjiakou_skiing_avoids_indoor_false_positive() -> None:
+    plan = understand_query("去年在张家口的滑雪")
+
+    metadata = plan.metadata_filters
+    assert "家" not in plan.matched_keys
+    assert "卧室" not in plan.expanded_terms
+    assert "客厅" not in plan.expanded_terms
+    assert "室内" not in plan.expanded_terms
+    assert metadata["year"] is not None
+    assert metadata["place_terms"] == ["张家口"]
+    assert metadata["metadata_only"] is False
+
+
 def test_query_understanding_behavior_contract_folder_filter_agnostic():
     """Folder filtering is handled in search SQL layer, not query understanding."""
     plan = understand_query("夜景")

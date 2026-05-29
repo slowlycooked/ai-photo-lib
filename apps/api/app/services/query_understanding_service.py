@@ -91,6 +91,7 @@ _GENERIC_NON_PLACE_TERMS: frozenset[str] = frozenset({
     "动物", "宠物", "野生动物", "小动物", "猫", "狗", "鸟", "马", "鹿", "兔", "兔子", "鱼",
     "下雨天", "晴天", "雪天", "海边", "日落", "日出", "晚霞", "自拍", "滑雪",
 })
+_CJK_CHAR_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
 
 # Strong semantic intents should never be treated as metadata-only requests,
 # even if metadata parser matched some tokens.
@@ -106,6 +107,62 @@ _METADATA_ONLY_BLOCKED_INTENTS: frozenset[str] = frozenset({
 _ANIMAL_CATEGORY_TERMS: frozenset[str] = frozenset({
     "动物", "宠物", "野生动物", "动物园", "小动物", "animal",
 })
+
+
+def _is_cjk_char(ch: str) -> bool:
+    return bool(ch) and bool(_CJK_CHAR_RE.match(ch))
+
+
+def _term_in_query(term: str, query_lower: str) -> bool:
+    """Return True when *term* should be treated as matched in *query_lower*.
+
+    Single-character CJK terms require at least one-side boundary to avoid
+    false positives like "家" in "张家口".
+    """
+    token = str(term or "").strip().lower()
+    if not token:
+        return False
+    if token not in query_lower:
+        return False
+    if len(token) != 1 or (not _is_cjk_char(token)):
+        return True
+
+    start = 0
+    q_len = len(query_lower)
+    while True:
+        idx = query_lower.find(token, start)
+        if idx < 0:
+            return False
+        prev_ch = query_lower[idx - 1] if idx > 0 else ""
+        next_idx = idx + 1
+        next_ch = query_lower[next_idx] if next_idx < q_len else ""
+        prev_is_cjk = _is_cjk_char(prev_ch)
+        next_is_cjk = _is_cjk_char(next_ch)
+        if (not prev_is_cjk) or (not next_is_cjk):
+            return True
+        start = idx + 1
+
+
+def _strip_non_place_affixes(term: str) -> str:
+    cleaned = str(term or "").strip()
+    if not cleaned:
+        return ""
+    non_place_terms = sorted(_GENERIC_NON_PLACE_TERMS, key=len, reverse=True)
+    changed = True
+    while changed and cleaned:
+        changed = False
+        for bad in non_place_terms:
+            if len(cleaned) <= len(bad):
+                continue
+            if cleaned.startswith(bad):
+                cleaned = cleaned[len(bad):].strip()
+                changed = True
+                break
+            if cleaned.endswith(bad):
+                cleaned = cleaned[: -len(bad)].strip()
+                changed = True
+                break
+    return cleaned
 
 def _normalise_concept_taxonomy(
     raw: Optional[list[dict]],
@@ -429,7 +486,7 @@ def _parse_metadata_filters(original_query: str) -> dict:
     place_terms: list[str] = []
     if cleaned_remaining:
         for raw_term in _PLACE_SPLIT_RE.split(cleaned_remaining):
-            term = raw_term.strip()
+            term = _strip_non_place_affixes(raw_term.strip())
             if not term or term in _GENERIC_NON_PLACE_TERMS:
                 continue
             if term not in place_terms:
@@ -587,24 +644,24 @@ def _classify_intent(query: str, runtime_rules: _RuleRuntime) -> str:
     # 必须在 animal 之前：防止"钓鱼/骑马/摸鱼"等复合词因包含"鱼/马"单字
     # 而被误判为 animal_search。
     # 先检查显式活动短语保护集（含动物字的复合活动词）
-    if any(phrase in q_lower for phrase in runtime_rules.activity_phrase_overrides):
+    if any(_term_in_query(phrase, q_lower) for phrase in runtime_rules.activity_phrase_overrides):
         return "activity_search"
     for key in runtime_rules.outdoor_keys:
-        if key in q_lower:
+        if _term_in_query(key, q_lower):
             return "activity_search"
     for key in runtime_rules.animal_keys:
-        if key in q_lower:
+        if _term_in_query(key, q_lower):
             return "animal_search"
     for key in runtime_rules.weather_keys:
-        if key in q_lower:
+        if _term_in_query(key, q_lower):
             return "weather_search"
-    if any(k in q_lower for k in _GROUP_PHOTO_KEYS):
+    if any(_term_in_query(k, q_lower) for k in _GROUP_PHOTO_KEYS):
         return "group_photo_search"
-    if any(k in q_lower for k in runtime_rules.people_keys):
+    if any(_term_in_query(k, q_lower) for k in runtime_rules.people_keys):
         return "people_search"
-    if any(k in q_lower for k in runtime_rules.food_keys):
+    if any(_term_in_query(k, q_lower) for k in runtime_rules.food_keys):
         return "food_search"
-    if any(k in q_lower for k in runtime_rules.travel_keys):
+    if any(_term_in_query(k, q_lower) for k in runtime_rules.travel_keys):
         return "location_search"
     return "semantic_photo_search"
 
@@ -650,9 +707,9 @@ def _infer_filters(query: str, intent: str, runtime_rules: _RuleRuntime) -> dict
                 filters["weather"] = "snow"
                 break
 
-    if any(k in q_lower for k in runtime_rules.outdoor_keys):
+    if any(_term_in_query(k, q_lower) for k in runtime_rules.outdoor_keys):
         filters["indoor_outdoor"] = "outdoor"
-    elif any(k in q_lower for k in runtime_rules.indoor_keys):
+    elif any(_term_in_query(k, q_lower) for k in runtime_rules.indoor_keys):
         filters["indoor_outdoor"] = "indoor"
 
     if any(k in q_lower for k in ("日落", "sunset", "黄昏", "夕阳")):
@@ -855,7 +912,7 @@ def understand_query(
 
     for primary_facet, tiered_dict in runtime_rules.all_tiered_dicts_with_facets:
         for key, tiers in tiered_dict.items():
-            if key not in q_lower:
+            if not _term_in_query(key, q_lower):
                 continue
             if key not in matched_keys_set:
                 matched_keys_set.append(key)
@@ -993,7 +1050,7 @@ def understand_query(
         # facets from entries whose key appears in exact_terms are "core"
         for primary_facet, tiered_dict in runtime_rules.all_tiered_dicts_with_facets:
             for key, tiers in tiered_dict.items():
-                if key in q_lower:
+                if _term_in_query(key, q_lower):
                     entry_facets_core = tiers.get("facets", [primary_facet])
                     for fct in entry_facets_core:
                         if fct not in core_facets:
