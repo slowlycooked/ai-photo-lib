@@ -453,22 +453,6 @@ def extract_task_failures(task: ProjectTask) -> list[dict[str, Any]]:
     failures: list[dict[str, Any]] = []
     seen: set[tuple[Any, ...]] = set()
 
-    for payload_name, payload in (("result_payload", task.result_payload), ("progress_payload", task.progress_payload)):
-        if not isinstance(payload, dict):
-            continue
-
-        for entry in reversed(list(payload.get("recent_files") or [])):
-            normalized = _normalize_recent_file_failure(entry, payload_name=payload_name)
-            if normalized is None:
-                continue
-            _append_failure(failures, seen, normalized)
-
-        for message in reversed(list(payload.get("recent_errors") or [])):
-            normalized = _normalize_recent_error_failure(message, payload_name=payload_name)
-            if normalized is None:
-                continue
-            _append_failure(failures, seen, normalized)
-
     error_text = (task.error_message or "").strip()
     if error_text:
         _append_failure(
@@ -484,12 +468,30 @@ def extract_task_failures(task: ProjectTask) -> list[dict[str, Any]]:
                 "details": {"task_status": task.status},
             },
         )
+
+    for payload_name, payload in (("result_payload", task.result_payload), ("progress_payload", task.progress_payload)):
+        if not isinstance(payload, dict):
+            continue
+
+        for entry in reversed(list(payload.get("recent_files") or [])):
+            normalized = _normalize_recent_file_failure(entry, payload_name=payload_name)
+            if normalized is None:
+                continue
+            _append_failure(failures, seen, normalized)
+
+        for message in reversed(list(payload.get("recent_errors") or [])):
+            normalized = _normalize_recent_error_failure(message, payload_name=payload_name)
+            if normalized is None:
+                continue
+            _append_failure(failures, seen, normalized)
     return failures
 
 
 def extract_task_recent_errors(task: ProjectTask) -> list[str]:
     errors: list[str] = []
-    for failure in extract_task_failures(task):
+    failures = extract_task_failures(task)
+    failures.sort(key=lambda failure: 1 if failure.get("source") == "task_error" else 0)
+    for failure in failures:
         message = str(failure.get("message") or "").strip()
         if message and message not in errors:
             errors.append(message)

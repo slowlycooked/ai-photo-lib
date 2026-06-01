@@ -13,7 +13,6 @@ from .types import EffectiveSearchSettings, SearchCandidate, SearchMode
 @dataclass
 class SearchExecutionContext:
     project_id: Optional[int]
-    page_size: int
     effective_settings: EffectiveSearchSettings
     query_plan: object
     search_query_plan: object
@@ -26,6 +25,7 @@ class SearchExecutionContext:
     metadata_filter_skipped_reason: str
     metadata_filter_active: bool
     trace: list[dict]
+    page_size: int = 50
     folder_photo_subquery: Optional[Select] = None
 
     constrained_photo_ids: set[int] | None = None

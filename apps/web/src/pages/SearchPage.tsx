@@ -33,6 +33,35 @@ const PEOPLE_FILTERS: Array<{ value: PeopleFilter; label: string }> = [
   { value: "unnamed", label: "未命名人物" },
 ];
 
+function SegmentedControl<T extends string>({
+  items,
+  value,
+  onChange,
+}: {
+  items: Array<{ value: T; label: string }>;
+  value: T;
+  onChange: (value: T) => void;
+}) {
+  return (
+    <div className="flex items-center rounded-md border border-hairline overflow-hidden text-body-sm">
+      {items.map((item) => (
+        <button
+          key={item.value}
+          onClick={() => onChange(item.value)}
+          className={
+            "px-3 py-1.5 transition-colors " +
+            (value === item.value
+              ? "bg-primary text-white"
+              : "text-mute hover:bg-surface-card hover:text-ink")
+          }
+        >
+          {item.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export function SearchPage() {
   const [params] = useSearchParams();
   const query = params.get("q") ?? "";
@@ -69,7 +98,7 @@ export function SearchPage() {
               {tagValue}
             </span>
           </div>
-          <label className="flex items-center gap-1.5 text-sm text-muted-foreground cursor-pointer select-none">
+          <label className="flex items-center gap-1.5 text-body-sm text-mute cursor-pointer select-none">
             <input
               type="checkbox"
               checked={debug}
@@ -83,23 +112,8 @@ export function SearchPage() {
       ) : (
         /* Normal search mode header */
         <div className="flex items-center gap-3 flex-wrap">
-          <div className="flex items-center rounded-md border border-border overflow-hidden text-sm">
-            {MODES.map((m) => (
-              <button
-                key={m.value}
-                onClick={() => setMode(m.value)}
-                className={
-                  "px-3 py-1.5 transition-colors " +
-                  (mode === m.value
-                    ? "bg-primary text-primary-foreground"
-                    : "hover:bg-accent text-muted-foreground")
-                }
-              >
-                {m.label}
-              </button>
-            ))}
-          </div>
-          <label className="flex items-center gap-1.5 text-sm text-muted-foreground cursor-pointer select-none">
+          <SegmentedControl items={MODES} value={mode} onChange={setMode} />
+          <label className="flex items-center gap-1.5 text-body-sm text-mute cursor-pointer select-none">
             <input
               type="checkbox"
               checked={debug}
@@ -109,22 +123,7 @@ export function SearchPage() {
             <Bug className="w-3.5 h-3.5" />
             Debug
           </label>
-          <div className="flex items-center rounded-md border border-border overflow-hidden text-sm">
-            {PEOPLE_FILTERS.map((item) => (
-              <button
-                key={item.value}
-                onClick={() => setPeopleFilter(item.value)}
-                className={
-                  "px-3 py-1.5 transition-colors " +
-                  (peopleFilter === item.value
-                    ? "bg-primary text-primary-foreground"
-                    : "hover:bg-accent text-muted-foreground")
-                }
-              >
-                {item.label}
-              </button>
-            ))}
-          </div>
+          <SegmentedControl items={PEOPLE_FILTERS} value={peopleFilter} onChange={setPeopleFilter} />
           <p className="text-caption-sm text-mute flex flex-wrap items-center gap-2">
             <CapabilityMaturityBadge item={CAPABILITY_MATURITY.search_face_filters} compact />
             <span>{CAPABILITY_MATURITY.search_face_filters.hint}</span>

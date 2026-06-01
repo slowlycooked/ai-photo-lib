@@ -90,7 +90,7 @@ export function SearchCard({ item, debug, onPreview }: SearchCardProps) {
           )}
 
           {debug && (
-            <div className="text-[10px] font-mono text-muted-foreground space-y-0.5 border-t border-dashed border-border pt-1">
+            <div className="text-[10px] font-mono text-mute space-y-0.5 border-t border-dashed border-hairline pt-1">
               {(item.taken_at || item.camera_make || item.camera_model || item.iso != null || item.gps_latitude != null) && (
                 <div className="text-[9px] text-teal-700 dark:text-teal-300 space-y-0">
                   {item.taken_at && <div>📅 {new Date(item.taken_at).toLocaleDateString("zh-CN")}</div>}

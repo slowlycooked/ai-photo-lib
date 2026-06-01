@@ -394,8 +394,7 @@ describe("PeoplePage", () => {
     const user = userEvent.setup();
     renderPage("/projects/1/people");
 
-    await screen.findByText("爸爸");
-    await user.click(screen.getByRole("button", { name: "确认属于此人" }));
+    await user.click(await screen.findByRole("button", { name: "确认属于此人" }));
 
     await waitFor(() => {
       expect(confirmPersonFaceMock).toHaveBeenCalledWith(1, 101, 301);

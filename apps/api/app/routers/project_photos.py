@@ -1,9 +1,6 @@
 from __future__ import annotations
 
-import io
-import os
-from datetime import date, datetime, time as time_
-from pathlib import Path
+from datetime import date
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -12,14 +9,17 @@ from sqlalchemy.orm import Session
 
 from ..api.deps import require_project, require_project_photo
 from ..database import get_db
-from ..models.ai import PhotoAIAnalysis
 from ..models.photo import Photo
 from ..models.project import Project
 from ..schemas.ai import AIAnalysisResponse
 from ..schemas.photo import PhotoDeleteResponse, PhotoDetailResponse, PhotoListResponse
 from ..services.photo_cleanup import delete_photo_record
+from ..services.project_photo_asset_service import (
+    PhotoBytesAsset,
+    PhotoPreviewConversionError,
+    ProjectPhotoAssetService,
+)
 from ..services.project_photos_query_service import ProjectPhotosQueryService
-from ..services.thumbnail import generate_thumbnail
 
 router = APIRouter(prefix="/projects", tags=["projects-photos"])
 
@@ -82,23 +82,14 @@ def get_project_photo_thumbnail(
     db: Session = Depends(get_db),
 ):
     """Serve or generate the thumbnail for a photo."""
-    if not photo.thumbnail_path or not os.path.exists(photo.thumbnail_path):
-        if not os.path.exists(photo.file_path):
-            raise HTTPException(status_code=404, detail="Thumbnail not available")
-        thumb = generate_thumbnail(
-            photo.file_path,
-            project_id=project.id,
-            thumbnail_root=project.thumbnail_path,
-        )
-        if not thumb:
-            raise HTTPException(status_code=404, detail="Thumbnail not available")
-        photo.thumbnail_path = thumb
-        db.commit()
-
+    try:
+        asset = ProjectPhotoAssetService(db).get_thumbnail_asset(project=project, photo=photo)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     return FileResponse(
-        photo.thumbnail_path,
-        media_type="image/jpeg",
-        headers={"Cache-Control": "no-cache, must-revalidate"},
+        asset.path,
+        media_type=asset.media_type,
+        headers=asset.headers,
     )
 
 
@@ -107,24 +98,16 @@ def get_project_photo_original(
     photo: Photo = Depends(require_project_photo),
 ):
     """Download the original file for a photo, scoped to its project."""
-    if not os.path.exists(photo.file_path):
-        raise HTTPException(status_code=404, detail="Original file not found on disk")
-
+    try:
+        asset = ProjectPhotoAssetService().get_original_asset(photo=photo)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     return FileResponse(
-        photo.file_path,
-        media_type=photo.mime_type or "application/octet-stream",
-        filename=photo.file_name,
-        headers={
-            "Cache-Control": "private, max-age=0",
-            "Content-Disposition": f'attachment; filename="{photo.file_name}"',
-        },
+        asset.path,
+        media_type=asset.media_type,
+        filename=asset.filename,
+        headers=asset.headers,
     )
-
-
-# Browser-renderable MIME types — served inline for preview
-_INLINE_MIME = {"image/jpeg", "image/png", "image/webp", "image/gif", "image/avif"}
-# Non-browser-renderable suffixes that need JPEG conversion before preview
-_CONVERT_SUFFIXES = {".heic", ".heif"}
 
 
 @router.get("/{project_id}/photos/{photo_id}/preview")
@@ -136,45 +119,24 @@ def get_project_photo_preview(
     * JPEG/PNG/WebP/GIF/AVIF: returned as-is with inline Content-Disposition.
     * HEIC/HEIF and other non-web formats: converted to JPEG on the fly.
     """
-    if not os.path.exists(photo.file_path):
-        raise HTTPException(status_code=404, detail="Original file not found on disk")
+    try:
+        asset = ProjectPhotoAssetService().get_preview_asset(photo=photo)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PhotoPreviewConversionError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
-    suffix = Path(photo.file_path).suffix.lower()
-    mime = photo.mime_type or ""
-
-    if mime in _INLINE_MIME and suffix not in _CONVERT_SUFFIXES:
-        # Serve directly — browser can render this natively
-        return FileResponse(
-            photo.file_path,
-            media_type=mime,
-            headers={
-                "Cache-Control": "private, max-age=3600",
-                "Content-Disposition": "inline",
-            },
+    if isinstance(asset, PhotoBytesAsset):
+        return Response(
+            content=asset.content,
+            media_type=asset.media_type,
+            headers=asset.headers,
         )
 
-    # Convert to JPEG in memory (covers HEIC, HEIF, and unknown formats)
-    try:
-        from PIL import Image  # pillow-heif is already registered at startup
-
-        with Image.open(photo.file_path) as img:
-            img = img.convert("RGB")
-            buf = io.BytesIO()
-            img.save(buf, "JPEG", quality=90, optimize=True)
-            jpeg_bytes = buf.getvalue()
-    except Exception as exc:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Preview conversion failed: {exc}",
-        ) from exc
-
-    return Response(
-        content=jpeg_bytes,
-        media_type="image/jpeg",
-        headers={
-            "Cache-Control": "private, max-age=3600",
-            "Content-Disposition": "inline",
-        },
+    return FileResponse(
+        asset.path,
+        media_type=asset.media_type,
+        headers=asset.headers,
     )
 
 
