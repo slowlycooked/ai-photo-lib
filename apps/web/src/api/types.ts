@@ -111,6 +111,22 @@ export interface PhotoDeleteResponse {
   message: string;
 }
 
+export interface PhotoBatchDeleteRequest {
+  photo_ids: number[];
+  delete_original?: boolean;
+}
+
+export interface PhotoBatchDeleteResponse {
+  project_id: number;
+  requested_count: number;
+  deleted_count: number;
+  deleted_photo_ids: number[];
+  not_found_photo_ids: number[];
+  deleted_thumbnail_count: number;
+  deleted_original_count: number;
+  message: string;
+}
+
 export interface TimelineItem {
   key: string;
   year: number;

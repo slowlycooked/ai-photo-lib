@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { Loader2, ImageOff } from "lucide-react";
 import { usePhotos } from "@/hooks/usePhotos";
 import { PhotoCard } from "./PhotoCard";
@@ -8,13 +8,25 @@ export function PhotoGrid() {
 
   // Infinite scroll sentinel
   const sentinelRef = useRef<HTMLDivElement>(null);
+  const fetchLockRef = useRef(false);
+
+  useEffect(() => {
+    if (!isFetchingNextPage) {
+      fetchLockRef.current = false;
+    }
+  }, [isFetchingNextPage]);
+
   useEffect(() => {
     if (!sentinelRef.current || !hasNextPage) return;
     const observer = new IntersectionObserver(
       (entries) => {
-        if (entries[0].isIntersecting && !isFetchingNextPage) {
-          fetchNextPage();
+        if (!entries[0].isIntersecting || !hasNextPage || fetchLockRef.current || isFetchingNextPage) {
+          return;
         }
+        fetchLockRef.current = true;
+        void fetchNextPage({ cancelRefetch: false }).finally(() => {
+          fetchLockRef.current = false;
+        });
       },
       { rootMargin: "200px" }
     );
@@ -22,7 +34,16 @@ export function PhotoGrid() {
     return () => observer.disconnect();
   }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
 
-  const allPhotos = data?.pages.flatMap((p) => p.items) ?? [];
+  const allPhotos = useMemo(() => {
+    const loaded = data?.pages.flatMap((page) => page.items) ?? [];
+    const uniqueById = new Map<number, (typeof loaded)[number]>();
+    for (const photo of loaded) {
+      if (!uniqueById.has(photo.id)) {
+        uniqueById.set(photo.id, photo);
+      }
+    }
+    return Array.from(uniqueById.values());
+  }, [data]);
   const total = data?.pages[0]?.total ?? 0;
 
   if (isLoading) {

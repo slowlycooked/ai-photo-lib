@@ -37,6 +37,8 @@ export type {
   FolderTreeResponse,
   LogLevel,
   Photo,
+  PhotoBatchDeleteRequest,
+  PhotoBatchDeleteResponse,
   PhotoDetail,
   PhotoListResponse,
   PersonDetail,

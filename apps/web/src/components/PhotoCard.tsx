@@ -8,6 +8,10 @@ import { formatLocationAddress, formatLocationSummary } from "@/lib/utils";
 
 interface PhotoCardProps {
   photo: Photo;
+  selectMode?: boolean;
+  selected?: boolean;
+  onToggleSelect?: (photoId: number, checked: boolean) => void;
+  onDeleted?: (photoId: number) => void;
 }
 
 // Format bytes to human-readable
@@ -27,9 +31,10 @@ function formatDate(iso: string | null): string {
 interface DetailModalProps {
   photo: Photo;
   onClose: () => void;
+  onDeleted?: (photoId: number) => void;
 }
 
-function DetailModal({ photo, onClose }: DetailModalProps) {
+function DetailModal({ photo, onClose, onDeleted }: DetailModalProps) {
   const [loaded, setLoaded] = useState(false);
   const [faceMessage, setFaceMessage] = useState<string | null>(null);
   const [deleteOriginal, setDeleteOriginal] = useState(false);
@@ -93,6 +98,7 @@ function DetailModal({ photo, onClose }: DetailModalProps) {
       queryClient.invalidateQueries({ queryKey: queryKeys.projectPhotoDetail(projectId, photo.id) });
       queryClient.invalidateQueries({ queryKey: queryKeys.projectPhotoAi(projectId, photo.id) });
       queryClient.invalidateQueries({ queryKey: ["search"] });
+      onDeleted?.(photo.id);
       onClose();
     },
     onError: (error: Error) => {
@@ -500,7 +506,7 @@ function InfoRow({ icon, label, value }: { icon: React.ReactNode; label: string;
   );
 }
 
-export function PhotoCard({ photo }: PhotoCardProps) {
+export function PhotoCard({ photo, selectMode = false, selected = false, onToggleSelect, onDeleted }: PhotoCardProps) {
   const [loaded, setLoaded] = useState(false);
   const [errored, setErrored] = useState(false);
   const [showDetail, setShowDetail] = useState(false);
@@ -522,6 +528,24 @@ export function PhotoCard({ photo }: PhotoCardProps) {
         onKeyDown={(e) => e.key === "Enter" && setShowDetail(true)}
         aria-label={`查看照片 ${photo.file_name}`}
       >
+        {selectMode && (
+          <label
+            className={[
+              "absolute left-2 top-2 z-10 rounded-full bg-canvas/95 p-1 shadow-sm transition-opacity duration-150",
+              selected ? "opacity-100" : "opacity-0 group-hover:opacity-100 focus-within:opacity-100",
+            ].join(" ")}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <input
+              type="checkbox"
+              checked={selected}
+              onChange={(e) => onToggleSelect?.(photo.id, e.target.checked)}
+              className="h-4 w-4"
+              aria-label={`选择照片 ${photo.file_name}`}
+            />
+          </label>
+        )}
+
         {errored ? (
           <div className="w-full h-32 flex flex-col items-center justify-center gap-1 bg-surface-card">
             <ImageIcon className="w-6 h-6 text-stone" />
@@ -557,7 +581,12 @@ export function PhotoCard({ photo }: PhotoCardProps) {
 
         {/* Date pill overlay — top-left, visible on hover */}
         {photo.taken_at && (
-          <div className="absolute left-2 top-2 opacity-0 group-hover:opacity-100 transition-opacity duration-150">
+          <div
+            className={[
+              "absolute top-2 opacity-0 group-hover:opacity-100 transition-opacity duration-150",
+              selectMode ? "left-11" : "left-2",
+            ].join(" ")}
+          >
             <span className="bg-canvas text-ink text-btn-sm font-bold px-3 py-1 rounded-full shadow-sm whitespace-nowrap">
               {new Date(photo.taken_at).toLocaleDateString("zh-CN", { month: "short", year: "numeric" })}
             </span>
@@ -576,7 +605,13 @@ export function PhotoCard({ photo }: PhotoCardProps) {
         )}
       </div>
 
-      {showDetail && <DetailModal photo={photo} onClose={() => setShowDetail(false)} />}
+      {showDetail && (
+        <DetailModal
+          photo={photo}
+          onClose={() => setShowDetail(false)}
+          onDeleted={onDeleted}
+        />
+      )}
     </>
   );
 }

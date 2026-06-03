@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional, Sequence
 
 from sqlalchemy.orm import Session
 
@@ -18,6 +18,17 @@ class PhotoDeleteResult:
     photo_id: int
     deleted_thumbnail: bool
     deleted_original: bool
+
+
+@dataclass
+class PhotoBatchDeleteResult:
+    project_id: int
+    requested_count: int
+    deleted_count: int
+    deleted_photo_ids: List[int]
+    not_found_photo_ids: List[int]
+    deleted_thumbnail_count: int
+    deleted_original_count: int
 
 
 def _remove_file(path: Optional[str], *, raise_on_error: bool = False) -> bool:
@@ -111,3 +122,67 @@ def cleanup_missing_project_photos(
         )
 
     return deleted_count
+
+
+def delete_photo_records_batch(
+    db: Session,
+    *,
+    project_id: int,
+    photo_ids: Sequence[int],
+    delete_original: bool = False,
+) -> PhotoBatchDeleteResult:
+    unique_photo_ids: List[int] = list(dict.fromkeys(int(photo_id) for photo_id in photo_ids))
+    if not unique_photo_ids:
+        return PhotoBatchDeleteResult(
+            project_id=project_id,
+            requested_count=0,
+            deleted_count=0,
+            deleted_photo_ids=[],
+            not_found_photo_ids=[],
+            deleted_thumbnail_count=0,
+            deleted_original_count=0,
+        )
+
+    photos = (
+        db.query(Photo)
+        .filter(
+            Photo.project_id == project_id,
+            Photo.deleted_at.is_(None),
+            Photo.id.in_(unique_photo_ids),
+        )
+        .all()
+    )
+    photos_by_id = {photo.id: photo for photo in photos}
+
+    deleted_photo_ids: List[int] = []
+    not_found_photo_ids: List[int] = []
+    deleted_thumbnail_count = 0
+    deleted_original_count = 0
+
+    for photo_id in unique_photo_ids:
+        photo = photos_by_id.get(photo_id)
+        if photo is None:
+            not_found_photo_ids.append(photo_id)
+            continue
+
+        result = delete_photo_record(
+            db,
+            project_id=project_id,
+            photo=photo,
+            delete_original=delete_original,
+        )
+        deleted_photo_ids.append(result.photo_id)
+        if result.deleted_thumbnail:
+            deleted_thumbnail_count += 1
+        if result.deleted_original:
+            deleted_original_count += 1
+
+    return PhotoBatchDeleteResult(
+        project_id=project_id,
+        requested_count=len(unique_photo_ids),
+        deleted_count=len(deleted_photo_ids),
+        deleted_photo_ids=deleted_photo_ids,
+        not_found_photo_ids=not_found_photo_ids,
+        deleted_thumbnail_count=deleted_thumbnail_count,
+        deleted_original_count=deleted_original_count,
+    )

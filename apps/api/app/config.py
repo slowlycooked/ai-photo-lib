@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 from pathlib import Path
 from typing import Optional
@@ -12,6 +13,37 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # Path: config.py -> app/ -> api/ -> apps/ -> project_root/
 _ROOT_ENV = Path(__file__).resolve().parent.parent.parent.parent / ".env"
 _ENV_KEY_RE = re.compile(r"^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=")
+
+
+def _resolve_env_files() -> tuple[str, ...]:
+    files = [str(_ROOT_ENV)]
+
+    raw_profile = (os.getenv("DEPLOY_PROFILE") or "").strip().lower()
+    if not raw_profile:
+        return tuple(files)
+
+    profile_aliases = {
+        "prod": "prd",
+        "production": "prd",
+        "runtime": "prd",
+    }
+    normalized = profile_aliases.get(raw_profile, raw_profile)
+
+    # Support both canonical (dev/prd) and legacy (runtime) profile names.
+    profile_candidates: list[str] = [normalized]
+    if raw_profile != normalized:
+        profile_candidates.append(raw_profile)
+
+    seen: set[str] = set()
+    for profile in profile_candidates:
+        if profile in seen:
+            continue
+        seen.add(profile)
+        profile_env = _ROOT_ENV.with_name(f".env.{profile}")
+        if profile_env.exists():
+            files.append(str(profile_env))
+
+    return tuple(files)
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +66,7 @@ _MANAGED_CONFIG_PREFIXES = (
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=str(_ROOT_ENV),
+        env_file=_resolve_env_files(),
         env_file_encoding="utf-8",
         extra="ignore",
     )

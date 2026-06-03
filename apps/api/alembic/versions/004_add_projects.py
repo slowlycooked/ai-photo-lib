@@ -49,10 +49,14 @@ def upgrade() -> None:
     )
 
     # ------------------------------------------------------------------
-    # 2. Insert default project using current env vars (with fallbacks)
+    # 2. Insert default project using current env vars
     # ------------------------------------------------------------------
-    photo_library_path = os.environ.get("PHOTO_LIBRARY_PATH", "/photos")
-    thumbnail_path = os.environ.get("THUMBNAIL_PATH", "/data/thumbs")
+    photo_library_path = os.environ.get("PHOTO_LIBRARY_PATH")
+    thumbnail_path = os.environ.get("THUMBNAIL_PATH")
+    if not photo_library_path:
+        raise RuntimeError("PHOTO_LIBRARY_PATH is required for projects migration")
+    if not thumbnail_path:
+        raise RuntimeError("THUMBNAIL_PATH is required for projects migration")
 
     bind = op.get_bind()
     result = bind.execute(

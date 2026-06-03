@@ -166,11 +166,30 @@ class PhotoDeleteEndpointTest(unittest.TestCase):
                 ),
                 {"lib": str(self._lib), "thumb": str(self._thumbs)},
             )
+            conn.execute(
+                sa.text(
+                    """
+                    INSERT INTO projects (id, name, photo_library_path, thumbnail_path, is_default)
+                    VALUES (2, 'Project B', :lib, :thumb, 0)
+                    """
+                ),
+                {"lib": str(self._lib), "thumb": str(self._thumbs)},
+            )
 
         self._original = self._lib / "manual-delete.jpg"
         Image.new("RGB", (80, 60), color=(100, 140, 200)).save(self._original, "JPEG")
         self._thumb = self._thumbs / "manual-delete-thumb.jpg"
         Image.new("RGB", (40, 30), color=(80, 120, 160)).save(self._thumb, "JPEG")
+
+        self._batch_original = self._lib / "manual-delete-batch.jpg"
+        Image.new("RGB", (88, 66), color=(90, 150, 210)).save(self._batch_original, "JPEG")
+        self._batch_thumb = self._thumbs / "manual-delete-batch-thumb.jpg"
+        Image.new("RGB", (44, 33), color=(70, 110, 170)).save(self._batch_thumb, "JPEG")
+
+        self._project2_original = self._lib / "project2-keep.jpg"
+        Image.new("RGB", (84, 64), color=(120, 180, 90)).save(self._project2_original, "JPEG")
+        self._project2_thumb = self._thumbs / "project2-keep-thumb.jpg"
+        Image.new("RGB", (42, 32), color=(90, 120, 80)).save(self._project2_thumb, "JPEG")
 
         with self._engine.begin() as conn:
             conn.execute(
@@ -191,6 +210,46 @@ class PhotoDeleteEndpointTest(unittest.TestCase):
                     "file_hash": _sha256(self._original),
                     "file_size": self._original.stat().st_size,
                     "thumb_path": str(self._thumb),
+                },
+            )
+            conn.execute(
+                sa.text(
+                    """
+                    INSERT INTO photos (
+                      id, project_id, file_path, file_name, file_hash, file_size,
+                      mime_type, width, height, thumbnail_path, status
+                    )
+                    VALUES (
+                      102, 1, :file_path, 'manual-delete-batch.jpg', :file_hash, :file_size,
+                      'image/jpeg', 88, 66, :thumb_path, 'indexed'
+                    )
+                    """
+                ),
+                {
+                    "file_path": str(self._batch_original),
+                    "file_hash": _sha256(self._batch_original),
+                    "file_size": self._batch_original.stat().st_size,
+                    "thumb_path": str(self._batch_thumb),
+                },
+            )
+            conn.execute(
+                sa.text(
+                    """
+                    INSERT INTO photos (
+                      id, project_id, file_path, file_name, file_hash, file_size,
+                      mime_type, width, height, thumbnail_path, status
+                    )
+                    VALUES (
+                      201, 2, :file_path, 'project2-keep.jpg', :file_hash, :file_size,
+                      'image/jpeg', 84, 64, :thumb_path, 'indexed'
+                    )
+                    """
+                ),
+                {
+                    "file_path": str(self._project2_original),
+                    "file_hash": _sha256(self._project2_original),
+                    "file_size": self._project2_original.stat().st_size,
+                    "thumb_path": str(self._project2_thumb),
                 },
             )
 
@@ -251,6 +310,43 @@ class PhotoDeleteEndpointTest(unittest.TestCase):
         self.assertTrue(self._original.exists())
         self.assertFalse(self._thumb.exists())
 
+    def test_batch_delete_photo_records_and_originals(self) -> None:
+        res = self.client.post(
+            "/projects/1/photos/batch-delete",
+            json={"photo_ids": [101, 102], "delete_original": True},
+        )
+        self.assertEqual(res.status_code, 200)
+        body = res.json()
+        self.assertEqual(body["requested_count"], 2)
+        self.assertEqual(body["deleted_count"], 2)
+        self.assertEqual(body["deleted_original_count"], 2)
+        self.assertEqual(body["deleted_thumbnail_count"], 2)
+        self.assertEqual(body["not_found_photo_ids"], [])
+
+        self.assertEqual(self._count_photo(101), 0)
+        self.assertEqual(self._count_photo(102), 0)
+        self.assertFalse(self._original.exists())
+        self.assertFalse(self._thumb.exists())
+        self.assertFalse(self._batch_original.exists())
+        self.assertFalse(self._batch_thumb.exists())
+
+    def test_batch_delete_keeps_project_isolation(self) -> None:
+        res = self.client.post(
+            "/projects/1/photos/batch-delete",
+            json={"photo_ids": [101, 201], "delete_original": True},
+        )
+        self.assertEqual(res.status_code, 200)
+        body = res.json()
+        self.assertEqual(body["requested_count"], 2)
+        self.assertEqual(body["deleted_count"], 1)
+        self.assertEqual(body["deleted_photo_ids"], [101])
+        self.assertEqual(body["not_found_photo_ids"], [201])
+
+        self.assertEqual(self._count_photo(101), 0)
+        self.assertEqual(self._count_photo(201), 1)
+        self.assertTrue(self._project2_original.exists())
+        self.assertTrue(self._project2_thumb.exists())
+
     def test_scan_start_and_status_expose_fail_fast_config_error(self) -> None:
         with self._engine.begin() as conn:
             conn.execute(
@@ -283,6 +379,30 @@ class PhotoDeleteEndpointTest(unittest.TestCase):
         self.assertFalse(status_body["running"])
         self.assertGreaterEqual(int(status_body.get("errors") or 0), 1)
         self.assertIn("Missing required project thumbnail_path", status_body.get("message", ""))
+
+    def test_scan_start_rejects_invalid_project_library_path_with_actionable_error(self) -> None:
+        with self._engine.begin() as conn:
+            conn.execute(
+                sa.text("UPDATE projects SET photo_library_path = '/photos' WHERE id = 1"),
+            )
+
+        res = self.client.post("/projects/1/scan/start")
+        self.assertEqual(res.status_code, 422)
+        detail = str(res.json().get("detail") or "")
+        self.assertIn("photo_library_path not found or not a directory", detail)
+        self.assertIn("project path differs from configured PHOTO_LIBRARY_PATH", detail)
+
+    def test_reindex_rejects_invalid_project_library_path_with_actionable_error(self) -> None:
+        with self._engine.begin() as conn:
+            conn.execute(
+                sa.text("UPDATE projects SET photo_library_path = '/photos' WHERE id = 1"),
+            )
+
+        res = self.client.post("/projects/1/scan/reindex?scope=all")
+        self.assertEqual(res.status_code, 422)
+        detail = str(res.json().get("detail") or "")
+        self.assertIn("photo_library_path not found or not a directory", detail)
+        self.assertIn("project path differs from configured PHOTO_LIBRARY_PATH", detail)
 
 
 class ScanCleanupTest(unittest.TestCase):

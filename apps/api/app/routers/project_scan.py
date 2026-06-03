@@ -18,6 +18,7 @@ from ..services.project_task_service import (
     get_latest_scan_task,
     request_project_task_cancel,
 )
+from ..services.project_scan_runtime_service import validate_project_library_path
 
 router = APIRouter(prefix="/projects", tags=["projects-scan"])
 
@@ -28,6 +29,10 @@ def start_project_scan(
     db: Session = Depends(get_db),
 ):
     """Queue a project library scan for the worker to execute."""
+    library_error = validate_project_library_path(project.photo_library_path)
+    if library_error:
+        raise HTTPException(status_code=422, detail=library_error)
+
     project_id = project.id
     result = enqueue_scan_task(
         db,
@@ -82,6 +87,10 @@ def start_project_reindex(
     db: Session = Depends(get_db),
 ):
     """Queue a metadata reindex task for the worker to execute."""
+    library_error = validate_project_library_path(project.photo_library_path)
+    if library_error:
+        raise HTTPException(status_code=422, detail=library_error)
+
     project_id = project.id
     result = enqueue_scan_task(
         db,

@@ -60,6 +60,7 @@ from .services.startup_schema_service import (
     validate_required_columns,
     validate_required_tables,
 )
+from .services.project_app_service import repair_legacy_project_library_paths
 
 logger = logging.getLogger(__name__)
 
@@ -90,9 +91,21 @@ def load_runtime_debug_config() -> None:
         db.close()
 
 
+def repair_runtime_project_paths() -> None:
+    db = SessionLocal()
+    try:
+        repair_legacy_project_library_paths(db)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Failed to repair legacy project paths at startup: %s", exc)
+        db.rollback()
+    finally:
+        db.close()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     load_runtime_debug_config()
+    repair_runtime_project_paths()
     yield
 
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -10,6 +11,8 @@ from ..models.project import Project
 from ..repositories.project_repository import ProjectRepository
 from ..schemas.project import ProjectCreate, ProjectUpdate
 
+logger = logging.getLogger(__name__)
+
 
 class ProjectNotFoundError(RuntimeError):
     pass
@@ -17,6 +20,44 @@ class ProjectNotFoundError(RuntimeError):
 
 class DefaultProjectDeleteError(RuntimeError):
     pass
+
+
+def repair_legacy_project_library_paths(db: Session) -> int:
+    """Rewrite legacy container-style project paths to the current host path.
+
+    Older databases stored project roots under the legacy ``/photos`` prefix.
+    Newer environments keep the authoritative host path in ``PHOTO_LIBRARY_PATH``.
+    This repair is intentionally narrow and only touches legacy-prefixed rows.
+    """
+    legacy_prefix = "/photos"
+    configured_root = (settings.photo_library_path or "").strip().rstrip("/")
+    if not configured_root:
+        return 0
+
+    repaired = 0
+    projects = (
+        db.query(Project)
+        .filter(Project.deleted_at.is_(None))
+        .filter(Project.photo_library_path.like(f"{legacy_prefix}%"))
+        .all()
+    )
+    for project in projects:
+        legacy_path = (project.photo_library_path or "").strip()
+        if not legacy_path.startswith(legacy_prefix):
+            continue
+        suffix = legacy_path[len(legacy_prefix) :]
+        project.photo_library_path = configured_root + suffix
+        repaired += 1
+
+    if repaired:
+        db.commit()
+        logger.warning(
+            "Repaired %d legacy project photo_library_path value(s) using configured PHOTO_LIBRARY_PATH=%s",
+            repaired,
+            configured_root,
+        )
+
+    return repaired
 
 
 @dataclass

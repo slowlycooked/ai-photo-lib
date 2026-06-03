@@ -20,6 +20,8 @@ import type {
   FaceScanResponse,
   FolderScope,
   PhotoDetail,
+  PhotoBatchDeleteRequest,
+  PhotoBatchDeleteResponse,
   PhotoDeleteResponse,
   PhotoListResponse,
   PersonDetail,
@@ -631,6 +633,13 @@ export const projectsApi = {
       throw error;
     }
   },
+
+  batchDeletePhotoRecords: (id: number, body: PhotoBatchDeleteRequest) =>
+    request<PhotoBatchDeleteResponse>(`/projects/${id}/photos/batch-delete`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
 
   // ── Search Settings ───────────────────────────────────────────────────────
 

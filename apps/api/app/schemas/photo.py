@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Dict, List, Optional
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class PhotoResponse(BaseModel):
@@ -67,4 +67,20 @@ class PhotoDeleteResponse(BaseModel):
     photo_id: int
     deleted_thumbnail: bool
     deleted_original: bool
+    message: str
+
+
+class PhotoBatchDeleteRequest(BaseModel):
+    photo_ids: List[int] = Field(default_factory=list, min_length=1)
+    delete_original: bool = True
+
+
+class PhotoBatchDeleteResponse(BaseModel):
+    project_id: int
+    requested_count: int
+    deleted_count: int
+    deleted_photo_ids: List[int]
+    not_found_photo_ids: List[int]
+    deleted_thumbnail_count: int
+    deleted_original_count: int
     message: str

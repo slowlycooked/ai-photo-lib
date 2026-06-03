@@ -21,15 +21,39 @@ log_ok()    { echo -e "${GREEN}OK${RESET} $*"; }
 log_warn()  { echo -e "${YELLOW}WARN${RESET} $*"; }
 log_error() { echo -e "${RED}ERR${RESET} $*" >&2; }
 
-ENV_FILE="$ROOT/.env"
-if [ -f "$ENV_FILE" ]; then
-  set -a
-  # shellcheck disable=SC1090
-  source "$ENV_FILE"
-  set +a
+load_env_file() {
+  local path="$1"
+  if [ -f "$path" ]; then
+    set -a
+    # shellcheck disable=SC1090
+    source "$path"
+    set +a
+  fi
+}
+
+CLI_DEPLOY_PROFILE="${DEPLOY_PROFILE:-}"
+load_env_file "$ROOT/.env"
+
+if [ -n "$CLI_DEPLOY_PROFILE" ]; then
+  DEPLOY_PROFILE="$CLI_DEPLOY_PROFILE"
 fi
 
 DEPLOY_PROFILE="${DEPLOY_PROFILE:-dev}"
+DEPLOY_PROFILE_RAW="$DEPLOY_PROFILE"
+DEPLOY_PROFILE_LOWER="$(printf '%s' "$DEPLOY_PROFILE" | tr '[:upper:]' '[:lower:]')"
+case "$DEPLOY_PROFILE_LOWER" in
+  prod|production|runtime|prd)
+    DEPLOY_PROFILE="prd"
+    ;;
+  dev)
+    DEPLOY_PROFILE="dev"
+    ;;
+esac
+
+load_env_file "$ROOT/.env.$DEPLOY_PROFILE"
+if [ "$DEPLOY_PROFILE_RAW" != "$DEPLOY_PROFILE" ]; then
+  load_env_file "$ROOT/.env.$DEPLOY_PROFILE_RAW"
+fi
 
 POSTGRES_USER="${POSTGRES_USER:-photo}"
 POSTGRES_DB="${POSTGRES_DB:-photo}"
@@ -44,7 +68,7 @@ API_RELOAD="${SVC_RELOAD:-0}"
 
 WEB_HOST="${WEB_HOST:-127.0.0.1}"
 WEB_PORT="${WEB_PORT:-8088}"
-WEB_MODE="${WEB_MODE:-$([ "$DEPLOY_PROFILE" = "runtime" ] && echo preview || echo dev)}"
+WEB_MODE="${WEB_MODE:-$([ "$DEPLOY_PROFILE" = "prd" ] && echo preview || echo dev)}"
 
 LLAMA_SERVER="${LLAMA_SERVER:-$(command -v llama-server 2>/dev/null || true)}"
 LLAMA_MODEL="${LLAMA_MODEL:-}"
@@ -1066,13 +1090,14 @@ case "$COMMAND" in
     echo "  web       — Vite（WEB_MODE=dev|preview）"
     echo ""
     echo -e "${BOLD}部署角色:${RESET}"
-    echo "  DEPLOY_PROFILE=dev      MacBook 开发机默认：稳定 API + Web dev server"
-    echo "  DEPLOY_PROFILE=runtime  Mac mini 运行机默认：稳定 API + Web preview"
+    echo "  DEPLOY_PROFILE=dev      开发环境默认：稳定 API + Web dev server"
+    echo "  DEPLOY_PROFILE=prd      生产环境默认：稳定 API + Web preview"
+    echo "  DEPLOY_PROFILE=runtime  兼容别名（等价于 prd）"
     echo ""
     echo -e "${BOLD}示例:${RESET}"
     echo "  ./scripts/svc.sh start"
     echo "  ./scripts/svc.sh start postgres planner api web"
-    echo "  DEPLOY_PROFILE=runtime ./scripts/svc.sh start"
+    echo "  DEPLOY_PROFILE=prd ./scripts/svc.sh start"
     echo "  ./scripts/svc.sh logs postgres"
     echo ""
     ;;

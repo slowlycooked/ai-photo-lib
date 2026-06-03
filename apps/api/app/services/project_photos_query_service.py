@@ -53,7 +53,11 @@ class ProjectPhotosQueryService:
 
         total = base_query.count()
         photos = (
-            base_query.order_by(Photo.taken_at.desc().nullslast(), Photo.created_at.desc())
+            base_query.order_by(
+                Photo.taken_at.desc().nullslast(),
+                Photo.created_at.desc(),
+                Photo.id.desc(),
+            )
             .offset(offset)
             .limit(page_size)
             .all()

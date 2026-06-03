@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ApiError, type DebugSettingsResponse } from "@/api";
-import { DebugLogSettingsCard, SystemHealthCard } from "@/pages/SettingsPage";
+import { DebugLogSettingsCard, SystemHealthCard, prepareLibrarySubmitPath } from "@/pages/SettingsPage";
 
 const getDebugMock = vi.fn();
 const healthMock = vi.fn();
@@ -226,5 +226,13 @@ describe("DebugLogSettingsCard", () => {
     expect(screen.getByText("database")).toBeInTheDocument();
     expect(screen.getByText("OK · connected")).toBeInTheDocument();
     expect(screen.getByText("embedding endpoint configured")).toBeInTheDocument();
+  });
+});
+
+describe("prepareLibrarySubmitPath", () => {
+  it("keeps the real host path unchanged for persistence", () => {
+    expect(prepareLibrarySubmitPath("/Users/unclema/Desktop/ai-lib/my-library")).toBe(
+      "/Users/unclema/Desktop/ai-lib/my-library",
+    );
   });
 });

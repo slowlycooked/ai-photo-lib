@@ -21,6 +21,7 @@ from ..services.project_ai_service import (
     get_project_ai_settings_strict,
 )
 from ..services.project_embedding_settings_service import resolve_embedding_settings_strict
+from ..services.project_scan_runtime_service import validate_project_library_path
 from ..services.project_app_service import (
     DefaultProjectDeleteError,
     ProjectAppService,
@@ -149,19 +150,12 @@ def _scan_readiness_check(project: Project) -> ProjectReadinessCheck:
     library_path = (project.photo_library_path or "").strip()
     thumb_path = (project.thumbnail_path or "").strip()
 
-    if not library_path:
+    library_error = validate_project_library_path(library_path)
+    if library_error:
         return ProjectReadinessCheck(
             name="scan_runtime",
             ready=False,
-            message="photo_library_path is empty.",
-        )
-
-    library = Path(library_path).expanduser().resolve()
-    if not library.exists() or not library.is_dir():
-        return ProjectReadinessCheck(
-            name="scan_runtime",
-            ready=False,
-            message=f"photo_library_path not found or not a directory: {library}",
+            message=library_error,
         )
 
     if not thumb_path:

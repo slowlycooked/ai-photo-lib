@@ -26,13 +26,39 @@ log_warn()  { echo -e "${YELLOW}⚠${RESET} $*"; }
 log_error() { echo -e "${RED}✗${RESET} $*" >&2; }
 log_sep()   { echo -e "${BOLD}─────────────────────────────────────────────────────${RESET}"; }
 
-# ── 加载 .env ─────────────────────────────────────────────────────────────────
-ENV_FILE="$ROOT/.env"
-if [ -f "$ENV_FILE" ]; then
-  set -a
-  # shellcheck disable=SC1090
-  source "$ENV_FILE"
-  set +a
+# ── 加载 .env（含 profile 覆盖）──────────────────────────────────────────────
+load_env_file() {
+  local path="$1"
+  if [ -f "$path" ]; then
+    set -a
+    # shellcheck disable=SC1090
+    source "$path"
+    set +a
+  fi
+}
+
+CLI_DEPLOY_PROFILE="${DEPLOY_PROFILE:-}"
+load_env_file "$ROOT/.env"
+
+if [ -n "$CLI_DEPLOY_PROFILE" ]; then
+  DEPLOY_PROFILE="$CLI_DEPLOY_PROFILE"
+fi
+
+DEPLOY_PROFILE="${DEPLOY_PROFILE:-dev}"
+DEPLOY_PROFILE_RAW="$DEPLOY_PROFILE"
+DEPLOY_PROFILE_LOWER="$(printf '%s' "$DEPLOY_PROFILE" | tr '[:upper:]' '[:lower:]')"
+case "$DEPLOY_PROFILE_LOWER" in
+  prod|production|runtime|prd)
+    DEPLOY_PROFILE="prd"
+    ;;
+  dev)
+    DEPLOY_PROFILE="dev"
+    ;;
+esac
+
+load_env_file "$ROOT/.env.$DEPLOY_PROFILE"
+if [ "$DEPLOY_PROFILE_RAW" != "$DEPLOY_PROFILE" ]; then
+  load_env_file "$ROOT/.env.$DEPLOY_PROFILE_RAW"
 fi
 
 POSTGRES_PORT="${POSTGRES_PORT:-${POSTGRES_HOST_PORT:-5432}}"

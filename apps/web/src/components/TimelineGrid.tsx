@@ -1,8 +1,11 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Loader2, ImageOff } from "lucide-react";
 import { usePhotos } from "@/hooks/usePhotos";
 import { PhotoCard } from "./PhotoCard";
 import { TimelineRail } from "./TimelineRail";
+import { api } from "@/api";
+import { queryKeys } from "@/api/queryKeys";
 import type { Photo, FolderScope } from "@/api";
 
 interface TimelineGridProps {
@@ -46,16 +49,34 @@ export function TimelineGrid({ projectId, folderId, folderScope = "subtree" }: T
   const [dateFrom, setDateFrom] = useState<string | null>(null);
   const [dateTo, setDateTo] = useState<string | null>(null);
   const [activeKey, setActiveKey] = useState<string | null>(null);
+  const [selectedPhotoIds, setSelectedPhotoIds] = useState<number[]>([]);
+  const [deleteOriginalInBatch, setDeleteOriginalInBatch] = useState(true);
+  const [batchMessage, setBatchMessage] = useState<string | null>(null);
+  const queryClient = useQueryClient();
 
   const { data, fetchNextPage, hasNextPage, isFetchingNextPage, isLoading, isError } =
     usePhotos({ projectId, dateFrom, dateTo, folderId, folderScope });
 
   const sentinelRef = useRef<HTMLDivElement>(null);
+  const fetchLockRef = useRef(false);
+
+  useEffect(() => {
+    if (!isFetchingNextPage) {
+      fetchLockRef.current = false;
+    }
+  }, [isFetchingNextPage]);
+
   useEffect(() => {
     if (!sentinelRef.current || !hasNextPage) return;
     const observer = new IntersectionObserver(
       (entries) => {
-        if (entries[0].isIntersecting && !isFetchingNextPage) fetchNextPage();
+        if (!entries[0].isIntersecting || !hasNextPage || fetchLockRef.current || isFetchingNextPage) {
+          return;
+        }
+        fetchLockRef.current = true;
+        void fetchNextPage({ cancelRefetch: false }).finally(() => {
+          fetchLockRef.current = false;
+        });
       },
       { rootMargin: "200px" }
     );
@@ -63,8 +84,115 @@ export function TimelineGrid({ projectId, folderId, folderScope = "subtree" }: T
     return () => observer.disconnect();
   }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
 
-  const allPhotos = data?.pages.flatMap((p) => p.items) ?? [];
+  const allPhotos = useMemo(() => {
+    const loaded = data?.pages.flatMap((p) => p.items) ?? [];
+    const uniqueById = new Map<number, Photo>();
+    for (const photo of loaded) {
+      if (!uniqueById.has(photo.id)) {
+        uniqueById.set(photo.id, photo);
+      }
+    }
+    return Array.from(uniqueById.values());
+  }, [data]);
   const total = data?.pages[0]?.total ?? 0;
+
+  useEffect(() => {
+    setSelectedPhotoIds([]);
+    setBatchMessage(null);
+  }, [projectId, folderId, folderScope, dateFrom, dateTo]);
+
+  const batchDeleteMutation = useMutation({
+    mutationFn: () => {
+      if (projectId == null) {
+        throw new Error("未选择项目");
+      }
+      return api.projects.batchDeletePhotoRecords(projectId, {
+        photo_ids: selectedPhotoIds,
+        delete_original: deleteOriginalInBatch,
+      });
+    },
+    onSuccess: (result) => {
+      setSelectedPhotoIds([]);
+      setBatchMessage(
+        `批量删除完成：删除 ${result.deleted_count} 张，未命中 ${result.not_found_photo_ids.length} 张。`,
+      );
+      queryClient.invalidateQueries({ queryKey: queryKeys.photosBase(projectId ?? null) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.timeline(projectId ?? null) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.tags(projectId ?? null) });
+      queryClient.invalidateQueries({ queryKey: ["search"] });
+    },
+    onError: (error: Error) => {
+      setBatchMessage(`批量删除失败：${error.message}`);
+    },
+  });
+
+  const selectedCount = selectedPhotoIds.length;
+  const allLoadedIds = allPhotos.map((photo) => photo.id);
+  const allLoadedSelected = allLoadedIds.length > 0 && allLoadedIds.every((id) => selectedPhotoIds.includes(id));
+
+  const togglePhotoSelection = (photoId: number, checked: boolean) => {
+    setBatchMessage(null);
+    setSelectedPhotoIds((prev) => {
+      if (checked) {
+        if (prev.includes(photoId)) {
+          return prev;
+        }
+        return [...prev, photoId];
+      }
+      return prev.filter((id) => id !== photoId);
+    });
+  };
+
+  const toggleSelectByPhotoIds = (photoIds: number[]) => {
+    if (photoIds.length === 0) {
+      return;
+    }
+    setBatchMessage(null);
+    setSelectedPhotoIds((prev) => {
+      const allSelected = photoIds.every((id) => prev.includes(id));
+      if (allSelected) {
+        return prev.filter((id) => !photoIds.includes(id));
+      }
+      const merged = new Set(prev);
+      for (const id of photoIds) {
+        merged.add(id);
+      }
+      return Array.from(merged);
+    });
+  };
+
+  const toggleSelectAllLoaded = () => {
+    setBatchMessage(null);
+    if (allLoadedSelected) {
+      setSelectedPhotoIds((prev) => prev.filter((id) => !allLoadedIds.includes(id)));
+      return;
+    }
+    setSelectedPhotoIds((prev) => {
+      const merged = new Set(prev);
+      for (const id of allLoadedIds) {
+        merged.add(id);
+      }
+      return Array.from(merged);
+    });
+  };
+
+  const clearSelected = () => {
+    setBatchMessage(null);
+    setSelectedPhotoIds([]);
+  };
+
+  const handleBatchDelete = () => {
+    if (selectedCount === 0 || batchDeleteMutation.isPending) {
+      return;
+    }
+    const actionText = deleteOriginalInBatch
+      ? `删除 ${selectedCount} 张照片的库记录、缩略图和本地原图`
+      : `删除 ${selectedCount} 张照片的库记录和缩略图`;
+    if (!window.confirm(`确认${actionText}吗？此操作不可恢复。`)) {
+      return;
+    }
+    batchDeleteMutation.mutate();
+  };
 
   const handleMonthSelect = (key: string, from: string, to: string) => {
     if (activeKey === key) {
@@ -117,10 +245,26 @@ export function TimelineGrid({ projectId, folderId, folderScope = "subtree" }: T
     <div className="flex gap-4">
       {/* Photo grid */}
       <div className="flex-1 min-w-0 space-y-8">
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <p className="text-body-sm text-mute">
             共 <span className="font-semibold text-ink">{total.toLocaleString()}</span> 张照片
           </p>
+          <button
+            type="button"
+            onClick={toggleSelectAllLoaded}
+            className="text-caption-sm text-primary hover:text-primary-pressed"
+          >
+            {allLoadedSelected ? "取消当前页全选" : "勾选当前页全部"}
+          </button>
+          {selectedCount > 0 && (
+            <button
+              type="button"
+              onClick={clearSelected}
+              className="text-caption-sm text-primary hover:text-primary-pressed"
+            >
+              清空已选（{selectedCount}）
+            </button>
+          )}
           {activeKey && (
             <button
               onClick={() => {
@@ -135,17 +279,69 @@ export function TimelineGrid({ projectId, folderId, folderScope = "subtree" }: T
           )}
         </div>
 
+        <div className="rounded-md border border-danger/30 bg-danger/5 p-3">
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="text-body-sm text-ink">已勾选 {selectedCount} 张</span>
+            <label className="flex items-center gap-2 text-caption-sm text-ink">
+              <input
+                type="checkbox"
+                checked={deleteOriginalInBatch}
+                onChange={(e) => setDeleteOriginalInBatch(e.target.checked)}
+                className="h-4 w-4"
+              />
+              同时删除本地原图
+            </label>
+            <button
+              type="button"
+              onClick={handleBatchDelete}
+              disabled={selectedCount === 0 || batchDeleteMutation.isPending}
+              className="inline-flex items-center gap-2 rounded-md border border-danger/40 px-3 py-1.5 text-body-sm text-danger hover:bg-danger/10 disabled:opacity-60"
+            >
+              {batchDeleteMutation.isPending && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+              批量删除已选
+            </button>
+          </div>
+          {batchMessage && <p className="mt-2 text-caption-sm text-mute">{batchMessage}</p>}
+        </div>
+
         {[...groups.entries()].map(([key, photos]) => (
           <section key={key}>
-            <h2 className="text-heading-md font-semibold text-ink mb-3">
-              {formatGroupLabel(key)}
-              <span className="ml-2 text-body-sm font-normal text-mute">
-                {photos.length} 张
-              </span>
-            </h2>
+            {(() => {
+              const groupPhotoIds = photos.map((photo) => photo.id);
+              const groupAllSelected =
+                groupPhotoIds.length > 0 && groupPhotoIds.every((id) => selectedPhotoIds.includes(id));
+
+              return (
+                <div className="mb-3 flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => toggleSelectByPhotoIds(groupPhotoIds)}
+                    className="text-heading-md font-semibold text-ink hover:text-primary-pressed"
+                    title={groupAllSelected ? "取消该日期全选" : "全选该日期"}
+                  >
+                    {formatGroupLabel(key)}
+                    <span className="ml-2 text-body-sm font-normal text-mute">
+                      {photos.length} 张
+                    </span>
+                    <span className="ml-2 text-caption-sm text-primary">
+                      {groupAllSelected ? "取消全选" : "全选"}
+                    </span>
+                  </button>
+                </div>
+              );
+            })()}
             <div className="masonry-grid">
               {photos.map((photo) => (
-                <PhotoCard key={photo.id} photo={photo} />
+                <PhotoCard
+                  key={photo.id}
+                  photo={photo}
+                  selectMode
+                  selected={selectedPhotoIds.includes(photo.id)}
+                  onToggleSelect={togglePhotoSelection}
+                  onDeleted={(photoId) => {
+                    setSelectedPhotoIds((prev) => prev.filter((id) => id !== photoId));
+                  }}
+                />
               ))}
             </div>
           </section>

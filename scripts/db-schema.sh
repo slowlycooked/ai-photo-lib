@@ -21,17 +21,46 @@ API_DIR="$ROOT/apps/api"
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
 CYAN='\033[0;36m'; BOLD='\033[1m'; RESET='\033[0m'
 
-# ── Load .env ─────────────────────────────────────────────────────────────────
+# ── Load .env (+ optional profile overlay) ──────────────────────────────────
+load_env_file() {
+  local path="$1"
+  if [ -f "$path" ]; then
+    set -a
+    # shellcheck disable=SC1090
+    source "$path"
+    set +a
+  fi
+}
+
+CLI_DEPLOY_PROFILE="${DEPLOY_PROFILE:-}"
 ENV_FILE="$ROOT/.env"
 if [ -f "$ENV_FILE" ]; then
-  set -a
-  # shellcheck disable=SC1090
-  source "$ENV_FILE"
-  set +a
+  load_env_file "$ENV_FILE"
 else
   echo -e "${RED}ERROR: .env file not found at $ENV_FILE${RESET}" >&2
   echo "Create .env from .env.example and set DATABASE_URL." >&2
   exit 1
+fi
+
+if [ -n "$CLI_DEPLOY_PROFILE" ]; then
+  DEPLOY_PROFILE="$CLI_DEPLOY_PROFILE"
+fi
+
+DEPLOY_PROFILE="${DEPLOY_PROFILE:-dev}"
+DEPLOY_PROFILE_RAW="$DEPLOY_PROFILE"
+DEPLOY_PROFILE_LOWER="$(printf '%s' "$DEPLOY_PROFILE" | tr '[:upper:]' '[:lower:]')"
+case "$DEPLOY_PROFILE_LOWER" in
+  prod|production|runtime|prd)
+    DEPLOY_PROFILE="prd"
+    ;;
+  dev)
+    DEPLOY_PROFILE="dev"
+    ;;
+esac
+
+load_env_file "$ROOT/.env.$DEPLOY_PROFILE"
+if [ "$DEPLOY_PROFILE_RAW" != "$DEPLOY_PROFILE" ]; then
+  load_env_file "$ROOT/.env.$DEPLOY_PROFILE_RAW"
 fi
 
 if [ -z "${DATABASE_URL:-}" ]; then

@@ -12,8 +12,14 @@ from ..database import get_db
 from ..models.photo import Photo
 from ..models.project import Project
 from ..schemas.ai import AIAnalysisResponse
-from ..schemas.photo import PhotoDeleteResponse, PhotoDetailResponse, PhotoListResponse
-from ..services.photo_cleanup import delete_photo_record
+from ..schemas.photo import (
+    PhotoBatchDeleteRequest,
+    PhotoBatchDeleteResponse,
+    PhotoDeleteResponse,
+    PhotoDetailResponse,
+    PhotoListResponse,
+)
+from ..services.photo_cleanup import delete_photo_record, delete_photo_records_batch
 from ..services.project_photo_asset_service import (
     PhotoBytesAsset,
     PhotoPreviewConversionError,
@@ -195,6 +201,47 @@ def delete_project_photo(
         deleted_thumbnail=result.deleted_thumbnail,
         deleted_original=result.deleted_original,
         message="Photo record deleted",
+    )
+
+
+@router.post("/{project_id}/photos/batch-delete", response_model=PhotoBatchDeleteResponse)
+def batch_delete_project_photos(
+    project_id: int,
+    payload: PhotoBatchDeleteRequest,
+    project: Project = Depends(require_project),
+    db: Session = Depends(get_db),
+):
+    """Delete selected project photo records and optionally delete originals."""
+    try:
+        result = delete_photo_records_batch(
+            db,
+            project_id=project_id,
+            photo_ids=payload.photo_ids,
+            delete_original=payload.delete_original,
+        )
+        db.commit()
+    except FileNotFoundError:
+        db.rollback()
+        raise HTTPException(status_code=404, detail="Original file not found on disk")
+    except PermissionError:
+        db.rollback()
+        raise HTTPException(status_code=403, detail="No permission to delete original file")
+    except OSError as exc:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to delete original file: {exc}")
+    except ValueError:
+        db.rollback()
+        raise HTTPException(status_code=400, detail="Photo project mismatch")
+
+    return PhotoBatchDeleteResponse(
+        project_id=result.project_id,
+        requested_count=result.requested_count,
+        deleted_count=result.deleted_count,
+        deleted_photo_ids=result.deleted_photo_ids,
+        not_found_photo_ids=result.not_found_photo_ids,
+        deleted_thumbnail_count=result.deleted_thumbnail_count,
+        deleted_original_count=result.deleted_original_count,
+        message="Batch photo deletion completed",
     )
 
 

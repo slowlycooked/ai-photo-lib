@@ -10,15 +10,39 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-ENV_FILE="$ROOT/.env"
-if [ -f "$ENV_FILE" ]; then
-  set -a
-  # shellcheck disable=SC1090
-  source "$ENV_FILE"
-  set +a
+load_env_file() {
+  local path="$1"
+  if [ -f "$path" ]; then
+    set -a
+    # shellcheck disable=SC1090
+    source "$path"
+    set +a
+  fi
+}
+
+CLI_DEPLOY_PROFILE="${DEPLOY_PROFILE:-}"
+load_env_file "$ROOT/.env"
+
+if [ -n "$CLI_DEPLOY_PROFILE" ]; then
+  DEPLOY_PROFILE="$CLI_DEPLOY_PROFILE"
 fi
 
 DEPLOY_PROFILE="${DEPLOY_PROFILE:-dev}"
+DEPLOY_PROFILE_RAW="$DEPLOY_PROFILE"
+DEPLOY_PROFILE_LOWER="$(printf '%s' "$DEPLOY_PROFILE" | tr '[:upper:]' '[:lower:]')"
+case "$DEPLOY_PROFILE_LOWER" in
+  prod|production|runtime|prd)
+    DEPLOY_PROFILE="prd"
+    ;;
+  dev)
+    DEPLOY_PROFILE="dev"
+    ;;
+esac
+
+load_env_file "$ROOT/.env.$DEPLOY_PROFILE"
+if [ "$DEPLOY_PROFILE_RAW" != "$DEPLOY_PROFILE" ]; then
+  load_env_file "$ROOT/.env.$DEPLOY_PROFILE_RAW"
+fi
 POSTGRES_DATA_DIR="${POSTGRES_DATA_DIR:-${DATA_DIR:-$ROOT/.local}/postgres17}"
 THUMBNAIL_PATH="${THUMBNAIL_PATH:-${DATA_DIR:-$ROOT/.local}/thumbs}"
 POSTGRES_BIN_DIR="${POSTGRES_BIN_DIR:-/opt/homebrew/opt/postgresql@17/bin}"

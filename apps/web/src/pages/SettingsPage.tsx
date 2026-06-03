@@ -48,14 +48,8 @@ function containerToHost(containerPath: string, hostPrefix: string): string {
   return containerPath;
 }
 
-/** Convert host path back to the legacy stored path shape when needed. */
-function hostToContainer(hostPath: string, hostPrefix: string): string {
-  const prefix = hostPrefix.replace(/\/$/, "");
-  const normalized = hostPath.replace(/\/$/, "");
-  if (normalized.startsWith(prefix)) {
-    return "/photos" + normalized.slice(prefix.length);
-  }
-  // Already a container path or unknown prefix — pass through
+/** Keep the persisted project path aligned with the actual host path. */
+export function prepareLibrarySubmitPath(hostPath: string): string {
   return hostPath;
 }
 
@@ -209,7 +203,7 @@ function LibraryForm({
   function handleSubmit() {
     onSubmit({
       ...values,
-      photo_library_path: hostToContainer(values.photo_library_path, hostPrefix),
+      photo_library_path: prepareLibrarySubmitPath(values.photo_library_path),
     });
   }
 

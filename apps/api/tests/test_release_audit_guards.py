@@ -238,6 +238,9 @@ class StaticQualityGuardTest(unittest.TestCase):
 
     def test_complexity_budget_for_people_and_task_orchestration(self) -> None:
         budgets = {
+            "app/services/people_mutation_service.py": 4,
+            "app/services/person_assignment_workflow_service.py": 10,
+            "app/services/person_lifecycle_mutation_service.py": 10,
             "app/services/people_learning_service.py": 18,
             "app/services/people_query_service.py": 12,
             "app/services/search/people_recall.py": 14,
@@ -257,7 +260,8 @@ class StaticQualityGuardTest(unittest.TestCase):
 
     def test_people_mutation_and_cluster_status_literals_are_centralized(self) -> None:
         targets = [
-            _API_ROOT / "app/services/people_mutation_service.py",
+            _API_ROOT / "app/services/person_assignment_workflow_service.py",
+            _API_ROOT / "app/services/person_lifecycle_mutation_service.py",
             _API_ROOT / "app/services/unknown_face_clustering_service.py",
         ]
         pattern = re.compile(
@@ -278,6 +282,8 @@ class StaticQualityGuardTest(unittest.TestCase):
     def test_critical_services_avoid_pep604_union_type_syntax(self) -> None:
         targets = [
             _API_ROOT / "app/services/people_mutation_service.py",
+            _API_ROOT / "app/services/person_assignment_workflow_service.py",
+            _API_ROOT / "app/services/person_lifecycle_mutation_service.py",
             _API_ROOT / "app/services/people_learning_service.py",
             _API_ROOT / "app/services/people_query_service.py",
             _API_ROOT / "app/services/project_task_app_service.py",

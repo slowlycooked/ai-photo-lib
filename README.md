@@ -195,6 +195,20 @@ brew install llama.cpp
 cp .env.example .env
 ```
 
+可选：按环境拆分覆盖文件（推荐）
+
+```bash
+# 基础公共配置放在 .env
+cp .env .env.dev
+cp .env .env.prd
+```
+
+加载规则（脚本与 API 一致）：
+
+- 先加载 `.env`
+- 再按 `DEPLOY_PROFILE` 加载 `.env.dev` 或 `.env.prd`
+- `DEPLOY_PROFILE=runtime/prod/production` 会自动按 `prd` 处理（兼容旧写法）
+
 开发机建议值：
 
 ```env
@@ -296,7 +310,7 @@ Mac mini 作为常驻运行机，职责是：
 ### 运行机 `.env` 建议
 
 ```env
-DEPLOY_PROFILE=runtime
+DEPLOY_PROFILE=prd
 API_HOST=0.0.0.0
 API_RELOAD=0
 WEB_HOST=0.0.0.0
@@ -319,10 +333,10 @@ EMBED_MODEL=/Users/Shared/models/embed.gguf
 
 ```bash
 ./scripts/bootstrap-macos.sh
-DEPLOY_PROFILE=runtime ./scripts/svc.sh start
+DEPLOY_PROFILE=prd ./scripts/svc.sh start
 ```
 
-或直接在 `.env` 里写 `DEPLOY_PROFILE=runtime` 后运行：
+或直接在 `.env` 里写 `DEPLOY_PROFILE=prd` 后运行：
 
 ```bash
 ./scripts/svc.sh start

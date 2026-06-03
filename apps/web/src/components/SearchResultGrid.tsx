@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Download, Loader2, SearchX } from "lucide-react";
 import { useSearch } from "@/hooks/useSearch";
 import type { SearchDebugPayload, SearchMode, SearchResultItem, TagField } from "@/api/types";
@@ -130,7 +130,16 @@ export function SearchResultGrid({
     return () => observer.disconnect();
   }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
 
-  const allItems = data?.pages.flatMap((p) => p.items) ?? [];
+  const allItems = useMemo(() => {
+    const loaded = data?.pages.flatMap((page) => page.items) ?? [];
+    const uniqueByPhotoId = new Map<number, SearchResultItem>();
+    for (const item of loaded) {
+      if (!uniqueByPhotoId.has(item.photo_id)) {
+        uniqueByPhotoId.set(item.photo_id, item);
+      }
+    }
+    return Array.from(uniqueByPhotoId.values());
+  }, [data]);
   const total = data?.pages[0]?.total ?? 0;
   const debugPayload = data?.pages[0]?.debug;
 
