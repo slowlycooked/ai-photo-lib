@@ -1,38 +1,17 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useMemo } from "react";
 import { Loader2, ImageOff } from "lucide-react";
 import { usePhotos } from "@/hooks/usePhotos";
+import { useInfiniteScrollSentinel } from "@/hooks/useInfiniteScrollSentinel";
 import { PhotoCard } from "./PhotoCard";
 
 export function PhotoGrid() {
   const { data, fetchNextPage, hasNextPage, isFetchingNextPage, isLoading, isError } = usePhotos();
 
-  // Infinite scroll sentinel
-  const sentinelRef = useRef<HTMLDivElement>(null);
-  const fetchLockRef = useRef(false);
-
-  useEffect(() => {
-    if (!isFetchingNextPage) {
-      fetchLockRef.current = false;
-    }
-  }, [isFetchingNextPage]);
-
-  useEffect(() => {
-    if (!sentinelRef.current || !hasNextPage) return;
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (!entries[0].isIntersecting || !hasNextPage || fetchLockRef.current || isFetchingNextPage) {
-          return;
-        }
-        fetchLockRef.current = true;
-        void fetchNextPage({ cancelRefetch: false }).finally(() => {
-          fetchLockRef.current = false;
-        });
-      },
-      { rootMargin: "200px" }
-    );
-    observer.observe(sentinelRef.current);
-    return () => observer.disconnect();
-  }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
+  const sentinelRef = useInfiniteScrollSentinel<HTMLDivElement>({
+    hasNextPage,
+    isFetchingNextPage,
+    fetchNextPage,
+  });
 
   const allPhotos = useMemo(() => {
     const loaded = data?.pages.flatMap((page) => page.items) ?? [];

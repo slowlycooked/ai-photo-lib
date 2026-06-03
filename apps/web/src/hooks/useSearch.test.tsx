@@ -1,6 +1,6 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createQueryClientWrapper } from "@/test/queryClient";
 
 const searchMock = vi.fn();
 
@@ -19,18 +19,6 @@ vi.mock("@/api", async () => {
 });
 
 import { useSearch } from "@/hooks/useSearch";
-
-function buildWrapper() {
-  const queryClient = new QueryClient({
-    defaultOptions: {
-      queries: { retry: false },
-    },
-  });
-
-  return function Wrapper({ children }: { children: React.ReactNode }) {
-    return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
-  };
-}
 
 function buildItems(page: number, count: number) {
   return Array.from({ length: count }, (_, index) => ({
@@ -54,7 +42,7 @@ describe("useSearch", () => {
     );
 
     const { result } = renderHook(() => useSearch("海边", 1), {
-      wrapper: buildWrapper(),
+      wrapper: createQueryClientWrapper().wrapper,
     });
 
     await waitFor(() => {
@@ -87,7 +75,7 @@ describe("useSearch", () => {
     );
 
     const { result } = renderHook(() => useSearch("海边", 1), {
-      wrapper: buildWrapper(),
+      wrapper: createQueryClientWrapper().wrapper,
     });
 
     await waitFor(() => {

@@ -27,6 +27,7 @@ class ProjectPhotosQueryService:
         folder_id: Optional[int],
         folder_scope: str,
     ) -> tuple[int, list[Photo]]:
+        page = max(1, page)
         page_size = max(1, min(page_size, 100))
         offset = (page - 1) * page_size
 

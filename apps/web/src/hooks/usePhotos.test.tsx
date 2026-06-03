@@ -1,6 +1,6 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createQueryClientWrapper } from "@/test/queryClient";
 
 const photosMock = vi.fn();
 
@@ -19,18 +19,6 @@ vi.mock("@/api", async () => {
 });
 
 import { usePhotos } from "@/hooks/usePhotos";
-
-function buildWrapper() {
-  const queryClient = new QueryClient({
-    defaultOptions: {
-      queries: { retry: false },
-    },
-  });
-
-  return function Wrapper({ children }: { children: React.ReactNode }) {
-    return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
-  };
-}
 
 function buildItems(page: number, count: number) {
   return Array.from({ length: count }, (_, index) => ({
@@ -55,7 +43,7 @@ describe("usePhotos", () => {
     );
 
     const { result } = renderHook(() => usePhotos({ projectId: 1 }), {
-      wrapper: buildWrapper(),
+      wrapper: createQueryClientWrapper().wrapper,
     });
 
     await waitFor(() => {
@@ -88,7 +76,7 @@ describe("usePhotos", () => {
     );
 
     const { result } = renderHook(() => usePhotos({ projectId: 1 }), {
-      wrapper: buildWrapper(),
+      wrapper: createQueryClientWrapper().wrapper,
     });
 
     await waitFor(() => {

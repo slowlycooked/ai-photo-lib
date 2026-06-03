@@ -1,14 +1,11 @@
 import { render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { getLatestObserverCallback, intersectingEntry, stubIntersectionObserver } from "@/test/intersectionObserver";
 
 import { PhotoGrid } from "./PhotoGrid";
 
 const usePhotosMock = vi.fn();
 const photoCardMock = vi.fn();
-
-type ObserverCallback = (entries: IntersectionObserverEntry[], observer: IntersectionObserver) => void;
-
-let observerCallback: ObserverCallback | null = null;
 
 vi.mock("@/hooks/usePhotos", () => ({
   usePhotos: (...args: unknown[]) => usePhotosMock(...args),
@@ -21,53 +18,11 @@ vi.mock("./PhotoCard", () => ({
   },
 }));
 
-class MockIntersectionObserver {
-  private readonly callback: ObserverCallback;
-
-  constructor(callback: ObserverCallback) {
-    this.callback = callback;
-    observerCallback = callback;
-  }
-
-  observe() {
-    // noop
-  }
-
-  disconnect() {
-    // noop
-  }
-
-  unobserve() {
-    // noop
-  }
-
-  takeRecords() {
-    return [];
-  }
-
-  trigger(entries: IntersectionObserverEntry[]) {
-    this.callback(entries, this as unknown as IntersectionObserver);
-  }
-}
-
-function intersectingEntry(): IntersectionObserverEntry {
-  return {
-    isIntersecting: true,
-    target: document.createElement("div"),
-    boundingClientRect: {} as DOMRectReadOnly,
-    intersectionRatio: 1,
-    intersectionRect: {} as DOMRectReadOnly,
-    rootBounds: null,
-    time: Date.now(),
-  };
-}
-
 describe("PhotoGrid", () => {
   beforeEach(() => {
     usePhotosMock.mockReset();
     photoCardMock.mockReset();
-    observerCallback = null;
-    vi.stubGlobal("IntersectionObserver", MockIntersectionObserver as unknown as typeof IntersectionObserver);
+    stubIntersectionObserver();
   });
 
   afterEach(() => {
@@ -118,18 +73,18 @@ describe("PhotoGrid", () => {
 
     render(<PhotoGrid />);
 
-    expect(observerCallback).not.toBeNull();
-    const callback = observerCallback as ObserverCallback;
+    const callback = getLatestObserverCallback();
+    expect(callback).not.toBeNull();
 
-    callback([intersectingEntry()], {} as IntersectionObserver);
-    callback([intersectingEntry()], {} as IntersectionObserver);
+    callback!([intersectingEntry()], {} as IntersectionObserver);
+    callback!([intersectingEntry()], {} as IntersectionObserver);
 
     expect(fetchNextPage).toHaveBeenCalledTimes(1);
 
     resolveFetch();
     await Promise.resolve();
 
-    callback([intersectingEntry()], {} as IntersectionObserver);
+    callback!([intersectingEntry()], {} as IntersectionObserver);
     expect(fetchNextPage).toHaveBeenCalledTimes(2);
   });
 });

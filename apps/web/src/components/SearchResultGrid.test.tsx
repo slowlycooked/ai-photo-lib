@@ -1,5 +1,6 @@
 import { render, screen } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { getLatestObserverCallback, intersectingEntry, stubIntersectionObserver } from "@/test/intersectionObserver";
 
 import { SearchResultGrid } from "./SearchResultGrid";
 import type { SearchResultItem } from "@/api/types";
@@ -32,21 +33,15 @@ vi.mock("@/components/search/SearchPhotoLightbox", () => ({
   SearchPhotoLightbox: () => <div data-testid="lightbox" />,
 }));
 
-class MockIntersectionObserver {
-  observe() {
-    // noop
-  }
-
-  disconnect() {
-    // noop
-  }
-}
-
 describe("SearchResultGrid", () => {
   beforeEach(() => {
     useSearchMock.mockReset();
     masonryMock.mockReset();
-    vi.stubGlobal("IntersectionObserver", MockIntersectionObserver as unknown as typeof IntersectionObserver);
+    stubIntersectionObserver();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
   });
 
   it("deduplicates search results with the same photo_id from different pages", () => {
@@ -69,5 +64,43 @@ describe("SearchResultGrid", () => {
 
     expect(screen.getByTestId("search-masonry")).toBeInTheDocument();
     expect(masonryMock).toHaveBeenCalledWith([1, 2, 3]);
+  });
+
+  it("prevents duplicate fetchNextPage calls while one is in flight", async () => {
+    let resolveFetch = () => {};
+    const fetchNextPage = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveFetch = resolve;
+        }),
+    );
+
+    useSearchMock.mockReturnValue({
+      data: {
+        pages: [{ total: 100, page: 1, page_size: 50, items: [{ photo_id: 1 }] }],
+      },
+      fetchNextPage,
+      hasNextPage: true,
+      isFetchingNextPage: false,
+      isLoading: false,
+      isError: false,
+      error: null,
+    });
+
+    render(<SearchResultGrid query="海边" projectId={1} />);
+
+    const callback = getLatestObserverCallback();
+    expect(callback).not.toBeNull();
+
+    callback!([intersectingEntry()], {} as IntersectionObserver);
+    callback!([intersectingEntry()], {} as IntersectionObserver);
+
+    expect(fetchNextPage).toHaveBeenCalledTimes(1);
+
+    resolveFetch();
+    await Promise.resolve();
+
+    callback!([intersectingEntry()], {} as IntersectionObserver);
+    expect(fetchNextPage).toHaveBeenCalledTimes(2);
   });
 });

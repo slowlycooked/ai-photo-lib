@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { Download, Loader2, SearchX } from "lucide-react";
 import { useSearch } from "@/hooks/useSearch";
+import { useInfiniteScrollSentinel } from "@/hooks/useInfiniteScrollSentinel";
 import type { SearchDebugPayload, SearchMode, SearchResultItem, TagField } from "@/api/types";
 import { SearchDebugPanel } from "@/components/search/SearchDebugPanel";
 import { SearchPhotoLightbox } from "@/components/search/SearchPhotoLightbox";
@@ -116,19 +117,11 @@ export function SearchResultGrid({
   });
 
   const [previewItem, setPreviewItem] = useState<SearchResultItem | null>(null);
-  const sentinelRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!sentinelRef.current || !hasNextPage) return;
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries[0].isIntersecting && !isFetchingNextPage) fetchNextPage();
-      },
-      { rootMargin: "200px" }
-    );
-    observer.observe(sentinelRef.current);
-    return () => observer.disconnect();
-  }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
+  const sentinelRef = useInfiniteScrollSentinel<HTMLDivElement>({
+    hasNextPage,
+    isFetchingNextPage,
+    fetchNextPage,
+  });
 
   const allItems = useMemo(() => {
     const loaded = data?.pages.flatMap((page) => page.items) ?? [];

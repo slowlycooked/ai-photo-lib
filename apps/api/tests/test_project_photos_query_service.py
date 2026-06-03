@@ -96,3 +96,47 @@ def test_list_photos_uses_id_desc_as_stable_tie_breaker() -> None:
         assert page_1_ids == [6, 5, 4]
         assert page_2_ids == [3, 2, 1]
         assert set(page_1_ids).isdisjoint(page_2_ids)
+
+
+def test_list_photos_clamps_page_before_building_offset() -> None:
+    SessionLocal = _build_session()
+
+    with SessionLocal() as db:
+        db.add(
+            Project(
+                id=1,
+                name="default",
+                photo_library_path="/tmp/photos",
+                thumbnail_path="/tmp/thumbs",
+                is_default=True,
+            )
+        )
+
+        created_at = datetime(2026, 1, 2, 8, 30, 0)
+        for photo_id in range(1, 4):
+            db.add(
+                Photo(
+                    id=photo_id,
+                    project_id=1,
+                    file_path=f"/tmp/photos/{photo_id}.jpg",
+                    file_name=f"{photo_id}.jpg",
+                    taken_at=datetime(2026, 1, photo_id, 12, 0, 0),
+                    created_at=created_at,
+                    updated_at=created_at,
+                )
+            )
+
+        db.commit()
+
+        total, photos = ProjectPhotosQueryService(db).list_photos(
+            project_id=1,
+            page=0,
+            page_size=2,
+            date_from=None,
+            date_to=None,
+            folder_id=None,
+            folder_scope="subtree",
+        )
+
+        assert total == 3
+        assert [photo.id for photo in photos] == [3, 2]

@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Loader2, ImageOff } from "lucide-react";
 import { usePhotos } from "@/hooks/usePhotos";
+import { useInfiniteScrollSentinel } from "@/hooks/useInfiniteScrollSentinel";
 import { PhotoCard } from "./PhotoCard";
 import { TimelineRail } from "./TimelineRail";
 import { api } from "@/api";
@@ -57,32 +58,11 @@ export function TimelineGrid({ projectId, folderId, folderScope = "subtree" }: T
   const { data, fetchNextPage, hasNextPage, isFetchingNextPage, isLoading, isError } =
     usePhotos({ projectId, dateFrom, dateTo, folderId, folderScope });
 
-  const sentinelRef = useRef<HTMLDivElement>(null);
-  const fetchLockRef = useRef(false);
-
-  useEffect(() => {
-    if (!isFetchingNextPage) {
-      fetchLockRef.current = false;
-    }
-  }, [isFetchingNextPage]);
-
-  useEffect(() => {
-    if (!sentinelRef.current || !hasNextPage) return;
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (!entries[0].isIntersecting || !hasNextPage || fetchLockRef.current || isFetchingNextPage) {
-          return;
-        }
-        fetchLockRef.current = true;
-        void fetchNextPage({ cancelRefetch: false }).finally(() => {
-          fetchLockRef.current = false;
-        });
-      },
-      { rootMargin: "200px" }
-    );
-    observer.observe(sentinelRef.current);
-    return () => observer.disconnect();
-  }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
+  const sentinelRef = useInfiniteScrollSentinel<HTMLDivElement>({
+    hasNextPage,
+    isFetchingNextPage,
+    fetchNextPage,
+  });
 
   const allPhotos = useMemo(() => {
     const loaded = data?.pages.flatMap((p) => p.items) ?? [];
