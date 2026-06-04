@@ -566,8 +566,8 @@ def test_compound_metadata_semantic_query_must_call_llm() -> None:
     assert plan.query_constraints.get("allow_weak_only_match") is True
 
 
-def test_pure_metadata_query_uses_fast_path() -> None:
-    """'去年' is pure metadata — should use rule fast path without calling LLM."""
+def test_pure_metadata_query_calls_llm_when_planner_available() -> None:
+    """'去年' is pure metadata, but planner-primary mode should still call LLM."""
     settings = replace(
         SearchSettingsResolver.defaults(),
         query_planner_enabled=True,
@@ -575,20 +575,143 @@ def test_pure_metadata_query_uses_fast_path() -> None:
         query_planner_model_name="qwen3-4b-query-planner",
     )
 
+    llm_json = """
+    {
+      "intent": "metadata_filter",
+      "search_mode": "hybrid",
+      "normalized_query": "去年",
+      "semantic_query_text": "",
+      "terms": {"exact": [], "expanded": [], "support": [], "broad": [], "negative": []},
+      "facets": {"object": [], "scene": [], "activity": [], "people": [], "weather": [], "time": [], "location": []},
+      "filters": {"people_count_min": null, "people_count_max": null, "has_people": null, "has_animals": null, "indoor_outdoor": null, "weather": null, "time_of_day": null},
+      "metadata_filters": {
+        "year": 2025,
+        "month": null,
+        "date_from": "2025-01-01",
+        "date_to": "2026-01-01",
+        "season": null,
+        "has_gps": null,
+        "camera_make": null,
+        "camera_model": null,
+        "iso_min": null,
+        "iso_max": null,
+        "place_terms": [],
+        "metadata_only": true,
+        "matched_metadata_terms": ["去年"]
+      },
+      "concept_terms": [],
+      "semantic_tags": [],
+      "core_facets": [],
+      "core_facet_evidence": {"positive_terms": [], "negative_terms": []},
+      "query_constraints": {
+        "requires_visual_evidence": false,
+        "allow_weak_only_match": false,
+        "min_evidence_level": "weak",
+        "query_core_facets": []
+      },
+      "confidence": 0.9,
+      "fallback_reason": ""
+    }
+    """
+
     with patch(
         "app.services.search.query_planner.llm_query_planner.call_chat_completion",
     ) as planner_call:
+        planner_call.return_value = llm_json
         plan = resolve_query_plan_llm_first(
             "去年",
             project_id=1,
             settings=settings,
             understander=understand_query,
+            include_raw_output=True,
         )
 
-    planner_call.assert_not_called()
-    assert plan.planner_debug.get("used_fallback") is True
-    assert plan.planner_debug.get("planner_route") == "rule_fast_path"
-    assert "去年" not in plan.exact_terms or plan.metadata_filters.get("year") is not None
+    planner_call.assert_called_once()
+    assert plan.planner_debug.get("used_fallback") is False
+    assert plan.planner_debug.get("planner_route") == "llm"
+    assert plan.metadata_filters.get("metadata_only") is True
+    assert plan.metadata_filters.get("year") == 2025
+    assert plan.exact_terms == []
+
+
+def test_high_confidence_llm_plan_not_overridden_by_rule_intent() -> None:
+    """Rule fallback must not rewrite high-confidence LLM intent or matched keys."""
+    settings = replace(
+        SearchSettingsResolver.defaults(),
+        query_planner_enabled=True,
+        query_planner_endpoint_url="http://127.0.0.1:18084/v1/chat/completions",
+        query_planner_model_name="qwen3-4b-query-planner",
+    )
+
+    llm_json = """
+    {
+      "intent": "semantic_photo_search",
+      "search_mode": "hybrid",
+      "normalized_query": "动物",
+      "semantic_query_text": "抽象雕塑和图案",
+      "terms": {
+        "exact": ["抽象雕塑"],
+        "expanded": ["图案"],
+        "support": [],
+        "broad": [],
+        "negative": []
+      },
+      "facets": {
+        "object": ["雕塑"],
+        "scene": [],
+        "activity": [],
+        "people": [],
+        "weather": [],
+        "time": [],
+        "location": []
+      },
+      "filters": {},
+      "metadata_filters": {
+        "year": null,
+        "month": null,
+        "date_from": null,
+        "date_to": null,
+        "season": null,
+        "has_gps": null,
+        "camera_make": null,
+        "camera_model": null,
+        "iso_min": null,
+        "iso_max": null,
+        "place_terms": [],
+        "metadata_only": false,
+        "matched_metadata_terms": []
+      },
+      "concept_terms": [],
+      "semantic_tags": [],
+      "core_facets": ["object"],
+      "core_facet_evidence": {"positive_terms": ["抽象雕塑"], "negative_terms": []},
+      "query_constraints": {
+        "requires_visual_evidence": true,
+        "allow_weak_only_match": false,
+        "min_evidence_level": "C",
+        "query_core_facets": ["object"]
+      },
+      "confidence": 0.91,
+      "fallback_reason": ""
+    }
+    """
+
+    with patch(
+        "app.services.search.query_planner.llm_query_planner.call_chat_completion",
+        return_value=llm_json,
+    ):
+        plan = resolve_query_plan_llm_first(
+            "动物",
+            project_id=1,
+            settings=settings,
+            understander=understand_query,
+            include_raw_output=True,
+        )
+
+    assert plan.planner_debug.get("planner_route") == "llm"
+    assert plan.intent == "semantic_photo_search"
+    assert plan.matched_keys == ["抽象雕塑", "图案"]
+    assert plan.filters.get("has_animals") is not True
 
 
 # ---------------------------------------------------------------------------
@@ -660,4 +783,3 @@ def test_mapper_llm_exact_terms_not_polluted_by_fallback_sentence() -> None:
     # LLM expanded terms should not be merged with fallback
     assert "滑雪场" in plan.expanded_terms
     assert "雪地" in plan.expanded_terms
-

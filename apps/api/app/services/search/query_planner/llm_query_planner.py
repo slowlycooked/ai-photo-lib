@@ -79,6 +79,13 @@ terms.exact: []
 semantic_query_text: ""
 query_constraints.allow_weak_only_match: false
 
+额外规划样例（用于保持 planner 作为主计划器）：
+- "去年1月 iPhone 拍的照片"：识别 year/month/camera metadata；无视觉 residual 时 metadata_only=true。
+- "妈妈和孩子的合照"：识别 people/group photo 语义；不要臆造 metadata。
+- "上海下雨天夜景"：地点进入 metadata/place_terms；雨天、夜景进入 semantic residual。
+- "有猫但不是狗"：猫为正向 object，狗进入 terms.negative/core_facet_evidence.negative_terms。
+- "2024年12月在日本拍的照片"：识别 year/month/place metadata；无视觉 residual 时 metadata_only=true。
+
 必须输出合法 JSON，包含字段：
 intent, search_mode, normalized_query, semantic_query_text,
 terms(exact, expanded, support, broad, negative),
@@ -236,11 +243,10 @@ def _should_use_rule_fast_path(query: str, fallback_plan: SearchQueryPlan) -> tu
     """Determine whether the rule planner result can be used without calling the LLM.
 
     Rule:
-    * Empty query                                   → fast path (trivial)
-    * metadata_only == True                         → fast path (pure EXIF filter)
-    * has metadata AND NOT metadata_only            → LLM required (compound query)
-    * short + no metadata + clear single intent     → fast path
-    * Everything else                               → LLM required
+    * Empty query                               → fast path (trivial)
+    * Any metadata filter                       → LLM required (pure or compound)
+    * short + no metadata + clear single intent → fast path
+    * Everything else                           → LLM required
     """
     normalized_query = query.strip().lower()
     if not normalized_query:
@@ -248,12 +254,8 @@ def _should_use_rule_fast_path(query: str, fallback_plan: SearchQueryPlan) -> tu
 
     metadata_filters = fallback_plan.metadata_filters or {}
 
-    # Pure metadata query (no semantic residual detected by rule engine)
-    if metadata_filters.get("metadata_only") is True:
-        return True, "metadata_only"
-
-    # Compound query: has structured metadata but also has semantic residual
-    # These MUST go to LLM so the planner can output residual semantic tasks.
+    # Metadata queries (pure or compound) should be planned by the LLM so the
+    # semantic residual, metadata_only flag, and debug trace share one boundary.
     if _has_metadata_filters(metadata_filters):
         return False, ""
 

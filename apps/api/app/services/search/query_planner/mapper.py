@@ -183,10 +183,11 @@ def planner_output_to_query_plan(
     llm_parsed = bool(planner_debug.get("parsed"))
     llm_confidence = float(planner_debug.get("confidence") or 0.0)
     use_llm_terms = llm_parsed and llm_confidence >= 0.6
+    llm_metadata_only = bool(output.metadata_filters.metadata_only)
 
     if use_llm_terms:
         llm_exact = _dedupe_terms(output.terms.exact)
-        exact_terms = llm_exact if llm_exact else _fallback_exact_terms(query)
+        exact_terms = llm_exact if (llm_exact or llm_metadata_only) else _fallback_exact_terms(query)
         expanded_terms = _dedupe_terms(output.terms.expanded)
         support_terms = _dedupe_terms(output.terms.support)
         broad_terms = _dedupe_terms(output.terms.broad)
@@ -214,11 +215,16 @@ def planner_output_to_query_plan(
         if values
     }
 
-    matched_keys = _merge_list_terms(_dedupe_terms(
+    llm_matched_keys = _dedupe_terms(
         exact_terms
         + expanded_terms
         + list(output.concept_terms or [])
-    ), fallback_plan.matched_keys)
+    )
+    matched_keys = (
+        llm_matched_keys
+        if use_llm_terms
+        else _merge_list_terms(llm_matched_keys, fallback_plan.matched_keys)
+    )
 
     query_constraints = _merge_scalars_with_fallback(
         output.query_constraints.model_dump(),
@@ -228,20 +234,36 @@ def planner_output_to_query_plan(
         query_constraints["query_core_facets"] = list(output.core_facets or [])
 
     intent = normalize_intent(output.intent, fallback_plan.intent)
-    if intent == "semantic_photo_search" and fallback_plan.intent != "semantic_photo_search":
+    if (
+        not use_llm_terms
+        and intent == "semantic_photo_search"
+        and fallback_plan.intent != "semantic_photo_search"
+    ):
         intent = fallback_plan.intent
 
-    filters = _merge_scalars_with_fallback(
-        output.filters.model_dump(),
-        fallback_plan.filters or {},
+    filters = (
+        output.filters.model_dump()
+        if use_llm_terms
+        else _merge_scalars_with_fallback(
+            output.filters.model_dump(),
+            fallback_plan.filters or {},
+        )
     )
-    core_facets = _merge_list_terms(
-        _dedupe_terms(list(output.core_facets or [])),
-        fallback_plan.core_facets,
+    core_facets = (
+        _dedupe_terms(list(output.core_facets or []))
+        if use_llm_terms
+        else _merge_list_terms(
+            _dedupe_terms(list(output.core_facets or [])),
+            fallback_plan.core_facets,
+        )
     )
-    core_facet_evidence = _merge_core_facet_evidence(
-        output.core_facet_evidence.model_dump(),
-        fallback_plan.core_facet_evidence or {},
+    core_facet_evidence = (
+        output.core_facet_evidence.model_dump()
+        if use_llm_terms
+        else _merge_core_facet_evidence(
+            output.core_facet_evidence.model_dump(),
+            fallback_plan.core_facet_evidence or {},
+        )
     )
 
     intent, filters, core_facets = _apply_animal_guardrail(
@@ -254,15 +276,21 @@ def planner_output_to_query_plan(
         concept_terms=list(output.concept_terms or []),
     )
 
-    return SearchQueryPlan(
-        original_query=query,
-        normalized_query=output.normalized_query.strip() or fallback_plan.normalized_query,
-        semantic_query_text=(
+    semantic_query_text = (
+        ""
+        if metadata_filters.get("metadata_only") is True
+        else (
             output.semantic_query_text.strip()
             or output.normalized_query.strip()
             or fallback_plan.semantic_query_text
             or query
-        ),
+        )
+    )
+
+    return SearchQueryPlan(
+        original_query=query,
+        normalized_query=output.normalized_query.strip() or fallback_plan.normalized_query,
+        semantic_query_text=semantic_query_text,
         exact_terms=exact_terms,
         expanded_terms=expanded_terms,
         broad_terms=broad_terms,
@@ -270,7 +298,11 @@ def planner_output_to_query_plan(
         negative_terms=negative_terms,
         intent_facets=intent_facets,
         query_constraints=query_constraints,
-        semantic_tags=_merge_list_terms(_dedupe_terms(list(output.semantic_tags or [])), fallback_plan.semantic_tags),
+        semantic_tags=(
+            _dedupe_terms(list(output.semantic_tags or []))
+            if use_llm_terms
+            else _merge_list_terms(_dedupe_terms(list(output.semantic_tags or [])), fallback_plan.semantic_tags)
+        ),
         intent=intent,
         search_mode=(
             output.search_mode
@@ -281,7 +313,11 @@ def planner_output_to_query_plan(
         recommended_profile=fallback_plan.recommended_profile,
         penalize_tags=fallback_plan.penalize_tags,
         matched_keys=matched_keys,
-        concept_terms=_merge_list_terms(_dedupe_terms(list(output.concept_terms or [])), fallback_plan.concept_terms),
+        concept_terms=(
+            _dedupe_terms(list(output.concept_terms or []))
+            if use_llm_terms
+            else _merge_list_terms(_dedupe_terms(list(output.concept_terms or [])), fallback_plan.concept_terms)
+        ),
         core_facets=core_facets,
         core_facet_evidence=core_facet_evidence,
         metadata_filters=metadata_filters,

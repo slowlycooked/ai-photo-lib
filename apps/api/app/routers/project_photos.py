@@ -19,7 +19,7 @@ from ..schemas.photo import (
     PhotoDetailResponse,
     PhotoListResponse,
 )
-from ..services.photo_cleanup import delete_photo_record, delete_photo_records_batch
+from ..services.photo_cleanup_app_service import PhotoCleanupAppService
 from ..services.project_photo_asset_service import (
     PhotoBytesAsset,
     PhotoPreviewConversionError,
@@ -174,25 +174,20 @@ def delete_project_photo(
 
     Original file deletion is opt-in through ``delete_original=true``.
     """
+    service = PhotoCleanupAppService(db)
     try:
-        result = delete_photo_record(
-            db,
+        result = service.delete_photo_record(
             project_id=project_id,
             photo=photo,
             delete_original=delete_original,
         )
-        db.commit()
     except FileNotFoundError:
-        db.rollback()
         raise HTTPException(status_code=404, detail="Original file not found on disk")
     except PermissionError:
-        db.rollback()
         raise HTTPException(status_code=403, detail="No permission to delete original file")
     except OSError as exc:
-        db.rollback()
         raise HTTPException(status_code=500, detail=f"Failed to delete original file: {exc}")
     except ValueError:
-        db.rollback()
         raise HTTPException(status_code=400, detail="Photo project mismatch")
 
     return PhotoDeleteResponse(
@@ -212,25 +207,20 @@ def batch_delete_project_photos(
     db: Session = Depends(get_db),
 ):
     """Delete selected project photo records and optionally delete originals."""
+    service = PhotoCleanupAppService(db)
     try:
-        result = delete_photo_records_batch(
-            db,
+        result = service.delete_photo_records_batch(
             project_id=project_id,
             photo_ids=payload.photo_ids,
             delete_original=payload.delete_original,
         )
-        db.commit()
     except FileNotFoundError:
-        db.rollback()
         raise HTTPException(status_code=404, detail="Original file not found on disk")
     except PermissionError:
-        db.rollback()
         raise HTTPException(status_code=403, detail="No permission to delete original file")
     except OSError as exc:
-        db.rollback()
         raise HTTPException(status_code=500, detail=f"Failed to delete original file: {exc}")
     except ValueError:
-        db.rollback()
         raise HTTPException(status_code=400, detail="Photo project mismatch")
 
     return PhotoBatchDeleteResponse(

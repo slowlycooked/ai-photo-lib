@@ -1,5 +1,9 @@
 """Rule-based query understanding service.
 
+This rule pack is a fallback and deterministic baseline for the LLM query
+planner. Keep new compound planning behavior in the planner prompt/evaluation
+set instead of expanding lifestyle_default.json as the primary brain.
+
 Five-tier term model
 --------------------
 must_terms (exact_terms)

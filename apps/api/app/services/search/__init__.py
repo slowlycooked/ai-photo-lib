@@ -3,7 +3,13 @@
 Modules
 -------
 types               Shared dataclasses (EffectiveSearchSettings, SearchCandidate, …)
-orchestrator        SearchOrchestrator — stage coordination
+orchestrator        SearchOrchestrator — stable compatibility facade
+pipeline_runner    SearchPipelineRunner — typed stage coordination
+build_plan_stage   BuildPlanStage — plan/context/debug bootstrap
+hydration_stage    HydrationStage — terminal response/debug assembly
+fallback_stage     FallbackStage — keyword/vector fallback result handling
+pipeline_stages    Middle stage adapters for filter/recall/fusion/evidence
+pipeline_types     SearchPipelineDeps / Request / Result contracts
 settings_resolver   SearchSettingsResolver — merges project_search_settings / config
 keyword_recall      KeywordRecallService
 vector_recall       VectorRecallService

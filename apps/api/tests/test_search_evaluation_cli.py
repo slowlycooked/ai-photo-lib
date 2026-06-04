@@ -41,6 +41,7 @@ class SearchEvaluationCliTest(unittest.TestCase):
         report = cli._format_text_report(7, 20, results)
 
         self.assertIn("project_id=7", report)
+        self.assertIn("suite=default", report)
         self.assertIn("Summary: total=2 passed=1 failed=1", report)
         self.assertIn("[PASS] semantic indoor baseline", report)
         self.assertIn("[FAIL] ocr order number baseline", report)
@@ -71,6 +72,38 @@ class SearchEvaluationCliTest(unittest.TestCase):
         service.evaluate_default_cases.assert_called_once_with(page_size=8)
         db.close.assert_called_once()
         print_mock.assert_called_once()
+
+    def test_main_can_run_planner_debug_suite(self) -> None:
+        db = MagicMock()
+        service = MagicMock()
+        service.evaluate_planner_debug_cases.return_value = [
+            SearchEvaluationResult(
+                name="planner compound time place activity",
+                passed=True,
+                total=1,
+                returned_photo_ids=(1,),
+                expected_photo_ids=(),
+                reason="ok",
+                debug_payload={"planner_debug": {"planner_route": "llm"}},
+            )
+        ]
+
+        with (
+            patch("run_search_evaluation.SessionLocal", return_value=db),
+            patch("run_search_evaluation.SearchEvaluationService", return_value=service),
+            patch(
+                "sys.argv",
+                ["run_search_evaluation.py", "--project-id", "7", "--suite", "planner-debug", "--page-size", "8"],
+            ),
+            patch("builtins.print") as print_mock,
+        ):
+            cli.main()
+
+        service.evaluate_planner_debug_cases.assert_called_once_with(page_size=8)
+        service.evaluate_default_cases.assert_not_called()
+        db.close.assert_called_once()
+        printed = print_mock.call_args.args[0]
+        self.assertIn("suite=planner-debug", printed)
 
     def test_main_can_emit_json(self) -> None:
         db = MagicMock()

@@ -38,7 +38,7 @@ from app.logging_config import (
     setup_logging,
     task_id_ctx,
 )
-from app.models.ai import AIJob
+from app.models.ai import AIJob  # noqa: F401 — registers 'ai_jobs' table in metadata
 from app.models.folder import ProjectFolder  # noqa: F401 — registers 'project_folders' table in metadata
 from app.models.project_task import ProjectTask  # noqa: F401 — registers 'project_tasks' table in metadata
 from app.models.project import Project  # noqa: F401 — registers 'projects' table in metadata
@@ -49,6 +49,7 @@ from app.services.runtime_settings_service import (
     RuntimeSettingsService,
     RuntimeSettingsStorageUnavailableError,
 )
+from app.services.task_claim_service import TaskClaimService
 
 # ---------------------------------------------------------------------------
 setup_logging(build_default_debug_config())
@@ -122,23 +123,9 @@ def run() -> None:
             with SessionLocal() as db:
                 _maybe_refresh_debug_config(db)
 
-                project_task = (
-                    db.query(ProjectTask)
-                    .filter(ProjectTask.status == "queued")
-                    .order_by(ProjectTask.created_at)
-                    .with_for_update(skip_locked=True)
-                    .first()
-                )
+                claimed = TaskClaimService(db).claim_next()
 
-                job = (
-                    db.query(AIJob)
-                    .filter(AIJob.status == "queued")
-                    .order_by(AIJob.created_at)
-                    .with_for_update(skip_locked=True)
-                    .first()
-                )
-
-                if project_task is None and job is None:
+                if claimed is None:
                     idle_polls += 1
                     # Emit a single aggregated idle log instead of per-cycle noise
                     if idle_polls % idle_report_interval == 0:
@@ -150,9 +137,8 @@ def run() -> None:
                 else:
                     idle_polls = 0
 
-                if project_task is not None and (
-                    job is None or project_task.created_at <= job.created_at
-                ):
+                if claimed is not None and claimed.kind == "project_task":
+                    project_task = claimed.item
                     tok_proj = project_id_ctx.set(
                         str(project_task.project_id) if project_task.project_id else None
                     )
@@ -164,7 +150,10 @@ def run() -> None:
                         project_id_ctx.reset(tok_proj)
                         task_id_ctx.reset(tok_task)
                         photo_id_ctx.reset(tok_photo)
-                elif job is not None:
+                    continue  # immediately pick next task
+
+                if claimed is not None and claimed.kind == "ai_job":
+                    job = claimed.item
                     tok_proj = project_id_ctx.set(str(job.project_id) if job.project_id else None)
                     tok_task = task_id_ctx.set(str(job.id))
                     tok_photo = photo_id_ctx.set(str(job.photo_id) if job.photo_id else None)
@@ -175,9 +164,6 @@ def run() -> None:
                         task_id_ctx.reset(tok_task)
                         photo_id_ctx.reset(tok_photo)
                     continue  # immediately pick next job
-
-                if project_task is not None:
-                    continue  # immediately pick next task
 
         except OperationalError as exc:
             logger.error("Database connection error: %s — retrying in 30s", exc)

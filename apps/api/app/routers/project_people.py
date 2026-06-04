@@ -4,7 +4,6 @@ import logging
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
-from sqlalchemy.exc import DBAPIError, OperationalError
 from sqlalchemy.orm import Session
 
 from ..api.deps import get_db, require_project
@@ -31,14 +30,11 @@ from ..schemas.face import (
     PersonSplitResponse,
     PersonSummaryResponse,
 )
-from ..services.people_mutation_service import PeopleMutationService
+from ..services.people_mutation_service import PeopleBatchRetryExhausted, PeopleMutationService
 from ..services.people_query_service import PeopleQueryService
 
 router = APIRouter(prefix="/projects", tags=["project-people"])
 logger = logging.getLogger(__name__)
-
-_BATCH_RETRYABLE_DB_ERRORS = (OperationalError, DBAPIError)
-
 
 def _resolve_batch_audit_fields(
     request: Request,
@@ -63,41 +59,6 @@ def _resolve_batch_audit_fields(
     )
     operator = operator.strip()[:128] or "unknown"
     return request_id, operator
-
-
-def _execute_batch_with_retry(
-    db: Session,
-    *,
-    operation_name: str,
-    request_id: Optional[str],
-    operator: str,
-    max_attempts: int,
-    fn,
-) -> tuple[object, int]:
-    last_error: Optional[Exception] = None
-    for attempt in range(1, max_attempts + 1):
-        try:
-            return fn(), attempt
-        except _BATCH_RETRYABLE_DB_ERRORS as exc:
-            db.rollback()
-            last_error = exc
-            logger.warning(
-                "%s.retryable_db_error request_id=%s operator=%s attempt=%d/%d error=%s",
-                operation_name,
-                request_id,
-                operator,
-                attempt,
-                max_attempts,
-                exc,
-            )
-
-    raise HTTPException(
-        status_code=503,
-        detail=(
-            f"{operation_name} failed after {max_attempts} attempts due to retryable database errors"
-            + (f": {last_error}" if last_error else "")
-        ),
-    )
 
 
 @router.get("/{project_id}/people/review", response_model=PersonReviewListResponse)
@@ -429,9 +390,9 @@ def batch_confirm_review_pending(
         body_operator=body.operator,
         header_operator=x_operator,
     )
+    service = PeopleMutationService(db)
 
     def _op() -> PersonBatchActionResponse:
-        service = PeopleMutationService(db)
         person, updated = service.batch_confirm_review_pending(
             project_id=project_id,
             person_id=person_id,
@@ -452,14 +413,16 @@ def batch_confirm_review_pending(
             feedback_effects=PersonFeedbackEffectsResponse.model_validate(service.get_feedback_effects()),
         )
 
-    payload, attempts = _execute_batch_with_retry(
-        db,
-        operation_name="people.batch_confirm_review",
-        request_id=request_id,
-        operator=operator,
-        max_attempts=body.max_retries,
-        fn=_op,
-    )
+    try:
+        payload, attempts = service.execute_batch_with_retry(
+            operation_name="people.batch_confirm_review",
+            request_id=request_id,
+            operator=operator,
+            max_attempts=body.max_retries,
+            fn=_op,
+        )
+    except PeopleBatchRetryExhausted as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     payload.request_id = request_id
     payload.operator = operator
     payload.attempts = attempts
@@ -485,9 +448,9 @@ def batch_reject_review_pending(
         body_operator=body.operator,
         header_operator=x_operator,
     )
+    service = PeopleMutationService(db)
 
     def _op() -> PersonBatchActionResponse:
-        service = PeopleMutationService(db)
         person, updated = service.batch_reject_review_pending(
             project_id=project_id,
             person_id=person_id,
@@ -508,14 +471,16 @@ def batch_reject_review_pending(
             feedback_effects=PersonFeedbackEffectsResponse.model_validate(service.get_feedback_effects()),
         )
 
-    payload, attempts = _execute_batch_with_retry(
-        db,
-        operation_name="people.batch_reject_review",
-        request_id=request_id,
-        operator=operator,
-        max_attempts=body.max_retries,
-        fn=_op,
-    )
+    try:
+        payload, attempts = service.execute_batch_with_retry(
+            operation_name="people.batch_reject_review",
+            request_id=request_id,
+            operator=operator,
+            max_attempts=body.max_retries,
+            fn=_op,
+        )
+    except PeopleBatchRetryExhausted as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     payload.request_id = request_id
     payload.operator = operator
     payload.attempts = attempts
@@ -541,9 +506,9 @@ def batch_move_review_pending(
         body_operator=body.operator,
         header_operator=x_operator,
     )
+    service = PeopleMutationService(db)
 
     def _op() -> PersonBatchMoveResponse:
-        service = PeopleMutationService(db)
         source_person, target_person, updated = service.batch_move_review_pending(
             project_id=project_id,
             source_person_id=person_id,
@@ -567,14 +532,16 @@ def batch_move_review_pending(
             feedback_effects=PersonFeedbackEffectsResponse.model_validate(service.get_feedback_effects()),
         )
 
-    payload, attempts = _execute_batch_with_retry(
-        db,
-        operation_name="people.batch_move_review",
-        request_id=request_id,
-        operator=operator,
-        max_attempts=body.max_retries,
-        fn=_op,
-    )
+    try:
+        payload, attempts = service.execute_batch_with_retry(
+            operation_name="people.batch_move_review",
+            request_id=request_id,
+            operator=operator,
+            max_attempts=body.max_retries,
+            fn=_op,
+        )
+    except PeopleBatchRetryExhausted as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     payload.request_id = request_id
     payload.operator = operator
     payload.attempts = attempts

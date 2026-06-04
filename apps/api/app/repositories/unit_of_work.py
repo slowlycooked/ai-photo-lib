@@ -32,6 +32,10 @@ class UnitOfWork:
         self.prompt_templates = PromptTemplateRepository(db)
         self.ai_settings = AISettingsRepository(db)
 
+    @property
+    def db(self) -> Session:
+        return self._db
+
     def commit(self) -> None:
         self._db.commit()
 

@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import unittest
 
-from app.services.search.search_evaluation_catalog import SEARCH_EVALUATION_BASELINES
+from app.services.search.search_evaluation_catalog import (
+    SEARCH_EVALUATION_BASELINES,
+    SEARCH_PLANNER_DEBUG_EVALUATION_SET,
+)
 from app.services.search.search_evaluation_service import (
     SearchEvaluationCase,
     SearchEvaluationService,
@@ -95,6 +98,17 @@ class SearchEvaluationServiceTest(unittest.TestCase):
         self.assertIn("下雨天", queries)
         self.assertIn("订单号", queries)
 
+    def test_planner_debug_catalog_covers_compound_query_planning(self) -> None:
+        queries = {case.query for case in SEARCH_PLANNER_DEBUG_EVALUATION_SET}
+
+        self.assertEqual(len(SEARCH_PLANNER_DEBUG_EVALUATION_SET), 6)
+        self.assertIn("去年张家口滑雪", queries)
+        self.assertIn("去年1月 iPhone 拍的照片", queries)
+        self.assertIn("妈妈和孩子的合照", queries)
+        self.assertIn("上海下雨天夜景", queries)
+        self.assertIn("有猫但不是狗", queries)
+        self.assertIn("2024年12月在日本拍的照片", queries)
+
     def test_evaluate_default_cases_uses_baseline_catalog(self) -> None:
         seen_queries: list[str] = []
 
@@ -107,6 +121,24 @@ class SearchEvaluationServiceTest(unittest.TestCase):
 
         self.assertEqual(len(results), len(SEARCH_EVALUATION_BASELINES))
         self.assertEqual(seen_queries, [case.query for case in SEARCH_EVALUATION_BASELINES])
+
+    def test_evaluate_planner_debug_cases_uses_debug_catalog_with_debug_payload(self) -> None:
+        calls: list[dict] = []
+
+        def _search_fn(_db, query, **kwargs):
+            calls.append({"query": query, **kwargs})
+            return 1, [{"photo_id": 101}], {"query": query, "planner_debug": {"planner_route": "llm"}}
+
+        service = SearchEvaluationService(object(), 5, search_fn=_search_fn)
+        results = service.evaluate_planner_debug_cases(page_size=4)
+
+        self.assertEqual(len(results), len(SEARCH_PLANNER_DEBUG_EVALUATION_SET))
+        self.assertEqual(
+            [call["query"] for call in calls],
+            [case.query for case in SEARCH_PLANNER_DEBUG_EVALUATION_SET],
+        )
+        self.assertTrue(all(call["debug"] for call in calls))
+        self.assertEqual(results[0].debug_payload, {"query": "去年张家口滑雪", "planner_debug": {"planner_route": "llm"}})
 
 
 if __name__ == "__main__":

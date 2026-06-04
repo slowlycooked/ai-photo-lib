@@ -1,13 +1,32 @@
 from __future__ import annotations
 
-from typing import Collection, Optional
+import logging
+from collections.abc import Callable
+from typing import Collection, Optional, TypeVar
 
+from sqlalchemy.exc import DBAPIError, OperationalError
 from sqlalchemy.orm import Session
 
 from ..models.face import Person
 from .people_feedback_effects_service import PeopleFeedbackEffects, PeopleFeedbackEffectsService
 from .person_assignment_workflow_service import PersonAssignmentWorkflowService
 from .person_lifecycle_mutation_service import PersonLifecycleMutationService
+
+logger = logging.getLogger(__name__)
+
+_BATCH_RETRYABLE_DB_ERRORS = (OperationalError, DBAPIError)
+T = TypeVar("T")
+
+
+class PeopleBatchRetryExhausted(RuntimeError):
+    def __init__(self, operation_name: str, attempts: int, last_error: Optional[Exception]) -> None:
+        self.operation_name = operation_name
+        self.attempts = attempts
+        self.last_error = last_error
+        detail = f"{operation_name} failed after {attempts} attempts due to retryable database errors"
+        if last_error is not None:
+            detail = f"{detail}: {last_error}"
+        super().__init__(detail)
 
 
 class PeopleMutationService:
@@ -260,3 +279,31 @@ class PeopleMutationService:
             target_person_id=target_person_id,
             face_detection_ids=face_detection_ids,
         )
+
+    def execute_batch_with_retry(
+        self,
+        *,
+        operation_name: str,
+        request_id: Optional[str],
+        operator: str,
+        max_attempts: int,
+        fn: Callable[[], T],
+    ) -> tuple[T, int]:
+        last_error: Optional[Exception] = None
+        for attempt in range(1, max_attempts + 1):
+            try:
+                return fn(), attempt
+            except _BATCH_RETRYABLE_DB_ERRORS as exc:
+                self._db.rollback()
+                last_error = exc
+                logger.warning(
+                    "%s.retryable_db_error request_id=%s operator=%s attempt=%d/%d error=%s",
+                    operation_name,
+                    request_id,
+                    operator,
+                    attempt,
+                    max_attempts,
+                    exc,
+                )
+
+        raise PeopleBatchRetryExhausted(operation_name, max_attempts, last_error)

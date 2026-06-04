@@ -26,6 +26,7 @@ class SearchEvaluationResult:
     returned_photo_ids: tuple[int, ...]
     expected_photo_ids: tuple[int, ...]
     reason: str
+    debug_payload: Optional[dict] = None
 
 
 class SearchEvaluationService:
@@ -52,17 +53,18 @@ class SearchEvaluationService:
         cases: list[SearchEvaluationCase],
         *,
         page_size: int = 20,
+        debug: bool = False,
     ) -> list[SearchEvaluationResult]:
         results: list[SearchEvaluationResult] = []
         for case in cases:
-            total, items, _ = self._search_fn(
+            total, items, debug_payload = self._search_fn(
                 self._db,
                 case.query,
                 page=1,
                 page_size=page_size,
                 project_id=self._project_id,
                 mode=case.mode,
-                debug=False,
+                debug=debug,
             )
             returned_ids = tuple(
                 int(item["photo_id"])
@@ -86,6 +88,7 @@ class SearchEvaluationService:
                     returned_photo_ids=returned_ids,
                     expected_photo_ids=case.expected_photo_ids,
                     reason=reason,
+                    debug_payload=debug_payload if debug else None,
                 )
             )
         return results
@@ -98,3 +101,16 @@ class SearchEvaluationService:
         from .search_evaluation_catalog import SEARCH_EVALUATION_BASELINES
 
         return self.evaluate_cases(list(SEARCH_EVALUATION_BASELINES), page_size=page_size)
+
+    def evaluate_planner_debug_cases(
+        self,
+        *,
+        page_size: int = 20,
+    ) -> list[SearchEvaluationResult]:
+        from .search_evaluation_catalog import SEARCH_PLANNER_DEBUG_EVALUATION_SET
+
+        return self.evaluate_cases(
+            list(SEARCH_PLANNER_DEBUG_EVALUATION_SET),
+            page_size=page_size,
+            debug=True,
+        )
