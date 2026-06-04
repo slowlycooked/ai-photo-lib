@@ -22,6 +22,7 @@ from ..schemas.photo import (
 from ..services.photo_cleanup_app_service import PhotoCleanupAppService
 from ..services.project_photo_asset_service import (
     PhotoBytesAsset,
+    PhotoPathOwnershipError,
     PhotoPreviewConversionError,
     ProjectPhotoAssetService,
 )
@@ -90,6 +91,8 @@ def get_project_photo_thumbnail(
     """Serve or generate the thumbnail for a photo."""
     try:
         asset = ProjectPhotoAssetService(db).get_thumbnail_asset(project=project, photo=photo)
+    except PhotoPathOwnershipError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return FileResponse(
@@ -101,11 +104,14 @@ def get_project_photo_thumbnail(
 
 @router.get("/{project_id}/photos/{photo_id}/original")
 def get_project_photo_original(
+    project: Project = Depends(require_project),
     photo: Photo = Depends(require_project_photo),
 ):
     """Download the original file for a photo, scoped to its project."""
     try:
-        asset = ProjectPhotoAssetService().get_original_asset(photo=photo)
+        asset = ProjectPhotoAssetService().get_original_asset(project=project, photo=photo)
+    except PhotoPathOwnershipError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return FileResponse(
@@ -118,6 +124,7 @@ def get_project_photo_original(
 
 @router.get("/{project_id}/photos/{photo_id}/preview")
 def get_project_photo_preview(
+    project: Project = Depends(require_project),
     photo: Photo = Depends(require_project_photo),
 ):
     """Serve a browser-displayable version of the photo inline (no attachment).
@@ -126,7 +133,9 @@ def get_project_photo_preview(
     * HEIC/HEIF and other non-web formats: converted to JPEG on the fly.
     """
     try:
-        asset = ProjectPhotoAssetService().get_preview_asset(photo=photo)
+        asset = ProjectPhotoAssetService().get_preview_asset(project=project, photo=photo)
+    except PhotoPathOwnershipError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except PhotoPreviewConversionError as exc:

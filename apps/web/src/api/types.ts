@@ -1034,6 +1034,15 @@ export type ProjectSearchSettingsUpdate = Partial<
   Omit<ProjectSearchSettings, 'id' | 'project_id' | 'created_at' | 'updated_at'>
 >;
 
+export interface EffectiveSettingValue<T = unknown> {
+  value: T;
+  source: string;
+}
+
+export interface ProjectEffectiveSettings {
+  search: Record<string, EffectiveSettingValue>;
+}
+
 // ─── Project Query Planner Settings ─────────────────────────────────────────
 
 export interface ProjectQueryPlannerSettings {

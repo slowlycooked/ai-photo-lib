@@ -1,7 +1,12 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertCircle, Check, Loader2, RotateCcw, Save, Settings } from "lucide-react";
-import { api, type ProjectSearchSettings, type ProjectSearchSettingsUpdate } from "@/api";
+import { AlertCircle, Check, Info, Loader2, RotateCcw, Save, Settings } from "lucide-react";
+import {
+  api,
+  type EffectiveSettingValue,
+  type ProjectSearchSettings,
+  type ProjectSearchSettingsUpdate,
+} from "@/api";
 
 interface Props {
   projectId: number;
@@ -25,6 +30,48 @@ const VECTOR_FIELD_LABELS: Record<string, string> = {
   caption_embedding: "描述向量 (caption)",
   ocr_embedding: "OCR 向量",
 };
+
+const SOURCE_LABELS: Record<string, string> = {
+  global_config: "全局配置",
+  project_search_settings: "搜索设置表",
+  project_embedding_settings: "Embedding 设置表",
+  "project_search_settings.search_quality_settings": "搜索质量 JSON",
+  project_query_planner_settings: "Query Planner 设置表",
+};
+
+const EFFECTIVE_SOURCE_FIELDS = [
+  { key: "vector_top_k", label: "向量召回量" },
+  { key: "vector_field_weights", label: "普通向量权重" },
+  { key: "ocr_vector_field_weights", label: "OCR 向量权重" },
+  { key: "vector_strict_score", label: "向量严格阈值" },
+  { key: "query_planner_enabled", label: "Planner 开关" },
+  { key: "query_planner_model_name", label: "Planner 模型" },
+] as const;
+
+function SourceBadge({ source }: { source: string }) {
+  return (
+    <span className="inline-flex min-w-0 items-center rounded border border-hairline bg-surface-soft px-2 py-0.5 text-[11px] text-mute">
+      {SOURCE_LABELS[source] ?? source}
+    </span>
+  );
+}
+
+function formatEffectiveValue(setting: EffectiveSettingValue | undefined): string {
+  const value = setting?.value;
+  if (value == null || value === "") {
+    return "-";
+  }
+  if (typeof value === "boolean") {
+    return value ? "启用" : "关闭";
+  }
+  if (typeof value === "number") {
+    return Number.isInteger(value) ? String(value) : value.toFixed(3).replace(/0+$/, "").replace(/\.$/, "");
+  }
+  if (typeof value === "object") {
+    return JSON.stringify(value);
+  }
+  return String(value);
+}
 
 function WeightsEditor({
   label,
@@ -70,6 +117,11 @@ export default function ProjectSearchSettingsPanel({ projectId }: Props) {
     queryFn: () => api.projects.getSearchSettings(projectId),
   });
 
+  const { data: effectiveSettings } = useQuery({
+    queryKey: ["project-effective-settings", projectId],
+    queryFn: () => api.projects.getEffectiveSettings(projectId),
+  });
+
   const [form, setForm] = useState<Partial<ProjectSearchSettingsUpdate>>({});
   const [saved, setSaved] = useState(false);
 
@@ -80,6 +132,7 @@ export default function ProjectSearchSettingsPanel({ projectId }: Props) {
       api.projects.updateSearchSettings(projectId, body),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["project-search-settings", projectId] });
+      queryClient.invalidateQueries({ queryKey: ["project-effective-settings", projectId] });
       setForm({});
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
@@ -90,6 +143,7 @@ export default function ProjectSearchSettingsPanel({ projectId }: Props) {
     mutationFn: () => api.projects.resetSearchSettings(projectId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["project-search-settings", projectId] });
+      queryClient.invalidateQueries({ queryKey: ["project-effective-settings", projectId] });
       setForm({});
     },
   });
@@ -437,6 +491,32 @@ export default function ProjectSearchSettingsPanel({ projectId }: Props) {
               <span className="text-gray-700">{label}</span>
             </label>
           ))}
+        </div>
+      </section>
+
+      <section>
+        <div className="mb-3 flex items-center gap-2 border-b pb-1">
+          <Info className="h-3.5 w-3.5 text-gray-500" />
+          <h4 className="text-sm font-semibold text-gray-700">H. Effective Settings 来源</h4>
+        </div>
+        <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+          {EFFECTIVE_SOURCE_FIELDS.map(({ key, label }) => {
+            const setting = effectiveSettings?.search[key];
+            return (
+              <div
+                key={key}
+                className="rounded border border-hairline bg-white px-3 py-2"
+              >
+                <div className="mb-1 flex items-center justify-between gap-2">
+                  <span className="text-xs font-medium text-gray-700">{label}</span>
+                  {setting ? <SourceBadge source={setting.source} /> : null}
+                </div>
+                <p className="truncate font-mono text-[11px] text-gray-500">
+                  {formatEffectiveValue(setting)}
+                </p>
+              </div>
+            );
+          })}
         </div>
       </section>
     </div>

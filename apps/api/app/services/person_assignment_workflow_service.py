@@ -13,8 +13,8 @@ from .people_assignment_constants import (
     STATUS_REJECTED,
     STATUS_REVIEW_PENDING,
 )
-from .people_assignment_mutation_service import PeopleAssignmentMutationService
 from .people_feedback_effects_service import PeopleFeedbackEffectsService
+from .people_assignment_store import PeopleAssignmentStore
 from .people_lookup_service import PeopleLookupService
 from .people_negative_constraint_service import PeopleNegativeConstraintService
 from .people_update_finalizer import PeopleUpdateFinalizer
@@ -23,7 +23,7 @@ from .people_update_finalizer import PeopleUpdateFinalizer
 class PersonAssignmentWorkflowService:
     def __init__(self, db: Session, feedback_effects: PeopleFeedbackEffectsService) -> None:
         self._db = db
-        self._assignments = PeopleAssignmentMutationService(db)
+        self._assignments = PeopleAssignmentStore(db)
         self._feedback_effects = feedback_effects
         self._finalizer = PeopleUpdateFinalizer(db)
         self._lookup = PeopleLookupService(db)

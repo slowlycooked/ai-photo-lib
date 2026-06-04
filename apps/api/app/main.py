@@ -34,6 +34,7 @@ from .routers import (
     project_embedding_settings,
     project_prompt_templates,
     project_embeddings,
+    project_effective_settings,
     project_search,
     project_search_settings,
     project_query_planner_settings,
@@ -57,8 +58,7 @@ from .services.runtime_settings_service import (
 )
 from .services.startup_schema_service import (
     StartupSchemaCheckError,
-    validate_required_columns,
-    validate_required_tables,
+    validate_startup_schema,
 )
 from .services.project_app_service import repair_legacy_project_library_paths
 
@@ -72,8 +72,7 @@ def load_runtime_debug_config() -> None:
     enforce_managed_config_keys()
 
     try:
-        validate_required_tables(engine)
-        validate_required_columns(engine)
+        validate_startup_schema(engine)
     except StartupSchemaCheckError:
         logger.exception("Startup schema self-check failed")
         raise
@@ -250,6 +249,7 @@ app.include_router(project_ai_settings.router)
 app.include_router(project_embedding_settings.router)
 app.include_router(project_prompt_templates.router)
 app.include_router(project_embeddings.router)
+app.include_router(project_effective_settings.router)
 app.include_router(project_search.router)
 app.include_router(project_search_settings.router)
 app.include_router(project_query_planner_settings.router)

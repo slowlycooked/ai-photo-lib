@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Header, Query, Request
 from sqlalchemy.orm import Session
 
 from ..api.deps import get_db, require_project
@@ -30,35 +30,14 @@ from ..schemas.face import (
     PersonSplitResponse,
     PersonSummaryResponse,
 )
-from ..services.people_mutation_service import PeopleBatchRetryExhausted, PeopleMutationService
+from ..services.people_assignment_mutation_service import PeopleAssignmentMutationService
+from ..services.people_audit_service import PeopleAuditService
+from ..services.people_batch_review_service import PeopleBatchReviewService
+from ..services.people_lifecycle_mutation_service import PeopleLifecycleMutationService
 from ..services.people_query_service import PeopleQueryService
 
 router = APIRouter(prefix="/projects", tags=["project-people"])
 logger = logging.getLogger(__name__)
-
-def _resolve_batch_audit_fields(
-    request: Request,
-    *,
-    body_request_id: Optional[str],
-    body_operator: Optional[str],
-    header_operator: Optional[str],
-) -> tuple[Optional[str], str]:
-    request_id = (
-        body_request_id
-        or request.headers.get("x-request-id")
-        or request_id_ctx.get()
-    )
-    if request_id is not None:
-        request_id = request_id.strip()[:128] or None
-
-    operator = (
-        body_operator
-        or header_operator
-        or request.headers.get("x-operator")
-        or "unknown"
-    )
-    operator = operator.strip()[:128] or "unknown"
-    return request_id, operator
 
 
 @router.get("/{project_id}/people/review", response_model=PersonReviewListResponse)
@@ -110,7 +89,7 @@ def create_project_person(
     project: Project = Depends(require_project),
     db: Session = Depends(get_db),
 ) -> PersonActionResponse:
-    service = PeopleMutationService(db)
+    service = PeopleLifecycleMutationService(db)
     person = service.create_person(
         project_id=project_id,
         display_name=body.display_name,
@@ -151,7 +130,7 @@ def rename_project_person(
     project: Project = Depends(require_project),
     db: Session = Depends(get_db),
 ) -> PersonActionResponse:
-    service = PeopleMutationService(db)
+    service = PeopleLifecycleMutationService(db)
     person = service.rename_person(
         project_id=project_id,
         person_id=person_id,
@@ -176,7 +155,7 @@ def delete_project_person(
     project: Project = Depends(require_project),
     db: Session = Depends(get_db),
 ) -> dict:
-    service = PeopleMutationService(db)
+    service = PeopleLifecycleMutationService(db)
     service.delete_person(project_id=project_id, person_id=person_id)
     logger.info(
         "people.delete project_id=%d person_id=%d",
@@ -197,7 +176,7 @@ def merge_project_persons(
     project: Project = Depends(require_project),
     db: Session = Depends(get_db),
 ) -> PersonMergeResponse:
-    service = PeopleMutationService(db)
+    service = PeopleLifecycleMutationService(db)
     source_person, target_person, moved_assignments = service.merge_people(
         project_id=project_id,
         source_person_id=source_person_id,
@@ -229,7 +208,7 @@ def split_project_person(
     project: Project = Depends(require_project),
     db: Session = Depends(get_db),
 ) -> PersonSplitResponse:
-    service = PeopleMutationService(db)
+    service = PeopleLifecycleMutationService(db)
     source_person, target_person, moved_assignments = service.split_person(
         project_id=project_id,
         person_id=person_id,
@@ -262,7 +241,7 @@ def confirm_face_assignment(
     project: Project = Depends(require_project),
     db: Session = Depends(get_db),
 ) -> PersonActionResponse:
-    service = PeopleMutationService(db)
+    service = PeopleAssignmentMutationService(db)
     person = service.confirm_assignment(
         project_id=project_id,
         person_id=person_id,
@@ -291,7 +270,7 @@ def reject_face_assignment(
     project: Project = Depends(require_project),
     db: Session = Depends(get_db),
 ) -> PersonActionResponse:
-    service = PeopleMutationService(db)
+    service = PeopleAssignmentMutationService(db)
     person = service.exclude_assignment(
         project_id=project_id,
         person_id=person_id,
@@ -321,7 +300,7 @@ def move_face_assignment(
     project: Project = Depends(require_project),
     db: Session = Depends(get_db),
 ) -> PersonMoveFaceResponse:
-    service = PeopleMutationService(db)
+    service = PeopleAssignmentMutationService(db)
     source_person, target_person = service.move_face(
         project_id=project_id,
         source_person_id=person_id,
@@ -353,7 +332,7 @@ def set_representative_face(
     project: Project = Depends(require_project),
     db: Session = Depends(get_db),
 ) -> PersonActionResponse:
-    service = PeopleMutationService(db)
+    service = PeopleAssignmentMutationService(db)
     person = service.set_cover_face(
         project_id=project_id,
         person_id=person_id,
@@ -384,49 +363,20 @@ def batch_confirm_review_pending(
     project: Project = Depends(require_project),
     db: Session = Depends(get_db),
 ) -> PersonBatchActionResponse:
-    request_id, operator = _resolve_batch_audit_fields(
-        request,
+    audit = PeopleAuditService.resolve_batch_fields(
+        headers=request.headers,
+        context_request_id=request_id_ctx.get(),
         body_request_id=body.request_id,
         body_operator=body.operator,
         header_operator=x_operator,
     )
-    service = PeopleMutationService(db)
-
-    def _op() -> PersonBatchActionResponse:
-        person, updated = service.batch_confirm_review_pending(
-            project_id=project_id,
-            person_id=person_id,
-            face_detection_ids=body.face_detection_ids,
-        )
-
-        logger.info(
-            "people.batch_confirm_review project_id=%d person_id=%d updated=%d request_id=%s operator=%s",
-            project_id,
-            person_id,
-            updated,
-            request_id,
-            operator,
-        )
-        return PersonBatchActionResponse(
-            updated=updated,
-            person=PersonSummaryResponse.model_validate(person),
-            feedback_effects=PersonFeedbackEffectsResponse.model_validate(service.get_feedback_effects()),
-        )
-
-    try:
-        payload, attempts = service.execute_batch_with_retry(
-            operation_name="people.batch_confirm_review",
-            request_id=request_id,
-            operator=operator,
-            max_attempts=body.max_retries,
-            fn=_op,
-        )
-    except PeopleBatchRetryExhausted as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    payload.request_id = request_id
-    payload.operator = operator
-    payload.attempts = attempts
-    return payload
+    return PeopleBatchReviewService(db).batch_confirm_review_pending(
+        project_id=project_id,
+        person_id=person_id,
+        face_detection_ids=body.face_detection_ids,
+        audit=audit,
+        max_attempts=body.max_retries,
+    )
 
 
 @router.post(
@@ -442,49 +392,20 @@ def batch_reject_review_pending(
     project: Project = Depends(require_project),
     db: Session = Depends(get_db),
 ) -> PersonBatchActionResponse:
-    request_id, operator = _resolve_batch_audit_fields(
-        request,
+    audit = PeopleAuditService.resolve_batch_fields(
+        headers=request.headers,
+        context_request_id=request_id_ctx.get(),
         body_request_id=body.request_id,
         body_operator=body.operator,
         header_operator=x_operator,
     )
-    service = PeopleMutationService(db)
-
-    def _op() -> PersonBatchActionResponse:
-        person, updated = service.batch_reject_review_pending(
-            project_id=project_id,
-            person_id=person_id,
-            face_detection_ids=body.face_detection_ids,
-        )
-
-        logger.info(
-            "people.batch_reject_review project_id=%d person_id=%d updated=%d request_id=%s operator=%s",
-            project_id,
-            person_id,
-            updated,
-            request_id,
-            operator,
-        )
-        return PersonBatchActionResponse(
-            updated=updated,
-            person=PersonSummaryResponse.model_validate(person),
-            feedback_effects=PersonFeedbackEffectsResponse.model_validate(service.get_feedback_effects()),
-        )
-
-    try:
-        payload, attempts = service.execute_batch_with_retry(
-            operation_name="people.batch_reject_review",
-            request_id=request_id,
-            operator=operator,
-            max_attempts=body.max_retries,
-            fn=_op,
-        )
-    except PeopleBatchRetryExhausted as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    payload.request_id = request_id
-    payload.operator = operator
-    payload.attempts = attempts
-    return payload
+    return PeopleBatchReviewService(db).batch_reject_review_pending(
+        project_id=project_id,
+        person_id=person_id,
+        face_detection_ids=body.face_detection_ids,
+        audit=audit,
+        max_attempts=body.max_retries,
+    )
 
 
 @router.post(
@@ -500,49 +421,18 @@ def batch_move_review_pending(
     project: Project = Depends(require_project),
     db: Session = Depends(get_db),
 ) -> PersonBatchMoveResponse:
-    request_id, operator = _resolve_batch_audit_fields(
-        request,
+    audit = PeopleAuditService.resolve_batch_fields(
+        headers=request.headers,
+        context_request_id=request_id_ctx.get(),
         body_request_id=body.request_id,
         body_operator=body.operator,
         header_operator=x_operator,
     )
-    service = PeopleMutationService(db)
-
-    def _op() -> PersonBatchMoveResponse:
-        source_person, target_person, updated = service.batch_move_review_pending(
-            project_id=project_id,
-            source_person_id=person_id,
-            target_person_id=body.target_person_id,
-            face_detection_ids=body.face_detection_ids,
-        )
-
-        logger.info(
-            "people.batch_move_review project_id=%d source_person_id=%d target_person_id=%d updated=%d request_id=%s operator=%s",
-            project_id,
-            source_person.id,
-            target_person.id,
-            updated,
-            request_id,
-            operator,
-        )
-        return PersonBatchMoveResponse(
-            updated=updated,
-            source_person=PersonSummaryResponse.model_validate(source_person),
-            target_person=PersonSummaryResponse.model_validate(target_person),
-            feedback_effects=PersonFeedbackEffectsResponse.model_validate(service.get_feedback_effects()),
-        )
-
-    try:
-        payload, attempts = service.execute_batch_with_retry(
-            operation_name="people.batch_move_review",
-            request_id=request_id,
-            operator=operator,
-            max_attempts=body.max_retries,
-            fn=_op,
-        )
-    except PeopleBatchRetryExhausted as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    payload.request_id = request_id
-    payload.operator = operator
-    payload.attempts = attempts
-    return payload
+    return PeopleBatchReviewService(db).batch_move_review_pending(
+        project_id=project_id,
+        source_person_id=person_id,
+        target_person_id=body.target_person_id,
+        face_detection_ids=body.face_detection_ids,
+        audit=audit,
+        max_attempts=body.max_retries,
+    )

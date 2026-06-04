@@ -6,8 +6,11 @@ from sqlalchemy import create_engine, text
 
 from app.services.startup_schema_service import (
     StartupSchemaCheckError,
+    _alembic_head_revision,
+    collect_startup_schema_issues,
     validate_required_columns,
     validate_required_tables,
+    validate_startup_schema,
 )
 
 
@@ -107,6 +110,98 @@ class StartupSchemaServiceTest(unittest.TestCase):
         msg = str(ctx.exception)
         self.assertIn("photo_ai_analysis.semantic_concepts", msg)
         self.assertIn("schema drift", msg)
+
+    def test_collects_photo_embedding_column_drift(self):
+        engine = self._engine()
+        self._bootstrap(engine, revision=_alembic_head_revision())
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "CREATE TABLE photo_embeddings ("
+                    "id INTEGER PRIMARY KEY, "
+                    "project_id INTEGER, "
+                    "photo_id INTEGER, "
+                    "embedding_status TEXT"
+                    ")"
+                )
+            )
+
+        issues = collect_startup_schema_issues(engine)
+
+        self.assertTrue(
+            any("photo_embeddings.caption_embedding" in issue for issue in issues),
+            issues,
+        )
+
+    def test_collects_missing_project_task_partial_unique_indexes(self):
+        engine = self._engine()
+        self._bootstrap(engine, revision=_alembic_head_revision())
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "CREATE TABLE project_tasks ("
+                    "id INTEGER PRIMARY KEY, "
+                    "project_id INTEGER, "
+                    "task_type TEXT, "
+                    "status TEXT"
+                    ")"
+                )
+            )
+
+        issues = collect_startup_schema_issues(engine)
+
+        self.assertTrue(
+            any("uq_project_tasks_one_active_scan" in issue for issue in issues),
+            issues,
+        )
+
+    def test_collects_invalid_project_task_index_shape(self):
+        engine = self._engine()
+        self._bootstrap(engine, revision=_alembic_head_revision())
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "CREATE TABLE project_tasks ("
+                    "id INTEGER PRIMARY KEY, "
+                    "project_id INTEGER, "
+                    "task_type TEXT, "
+                    "status TEXT"
+                    ")"
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX uq_project_tasks_one_active_scan "
+                    "ON project_tasks (project_id)"
+                )
+            )
+
+        issues = collect_startup_schema_issues(engine)
+
+        self.assertTrue(
+            any("not partial unique indexes" in issue for issue in issues),
+            issues,
+        )
+
+    def test_collects_alembic_revision_not_head(self):
+        engine = self._engine()
+        self._bootstrap(engine, revision="026_add_semantic_concepts")
+
+        issues = collect_startup_schema_issues(engine)
+
+        self.assertTrue(any("expected head" in issue for issue in issues), issues)
+
+    def test_validate_startup_schema_reports_aggregated_preflight_failures(self):
+        engine = self._engine()
+        self._bootstrap(engine, revision="026_add_semantic_concepts")
+
+        with self.assertRaises(StartupSchemaCheckError) as ctx:
+            validate_startup_schema(engine)
+
+        msg = str(ctx.exception)
+        self.assertIn("missing required tables", msg)
+        self.assertIn("expected head", msg)
+        self.assertIn("alembic upgrade head", msg)
 
 
 if __name__ == "__main__":

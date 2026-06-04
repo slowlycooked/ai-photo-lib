@@ -44,6 +44,7 @@ import type {
   ProjectCreate,
   ProjectEmbeddingSettings,
   ProjectEmbeddingSettingsUpdate,
+  ProjectEffectiveSettings,
   ProjectReadinessResponse,
   QueryPlannerTestResponse,
   ProjectQueryPlannerSettings,
@@ -657,6 +658,9 @@ export const projectsApi = {
     request<ProjectSearchSettings>(`/projects/${id}/search-settings/reset`, {
       method: "POST",
     }),
+
+  getEffectiveSettings: (id: number) =>
+    request<ProjectEffectiveSettings>(`/projects/${id}/settings/effective`),
 
   // ── Query Planner Settings ───────────────────────────────────────────────
 

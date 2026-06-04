@@ -43,30 +43,77 @@ SEARCH_PLANNER_DEBUG_EVALUATION_SET: tuple[SearchEvaluationCase, ...] = (
         name="planner compound time place activity",
         query="去年张家口滑雪",
         mode="hybrid",
+        expected_plan={
+            "planner_route": "llm",
+            "metadata": {
+                "year_present": True,
+                "place_terms_contains": ["张家口"],
+            },
+            "semantic_query": "non_empty",
+            "term_groups_contains": {"must": ["滑雪"]},
+        },
     ),
     SearchEvaluationCase(
         name="planner pure metadata time camera",
         query="去年1月 iPhone 拍的照片",
         mode="hybrid",
+        expected_plan={
+            "planner_route": "llm",
+            "metadata": {
+                "year_present": True,
+                "month": 1,
+                "metadata_only": True,
+            },
+            "semantic_query": "empty",
+        },
     ),
     SearchEvaluationCase(
         name="planner people relationship group",
         query="妈妈和孩子的合照",
         mode="hybrid",
+        expected_plan={
+            "planner_route": "llm",
+            "semantic_query": "non_empty",
+        },
     ),
     SearchEvaluationCase(
         name="planner compound place weather night",
         query="上海下雨天夜景",
         mode="hybrid",
+        expected_plan={
+            "planner_route": "llm",
+            "metadata": {
+                "place_terms_contains": ["上海"],
+            },
+            "semantic_query": "non_empty",
+        },
     ),
     SearchEvaluationCase(
         name="planner object negative constraint",
         query="有猫但不是狗",
         mode="hybrid",
+        expected_plan={
+            "planner_route": "llm",
+            "semantic_query": "non_empty",
+            "term_groups_contains": {
+                "must": ["猫"],
+                "negative": ["狗"],
+            },
+        },
     ),
     SearchEvaluationCase(
         name="planner pure metadata date place",
         query="2024年12月在日本拍的照片",
         mode="hybrid",
+        expected_plan={
+            "planner_route": "llm",
+            "metadata": {
+                "year": 2024,
+                "month": 12,
+                "place_terms_contains": ["日本"],
+                "metadata_only": True,
+            },
+            "semantic_query": "empty",
+        },
     ),
 )

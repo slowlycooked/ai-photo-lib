@@ -238,6 +238,11 @@ class StaticQualityGuardTest(unittest.TestCase):
 
     def test_complexity_budget_for_people_and_task_orchestration(self) -> None:
         budgets = {
+            "app/routers/project_people.py": 4,
+            "app/services/people_assignment_mutation_service.py": 1,
+            "app/services/people_audit_service.py": 3,
+            "app/services/people_batch_review_service.py": 4,
+            "app/services/people_lifecycle_mutation_service.py": 1,
             "app/services/people_mutation_service.py": 4,
             "app/services/person_assignment_workflow_service.py": 10,
             "app/services/person_lifecycle_mutation_service.py": 10,
@@ -249,6 +254,20 @@ class StaticQualityGuardTest(unittest.TestCase):
         for relative_path, threshold in budgets.items():
             score = self._max_function_complexity(_API_ROOT / relative_path)
             self.assertLessEqual(score, threshold, f"{relative_path} complexity={score} > {threshold}")
+
+    def test_people_router_uses_focused_services(self) -> None:
+        path = _API_ROOT / "app/routers/project_people.py"
+        text = path.read_text(encoding="utf-8")
+
+        self.assertIn("PeopleQueryService", text)
+        self.assertIn("PeopleAssignmentMutationService", text)
+        self.assertIn("PeopleLifecycleMutationService", text)
+        self.assertIn("PeopleBatchReviewService", text)
+        self.assertIn("PeopleAuditService", text)
+        self.assertNotIn("PeopleMutationService", text)
+        self.assertNotIn("PeopleBatchRetryExhausted", text)
+        self.assertNotIn("HTTPException", text)
+        self.assertNotIn("execute_batch_with_retry", text)
 
     def test_people_status_literals_are_centralized(self) -> None:
         recall_path = _API_ROOT / "app/services/search/people_recall.py"
@@ -282,6 +301,10 @@ class StaticQualityGuardTest(unittest.TestCase):
     def test_critical_services_avoid_pep604_union_type_syntax(self) -> None:
         targets = [
             _API_ROOT / "app/services/people_mutation_service.py",
+            _API_ROOT / "app/services/people_assignment_mutation_service.py",
+            _API_ROOT / "app/services/people_audit_service.py",
+            _API_ROOT / "app/services/people_batch_review_service.py",
+            _API_ROOT / "app/services/people_lifecycle_mutation_service.py",
             _API_ROOT / "app/services/person_assignment_workflow_service.py",
             _API_ROOT / "app/services/person_lifecycle_mutation_service.py",
             _API_ROOT / "app/services/people_learning_service.py",

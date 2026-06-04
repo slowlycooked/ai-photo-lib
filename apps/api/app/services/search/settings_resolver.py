@@ -8,14 +8,18 @@ Priority:
 from __future__ import annotations
 
 import logging
-from typing import Optional
+from dataclasses import asdict
+from typing import Any, Optional
 
 from sqlalchemy.orm import Session
 
 from ...config import settings as global_settings
-from ...models.ai import ProjectEmbeddingSettings
+from ...models.ai import ProjectEmbeddingSettings, ProjectQueryPlannerSettings
 from ...models.project_search_settings import ProjectSearchSettings
-from ..project_query_planner_settings_service import resolve_query_planner_settings
+from ..project_query_planner_settings_service import (
+    get_project_query_planner_settings,
+    resolve_query_planner_settings,
+)
 from ..query_understanding_rule_packs import DEFAULT_BASE_PACK_ID, normalise_extension_pack_ids
 from .types import (
     DEFAULT_KEYWORD_FIELD_WEIGHTS,
@@ -269,6 +273,46 @@ class SearchSettingsResolver:
             query_planner_fallback_mode=str(query_planner_settings["fallback_mode"]),
         )
 
+    @staticmethod
+    def resolve_effective_with_sources(db: Session, project_id: int) -> dict[str, Any]:
+        """Return effective search settings annotated with their winning source."""
+
+        effective = SearchSettingsResolver.resolve(db, project_id)
+        values = asdict(effective)
+
+        row: Optional[ProjectSearchSettings] = (
+            db.query(ProjectSearchSettings)
+            .filter(ProjectSearchSettings.project_id == project_id)
+            .first()
+        )
+        embed_row: Optional[ProjectEmbeddingSettings] = (
+            db.query(ProjectEmbeddingSettings)
+            .filter(ProjectEmbeddingSettings.project_id == project_id)
+            .first()
+        )
+        planner_row: Optional[ProjectQueryPlannerSettings] = (
+            get_project_query_planner_settings(
+                db,
+                project_id,
+            )
+        )
+
+        sources = _effective_search_sources(
+            row=row,
+            embed_row=embed_row,
+            planner_row=planner_row,
+        )
+
+        return {
+            "search": {
+                key: {
+                    "value": value,
+                    "source": sources.get(key, "global_config"),
+                }
+                for key, value in values.items()
+            }
+        }
+
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -285,3 +329,105 @@ def _normalise_vector_weights(weights: dict) -> dict[str, float]:
     if total <= 0:
         return dict(DEFAULT_VECTOR_FIELD_WEIGHTS)
     return {k: v / total for k, v in cleaned.items()}
+
+
+def _effective_search_sources(
+    *,
+    row: Optional[ProjectSearchSettings],
+    embed_row: Optional[ProjectEmbeddingSettings],
+    planner_row: Optional[ProjectQueryPlannerSettings],
+) -> dict[str, str]:
+    sources: dict[str, str] = {}
+
+    search_row_fields = {
+        "default_mode",
+        "keyword_top_k",
+        "vector_top_k",
+        "rrf_k",
+        "keyword_weight",
+        "vector_weight",
+        "vector_min_score",
+        "enable_query_understanding",
+        "enable_structured_filters",
+        "enable_semantic_tag_boost",
+    }
+    json_weight_fields = {
+        "keyword_field_weights": "keyword_field_weights",
+        "vector_field_weights": "vector_field_weights",
+        "ocr_vector_field_weights": "ocr_query_vector_field_weights",
+    }
+    quality_fields = {
+        "vector_strict_score",
+        "min_display_evidence_level",
+        "enable_evidence_filter",
+        "enable_negative_penalty",
+        "evidence_weight",
+        "negative_term_penalty",
+        "require_core_facet_match",
+        "allow_vector_only_for_facet_query",
+        "entity_object_vector_only_min_score",
+        "entity_object_tag_min_score",
+        "entity_object_caption_min_score",
+        "animal_search_min_display_evidence_level",
+        "concept_taxonomy",
+        "query_understanding_base_pack",
+        "query_understanding_extension_packs",
+    }
+    query_planner_fields = {
+        "query_planner_enabled": "query_planner_enabled",
+        "query_planner_provider": "query_planner_provider",
+        "query_planner_endpoint_url": "query_planner_endpoint_url",
+        "query_planner_api_key": "query_planner_api_key",
+        "query_planner_model_name": "query_planner_model_name",
+        "query_planner_temperature": "query_planner_temperature",
+        "query_planner_top_p": "query_planner_top_p",
+        "query_planner_max_tokens": "query_planner_max_tokens",
+        "query_planner_timeout_seconds": "query_planner_timeout_seconds",
+        "query_planner_json_parse_strategy": "query_planner_json_parse_strategy",
+        "query_planner_planner_version": "query_planner_planner_version",
+        "query_planner_prompt_template": "query_planner_prompt_template",
+        "query_planner_system_prompt": "query_planner_system_prompt",
+        "query_planner_fallback_mode": "query_planner_fallback_mode",
+    }
+
+    if row is not None:
+        sources.update({field: "project_search_settings" for field in search_row_fields})
+        for effective_field, row_field in json_weight_fields.items():
+            sources[effective_field] = (
+                "project_search_settings"
+                if getattr(row, row_field, None)
+                else "global_config"
+            )
+
+        quality = row.search_quality_settings or {}
+        for field in quality_fields:
+            sources[field] = (
+                "project_search_settings.search_quality_settings"
+                if field in quality
+                else "global_config"
+            )
+
+        if planner_row is None:
+            for effective_field, legacy_key in query_planner_fields.items():
+                sources[effective_field] = (
+                    "project_search_settings.search_quality_settings"
+                    if legacy_key in quality
+                    else "global_config"
+                )
+    else:
+        vector_source = (
+            "project_embedding_settings" if embed_row is not None else "global_config"
+        )
+        sources["vector_field_weights"] = vector_source
+
+    if planner_row is not None:
+        sources.update(
+            {
+                field: "project_query_planner_settings"
+                for field in query_planner_fields
+            }
+        )
+    elif row is None:
+        sources.update({field: "global_config" for field in query_planner_fields})
+
+    return sources

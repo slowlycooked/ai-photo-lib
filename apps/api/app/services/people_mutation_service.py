@@ -1,61 +1,36 @@
 from __future__ import annotations
 
-import logging
 from collections.abc import Callable
-from typing import Collection, Optional, TypeVar
+from typing import Optional, TypeVar
 
-from sqlalchemy.exc import DBAPIError, OperationalError
 from sqlalchemy.orm import Session
 
 from ..models.face import Person
-from .people_feedback_effects_service import PeopleFeedbackEffects, PeopleFeedbackEffectsService
-from .person_assignment_workflow_service import PersonAssignmentWorkflowService
-from .person_lifecycle_mutation_service import PersonLifecycleMutationService
+from .people_assignment_mutation_service import PeopleAssignmentMutationService
+from .people_batch_review_service import PeopleBatchRetryExhausted, PeopleBatchReviewService
+from .people_feedback_effects_service import PeopleFeedbackEffects
+from .people_lifecycle_mutation_service import PeopleLifecycleMutationService
 
-logger = logging.getLogger(__name__)
-
-_BATCH_RETRYABLE_DB_ERRORS = (OperationalError, DBAPIError)
 T = TypeVar("T")
 
 
-class PeopleBatchRetryExhausted(RuntimeError):
-    def __init__(self, operation_name: str, attempts: int, last_error: Optional[Exception]) -> None:
-        self.operation_name = operation_name
-        self.attempts = attempts
-        self.last_error = last_error
-        detail = f"{operation_name} failed after {attempts} attempts due to retryable database errors"
-        if last_error is not None:
-            detail = f"{detail}: {last_error}"
-        super().__init__(detail)
-
-
 class PeopleMutationService:
+    """Compatibility facade for older callers; prefer the focused People services."""
+
     def __init__(self, db: Session) -> None:
-        self._db = db
-        self._feedback_effects = PeopleFeedbackEffectsService(db)
-        self._assignment_workflow = PersonAssignmentWorkflowService(db, self._feedback_effects)
-        self._lifecycle = PersonLifecycleMutationService(db)
+        self._assignment = PeopleAssignmentMutationService(db)
+        self._batch_review = PeopleBatchReviewService(db)
+        self._lifecycle = PeopleLifecycleMutationService(db)
 
     def get_feedback_effects(self) -> PeopleFeedbackEffects:
-        return self._feedback_effects.get()
-
-    def _reset_feedback_effects(self) -> None:
-        self._feedback_effects.reset()
-
-    def _set_feedback_effects(
-        self,
-        *,
-        project_id: int,
-        rebuilt_person_ids: Collection[int],
-        rematch_scope: Optional[str] = None,
-        rematch_person_id: Optional[int] = None,
-    ) -> None:
-        self._feedback_effects.set(
-            project_id=project_id,
-            rebuilt_person_ids=rebuilt_person_ids,
-            rematch_scope=rematch_scope,
-            rematch_person_id=rematch_person_id,
-        )
+        lifecycle_effects = self._lifecycle.get_feedback_effects()
+        assignment_effects = self._assignment.get_feedback_effects()
+        batch_effects = self._batch_review.get_feedback_effects()
+        if lifecycle_effects.project_id is not None:
+            return lifecycle_effects
+        if assignment_effects.project_id is not None:
+            return assignment_effects
+        return batch_effects
 
     def create_person(
         self,
@@ -64,14 +39,11 @@ class PeopleMutationService:
         display_name: Optional[str],
         is_named: bool,
     ) -> Person:
-        self._reset_feedback_effects()
-        person = self._lifecycle.create_person(
+        return self._lifecycle.create_person(
             project_id=project_id,
             display_name=display_name,
             is_named=is_named,
         )
-        self._set_feedback_effects(project_id=project_id, rebuilt_person_ids=[])
-        return person
 
     def rename_person(
         self,
@@ -80,14 +52,11 @@ class PeopleMutationService:
         person_id: int,
         display_name: str,
     ) -> Person:
-        self._reset_feedback_effects()
-        person = self._lifecycle.rename_person(
+        return self._lifecycle.rename_person(
             project_id=project_id,
             person_id=person_id,
             display_name=display_name,
         )
-        self._set_feedback_effects(project_id=project_id, rebuilt_person_ids=[])
-        return person
 
     def delete_person(
         self,
@@ -95,9 +64,7 @@ class PeopleMutationService:
         project_id: int,
         person_id: int,
     ) -> None:
-        self._reset_feedback_effects()
         self._lifecycle.delete_person(project_id=project_id, person_id=person_id)
-        self._set_feedback_effects(project_id=project_id, rebuilt_person_ids=[])
 
     def merge_people(
         self,
@@ -106,19 +73,11 @@ class PeopleMutationService:
         source_person_id: int,
         target_person_id: int,
     ) -> tuple[Person, Person, int]:
-        self._reset_feedback_effects()
-        source_person, target_person, moved_assignments = self._lifecycle.merge_people(
+        return self._lifecycle.merge_people(
             project_id=project_id,
             source_person_id=source_person_id,
             target_person_id=target_person_id,
         )
-        self._set_feedback_effects(
-            project_id=project_id,
-            rebuilt_person_ids=[source_person.id, target_person.id],
-            rematch_scope="person",
-            rematch_person_id=target_person.id,
-        )
-        return source_person, target_person, moved_assignments
 
     def split_person(
         self,
@@ -128,20 +87,12 @@ class PeopleMutationService:
         face_detection_ids: list[int],
         new_display_name: Optional[str],
     ) -> tuple[Person, Person, int]:
-        self._reset_feedback_effects()
-        source_person, target_person, moved_assignments = self._lifecycle.split_person(
+        return self._lifecycle.split_person(
             project_id=project_id,
             person_id=person_id,
             face_detection_ids=face_detection_ids,
             new_display_name=new_display_name,
         )
-        self._set_feedback_effects(
-            project_id=project_id,
-            rebuilt_person_ids=[source_person.id, target_person.id],
-            rematch_scope="person",
-            rematch_person_id=target_person.id,
-        )
-        return source_person, target_person, moved_assignments
 
     def confirm_assignment(
         self,
@@ -150,7 +101,7 @@ class PeopleMutationService:
         person_id: int,
         face_id: int,
     ) -> Person:
-        return self._assignment_workflow.confirm_assignment(
+        return self._assignment.confirm_assignment(
             project_id=project_id,
             person_id=person_id,
             face_id=face_id,
@@ -172,7 +123,7 @@ class PeopleMutationService:
         person_id: int,
         face_id: int,
     ) -> Person:
-        return self._assignment_workflow.exclude_assignment(
+        return self._assignment.exclude_assignment(
             project_id=project_id,
             person_id=person_id,
             face_id=face_id,
@@ -195,7 +146,7 @@ class PeopleMutationService:
         face_id: int,
         target_person_id: int,
     ) -> tuple[Person, Person]:
-        return self._assignment_workflow.move_face(
+        return self._assignment.move_face(
             project_id=project_id,
             source_person_id=source_person_id,
             face_id=face_id,
@@ -224,7 +175,7 @@ class PeopleMutationService:
         person_id: int,
         face_id: int,
     ) -> Person:
-        return self._assignment_workflow.set_cover_face(
+        return self._assignment.set_cover_face(
             project_id=project_id,
             person_id=person_id,
             face_id=face_id,
@@ -246,7 +197,7 @@ class PeopleMutationService:
         person_id: int,
         face_detection_ids: list[int],
     ) -> tuple[Person, int]:
-        return self._assignment_workflow.batch_confirm_review_pending(
+        return self._batch_review.confirm_review_pending(
             project_id=project_id,
             person_id=person_id,
             face_detection_ids=face_detection_ids,
@@ -259,7 +210,7 @@ class PeopleMutationService:
         person_id: int,
         face_detection_ids: list[int],
     ) -> tuple[Person, int]:
-        return self._assignment_workflow.batch_reject_review_pending(
+        return self._batch_review.reject_review_pending(
             project_id=project_id,
             person_id=person_id,
             face_detection_ids=face_detection_ids,
@@ -273,7 +224,7 @@ class PeopleMutationService:
         target_person_id: int,
         face_detection_ids: list[int],
     ) -> tuple[Person, Person, int]:
-        return self._assignment_workflow.batch_move_review_pending(
+        return self._batch_review.move_review_pending(
             project_id=project_id,
             source_person_id=source_person_id,
             target_person_id=target_person_id,
@@ -289,21 +240,10 @@ class PeopleMutationService:
         max_attempts: int,
         fn: Callable[[], T],
     ) -> tuple[T, int]:
-        last_error: Optional[Exception] = None
-        for attempt in range(1, max_attempts + 1):
-            try:
-                return fn(), attempt
-            except _BATCH_RETRYABLE_DB_ERRORS as exc:
-                self._db.rollback()
-                last_error = exc
-                logger.warning(
-                    "%s.retryable_db_error request_id=%s operator=%s attempt=%d/%d error=%s",
-                    operation_name,
-                    request_id,
-                    operator,
-                    attempt,
-                    max_attempts,
-                    exc,
-                )
-
-        raise PeopleBatchRetryExhausted(operation_name, max_attempts, last_error)
+        return self._batch_review.execute_batch_with_retry(
+            operation_name=operation_name,
+            request_id=request_id,
+            operator=operator,
+            max_attempts=max_attempts,
+            fn=fn,
+        )

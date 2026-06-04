@@ -1,65 +1,112 @@
 from __future__ import annotations
 
-from datetime import datetime
-from typing import Optional
-
 from sqlalchemy.orm import Session
 
-from ..models.face import PersonFaceAssignment
+from ..models.face import Person
+from .people_feedback_effects_service import PeopleFeedbackEffects, PeopleFeedbackEffectsService
+from .person_assignment_workflow_service import PersonAssignmentWorkflowService
 
 
 class PeopleAssignmentMutationService:
     def __init__(self, db: Session) -> None:
-        self._db = db
+        self._feedback_effects = PeopleFeedbackEffectsService(db)
+        self._workflow = PersonAssignmentWorkflowService(db, self._feedback_effects)
 
-    def get(
+    def get_feedback_effects(self) -> PeopleFeedbackEffects:
+        return self._feedback_effects.get()
+
+    def confirm_assignment(
         self,
         *,
         project_id: int,
         person_id: int,
         face_id: int,
-    ) -> Optional[PersonFaceAssignment]:
-        return (
-            self._db.query(PersonFaceAssignment)
-            .filter(
-                PersonFaceAssignment.project_id == project_id,
-                PersonFaceAssignment.person_id == person_id,
-                PersonFaceAssignment.face_detection_id == face_id,
-            )
-            .first()
+    ) -> Person:
+        return self._workflow.confirm_assignment(
+            project_id=project_id,
+            person_id=person_id,
+            face_id=face_id,
         )
 
-    def activate(
+    def confirm_face_assignment(
         self,
-        assignment: PersonFaceAssignment,
         *,
-        status: str,
-        source: str,
-        now: datetime,
-        confidence: Optional[float],
-        similarity_score: Optional[float],
-    ) -> None:
-        assignment.assignment_status = status
-        assignment.assignment_source = source
-        assignment.confidence = confidence
-        assignment.similarity_score = similarity_score
-        assignment.is_positive_sample = True
-        assignment.is_training_candidate = True
-        assignment.updated_at = now
+        project_id: int,
+        person_id: int,
+        face_id: int,
+    ) -> Person:
+        return self.confirm_assignment(project_id=project_id, person_id=person_id, face_id=face_id)
 
-    def reject(
+    def exclude_assignment(
         self,
-        assignment: PersonFaceAssignment,
         *,
-        status: str,
-        source: str,
-        now: datetime,
-    ) -> None:
-        assignment.assignment_status = status
-        assignment.assignment_source = source
-        assignment.is_positive_sample = False
-        assignment.is_training_candidate = False
-        assignment.updated_at = now
+        project_id: int,
+        person_id: int,
+        face_id: int,
+    ) -> Person:
+        return self._workflow.exclude_assignment(
+            project_id=project_id,
+            person_id=person_id,
+            face_id=face_id,
+        )
 
-    def delete(self, assignment: PersonFaceAssignment) -> None:
-        self._db.delete(assignment)
+    def reject_face_assignment(
+        self,
+        *,
+        project_id: int,
+        person_id: int,
+        face_id: int,
+    ) -> Person:
+        return self.exclude_assignment(project_id=project_id, person_id=person_id, face_id=face_id)
+
+    def move_face(
+        self,
+        *,
+        project_id: int,
+        source_person_id: int,
+        face_id: int,
+        target_person_id: int,
+    ) -> tuple[Person, Person]:
+        return self._workflow.move_face(
+            project_id=project_id,
+            source_person_id=source_person_id,
+            face_id=face_id,
+            target_person_id=target_person_id,
+        )
+
+    def move_face_assignment(
+        self,
+        *,
+        project_id: int,
+        source_person_id: int,
+        face_id: int,
+        target_person_id: int,
+    ) -> tuple[Person, Person]:
+        return self.move_face(
+            project_id=project_id,
+            source_person_id=source_person_id,
+            face_id=face_id,
+            target_person_id=target_person_id,
+        )
+
+    def set_cover_face(
+        self,
+        *,
+        project_id: int,
+        person_id: int,
+        face_id: int,
+    ) -> Person:
+        return self._workflow.set_cover_face(
+            project_id=project_id,
+            person_id=person_id,
+            face_id=face_id,
+        )
+
+    def set_representative_face(
+        self,
+        *,
+        project_id: int,
+        person_id: int,
+        face_id: int,
+    ) -> Person:
+        return self.set_cover_face(project_id=project_id, person_id=person_id, face_id=face_id)

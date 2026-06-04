@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from .._version import APP_VERSION
 from ..config import settings
 from ..database import get_db
+from ..services.startup_schema_service import collect_startup_schema_issues
 
 router = APIRouter(tags=["system"])
 
@@ -18,10 +19,12 @@ def health_check():
 
 @router.get("/health/system")
 def system_health_check(db: Session = Depends(get_db)):
+    schema_issues = _collect_schema_issues(db)
     checks = [
         _database_check(db),
         _pgvector_check(db),
-        _alembic_check(db),
+        _alembic_check(db, schema_issues),
+        _schema_preflight_check(schema_issues),
         _path_check("thumbnail_path writable", settings.thumbnail_path, writable=True),
         _path_check("photo_library_path readable", settings.photo_library_path, readable=True),
         _configured_check("llama vision endpoint configured", settings.openai_base_url),
@@ -67,12 +70,35 @@ def _pgvector_check(db: Session) -> dict:
     return _check("pgvector", "ok" if found else "fail", "installed" if found else "missing")
 
 
-def _alembic_check(db: Session) -> dict:
+def _collect_schema_issues(db: Session) -> list[str]:
+    try:
+        return collect_startup_schema_issues(db.get_bind())
+    except Exception as exc:  # noqa: BLE001
+        return [f"schema preflight unavailable: {exc}"]
+
+
+def _alembic_check(db: Session, schema_issues: list[str]) -> dict:
+    issues = [issue for issue in schema_issues if issue.startswith("alembic")]
+    if issues:
+        return _check("alembic head", "fail", "; ".join(issues))
+    if any(issue.startswith("schema preflight unavailable") for issue in schema_issues):
+        return _check("alembic head", "warn", "; ".join(schema_issues))
     try:
         version = db.execute(sa.text("SELECT version_num FROM alembic_version")).scalar()
     except Exception as exc:  # noqa: BLE001
         return _check("alembic head", "warn", str(exc))
     return _check("alembic head", "ok" if version else "warn", str(version or "unknown"))
+
+
+def _schema_preflight_check(schema_issues: list[str]) -> dict:
+    issues = [
+        issue
+        for issue in schema_issues
+        if not issue.startswith("alembic") and not issue.startswith("pgvector")
+    ]
+    if issues:
+        return _check("schema preflight", "fail", "; ".join(issues))
+    return _check("schema preflight", "ok", "required schema objects present")
 
 
 def _path_check(name: str, raw_path: str, *, readable: bool = False, writable: bool = False) -> dict:

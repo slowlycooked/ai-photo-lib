@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from ..models.face import FaceNegativeConstraint, Person, PersonFaceAssignment
 from .people_assignment_constants import STATUS_HUMAN_CORRECTED, STATUS_REJECTED
-from .people_assignment_mutation_service import PeopleAssignmentMutationService
+from .people_assignment_store import PeopleAssignmentStore
 from .people_lookup_service import PeopleLookupService
 from .people_negative_constraint_service import PeopleNegativeConstraintService
 from .people_update_finalizer import PeopleUpdateFinalizer
@@ -18,7 +18,7 @@ from .people_update_finalizer import PeopleUpdateFinalizer
 class PersonLifecycleMutationService:
     def __init__(self, db: Session) -> None:
         self._db = db
-        self._assignments = PeopleAssignmentMutationService(db)
+        self._assignments = PeopleAssignmentStore(db)
         self._finalizer = PeopleUpdateFinalizer(db)
         self._lookup = PeopleLookupService(db)
         self._negative_constraints = PeopleNegativeConstraintService(db)

@@ -80,6 +80,76 @@ class SearchEvaluationServiceTest(unittest.TestCase):
         self.assertFalse(results[0].passed)
         self.assertEqual(results[0].reason, "total 0 < min_total 1")
 
+    def test_evaluate_cases_checks_expected_plan_when_debug_enabled(self) -> None:
+        def _search_fn(_db, _query, **_kwargs):
+            return 1, [{"photo_id": 12}], {
+                "query_planner": {"planner_route": "llm"},
+                "semantic_query_text": "滑雪 雪地",
+                "metadata_filters": {
+                    "year": 2025,
+                    "place_terms": ["张家口"],
+                },
+                "term_groups": {
+                    "must": ["滑雪"],
+                    "negative": [],
+                },
+                "intent": "activity_search",
+            }
+
+        service = SearchEvaluationService(object(), 9, search_fn=_search_fn)
+        results = service.evaluate_cases(
+            [
+                SearchEvaluationCase(
+                    name="planner assertion",
+                    query="去年张家口滑雪",
+                    expected_plan={
+                        "planner_route": "llm",
+                        "intent": "activity_search",
+                        "semantic_query": "non_empty",
+                        "metadata": {
+                            "year_present": True,
+                            "place_terms_contains": ["张家口"],
+                        },
+                        "term_groups_contains": {"must": ["滑雪"]},
+                    },
+                )
+            ],
+            debug=True,
+        )
+
+        self.assertTrue(results[0].passed)
+        self.assertEqual(results[0].reason, "ok")
+
+    def test_evaluate_cases_fails_expected_plan_mismatch(self) -> None:
+        def _search_fn(_db, _query, **_kwargs):
+            return 1, [{"photo_id": 12}], {
+                "query_planner": {"planner_route": "rule_fast_path"},
+                "semantic_query_text": "",
+                "metadata_filters": {},
+                "term_groups": {"must": [], "negative": []},
+            }
+
+        service = SearchEvaluationService(object(), 9, search_fn=_search_fn)
+        results = service.evaluate_cases(
+            [
+                SearchEvaluationCase(
+                    name="planner assertion",
+                    query="有猫但不是狗",
+                    expected_plan={
+                        "planner_route": "llm",
+                        "semantic_query": "non_empty",
+                        "term_groups_contains": {"negative": ["狗"]},
+                    },
+                )
+            ],
+            debug=True,
+        )
+
+        self.assertFalse(results[0].passed)
+        self.assertIn("planner_route", results[0].reason)
+        self.assertIn("semantic_query_text expected non-empty", results[0].reason)
+        self.assertIn("term_groups.negative", results[0].reason)
+
     def test_default_baseline_catalog_covers_core_search_slices(self) -> None:
         names = {case.name for case in SEARCH_EVALUATION_BASELINES}
         queries = {case.query for case in SEARCH_EVALUATION_BASELINES}
