@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { ChevronDown, FolderOpen, Check, Bot } from "lucide-react";
+import { ChevronDown, FolderOpen, Check, Bot, Lock } from "lucide-react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useProjectContext } from "@/contexts/ProjectContext";
 
@@ -26,11 +26,29 @@ export function ProjectSelector() {
     }
   };
 
-  if (isLoading || !currentProject) {
+  if (isLoading) {
     return (
       <div className="flex items-center gap-1.5 px-2 py-1 text-mute text-body-sm">
         <FolderOpen className="w-3.5 h-3.5" />
         <span className="hidden sm:block">加载项目…</span>
+      </div>
+    );
+  }
+
+  if (!projects.length) {
+    return (
+      <div className="flex items-center gap-1.5 px-2 py-1 text-mute text-body-sm" aria-label="无可访问项目">
+        <Lock className="w-3.5 h-3.5" />
+        <span className="hidden sm:block">无可访问项目</span>
+      </div>
+    );
+  }
+
+  if (!currentProject) {
+    return (
+      <div className="flex items-center gap-1.5 px-2 py-1 text-mute text-body-sm">
+        <FolderOpen className="w-3.5 h-3.5" />
+        <span className="hidden sm:block">选择项目…</span>
       </div>
     );
   }

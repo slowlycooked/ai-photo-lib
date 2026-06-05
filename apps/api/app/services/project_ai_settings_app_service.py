@@ -43,6 +43,7 @@ class ProjectAISettingsAppService:
         try:
             row = get_or_create_project_ai_settings(self._uow.db, project_id)
 
+            row.ai_service_profile_id = body.ai_service_profile_id
             row.provider = body.provider
             row.endpoint_url = body.endpoint_url
             row.model_name = body.model_name

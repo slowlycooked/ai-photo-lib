@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from ..api.deps import require_project
+from ..api.deps import require_project, require_project_manager
 from ..database import get_db
 from ..models.project import Project
 from ..services.project_embeddings_app_service import ProjectEmbeddingsAppService
@@ -89,7 +89,7 @@ def get_embedding_status(
 def rebuild_project_embeddings(
     project_id: int,
     body: RebuildRequest = RebuildRequest(),
-    project: Project = Depends(require_project),
+    project: Project = Depends(require_project_manager),
     db: Session = Depends(get_db),
 ):
     """Enqueue embedding rebuild jobs for analysed photos in a project.
@@ -148,7 +148,7 @@ def rebuild_project_embeddings_legacy(
     response: Response,
     force: bool = False,
     only_failed: bool = False,
-    project: Project = Depends(require_project),
+    project: Project = Depends(require_project_manager),
     db: Session = Depends(get_db),
 ):
     """Legacy rebuild endpoint. Prefer POST /projects/{id}/embeddings/rebuild."""

@@ -44,7 +44,11 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
 
   // Auto-select: restore from localStorage (if valid) or pick the default project
   useEffect(() => {
-    if (!projects.length) return;
+    if (!projects.length) {
+      setCurrentProjectIdState(null);
+      localStorage.removeItem(STORAGE_KEY);
+      return;
+    }
 
     const storedId = currentProjectId;
     const isValid = storedId !== null && projects.some((p) => p.id === storedId);

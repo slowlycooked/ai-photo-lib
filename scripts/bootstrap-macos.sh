@@ -80,7 +80,7 @@ require_file "$POSTGRES_BIN_DIR/pg_ctl" "brew install postgresql@17 pgvector"
 require_file "$POSTGRES_BIN_DIR/psql" "brew install postgresql@17 pgvector"
 require_file "$("$POSTGRES_BIN_DIR/pg_config" --sharedir)/extension/vector.control" "brew install postgresql@17 pgvector"
 
-mkdir -p "$POSTGRES_DATA_DIR" "$THUMBNAIL_PATH" "$ROOT/.logs" "$ROOT/.run"
+mkdir -p "$POSTGRES_DATA_DIR" "$THUMBNAIL_PATH" "$ROOT/logs" "$ROOT/.run"
 
 if [ ! -d "$ROOT/apps/api/.venv" ]; then
   say "创建 API 虚拟环境..."

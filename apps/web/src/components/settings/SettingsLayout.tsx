@@ -3,6 +3,8 @@ import { Link, NavLink } from "react-router-dom";
 
 const globalNavItems = [
   { key: "general", label: "常规配置", to: "/settings/general" },
+  { key: "ai-services", label: "AI 服务", to: "/settings/ai-services" },
+  { key: "users", label: "用户管理", to: "/settings/users" },
   { key: "monitoring", label: "系统监控", to: "/settings/monitoring" },
   { key: "debug", label: "Debug / 日志", to: "/settings/debug" },
 ] as const;

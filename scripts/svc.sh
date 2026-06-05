@@ -9,7 +9,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 RUN_DIR="$ROOT/.run"
-LOG_DIR="$ROOT/.logs"
+LOG_DIR="$ROOT/logs"
 
 mkdir -p "$RUN_DIR" "$LOG_DIR"
 
@@ -360,6 +360,15 @@ postgres_is_ready() {
   "$PG_ISREADY_BIN" -h 127.0.0.1 -p "$POSTGRES_PORT" -U "$POSTGRES_USER" -d "$POSTGRES_DB" >/dev/null 2>&1
 }
 
+database_url_is_ready() {
+  local py_bin
+  py_bin="$(api_python_bin)" || return 1
+  (
+    cd "$ROOT/apps/api"
+    "$py_bin" -c "from sqlalchemy import create_engine, text; from app.config import settings; engine = create_engine(settings.database_url, pool_pre_ping=True); conn = engine.connect(); conn.execute(text('SELECT 1')); conn.close()" >/dev/null 2>&1
+  )
+}
+
 wait_for_postgres() {
   local timeout="${1:-30}"
   local waited=0
@@ -488,7 +497,7 @@ start_api() {
     return 0
   fi
 
-  if ! postgres_is_ready; then
+  if ! database_url_is_ready; then
     start_postgres
   fi
 
@@ -516,9 +525,9 @@ start_api() {
   sleep 2
 
   if is_running api && curl -fsS "http://127.0.0.1:$API_PORT/health" >/dev/null 2>&1; then
-    log_ok "api 已启动 (PID $(cat "$(pid_file api)"), log: .logs/api.log)"
+    log_ok "api 已启动 (PID $(cat "$(pid_file api)"), log: logs/api.log)"
   else
-    log_error "api 启动失败，请查看 .logs/api.log"
+    log_error "api 启动失败，请查看 logs/api.log"
     return 1
   fi
 }
@@ -573,9 +582,9 @@ start_web() {
   save_bg_pid web
   sleep 3
   if is_running web; then
-    log_ok "web 已启动 (PID $(cat "$(pid_file web)"), log: .logs/web.log)"
+    log_ok "web 已启动 (PID $(cat "$(pid_file web)"), log: logs/web.log)"
   else
-    log_error "web 启动失败，请查看 .logs/web.log"
+    log_error "web 启动失败，请查看 logs/web.log"
     return 1
   fi
 }
@@ -611,9 +620,9 @@ start_worker() {
   sleep 1
 
   if is_running worker; then
-    log_ok "worker 已启动 (PID $(cat "$(pid_file worker)"), log: .logs/worker.log)"
+    log_ok "worker 已启动 (PID $(cat "$(pid_file worker)"), log: logs/worker.log)"
   else
-    log_error "worker 启动失败，请查看 .logs/worker.log"
+    log_error "worker 启动失败，请查看 logs/worker.log"
     return 1
   fi
 }
@@ -669,9 +678,9 @@ start_ai() {
   sleep 2
 
   if is_running ai; then
-    log_ok "llama-server 已启动 (PID $(cat "$(pid_file ai)"), log: .logs/ai.log)"
+    log_ok "llama-server 已启动 (PID $(cat "$(pid_file ai)"), log: logs/ai.log)"
   else
-    log_error "llama-server 启动失败，请查看 .logs/ai.log"
+    log_error "llama-server 启动失败，请查看 logs/ai.log"
     return 1
   fi
 }
@@ -739,9 +748,9 @@ start_query_planner() {
   sleep 2
 
   if is_running planner; then
-    log_ok "query-planner 已启动 (PID $(cat "$(pid_file planner)"), log: .logs/planner.log)"
+    log_ok "query-planner 已启动 (PID $(cat "$(pid_file planner)"), log: logs/planner.log)"
   else
-    log_error "query-planner 启动失败，请查看 .logs/planner.log"
+    log_error "query-planner 启动失败，请查看 logs/planner.log"
     return 1
   fi
 }
@@ -808,9 +817,9 @@ start_embed() {
   sleep 2
 
   if is_running embed; then
-    log_ok "llama-embed 已启动 (PID $(cat "$(pid_file embed)"), log: .logs/embed.log)"
+    log_ok "llama-embed 已启动 (PID $(cat "$(pid_file embed)"), log: logs/embed.log)"
   else
-    log_error "llama-embed 启动失败，请查看 .logs/embed.log"
+    log_error "llama-embed 启动失败，请查看 logs/embed.log"
     return 1
   fi
 }
@@ -846,7 +855,7 @@ status_process() {
   local port="$3"
   if is_running "$name"; then
     printf "  ${GREEN}%-10s${RESET} ${GREEN}running${RESET}  PID=%-6s port=%s  log=%s\n" \
-      "$label" "$(cat "$(pid_file "$name")")" "$port" ".logs/$name.log"
+      "$label" "$(cat "$(pid_file "$name")")" "$port" "logs/$name.log"
   else
     printf "  ${RED}%-10s${RESET} ${RED}stopped${RESET}\n" "$label"
   fi

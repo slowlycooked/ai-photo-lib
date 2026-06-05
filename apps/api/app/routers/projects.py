@@ -7,9 +7,11 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from ..api.deps import require_project
+from ..api.deps import get_current_user, require_admin, require_project, require_project_manager
 from ..database import get_db
 from ..models.project import Project
+from ..models.user import ProjectMembership
+from ..schemas.user import CurrentUser
 from ..schemas.project import (
     ProjectCreate,
     ProjectListResponse,
@@ -18,7 +20,7 @@ from ..schemas.project import (
 )
 from ..services.project_ai_service import (
     get_active_prompt_template_strict,
-    get_project_ai_settings_strict,
+    resolve_project_ai_runtime_settings,
 )
 from ..services.project_embedding_settings_service import resolve_embedding_settings_strict
 from ..services.project_scan_runtime_service import validate_project_library_path
@@ -46,22 +48,40 @@ class ProjectReadinessResponse(BaseModel):
 # ─── CRUD ────────────────────────────────────────────────────────────────────
 
 @router.get("", response_model=ProjectListResponse)
-def list_projects(db: Session = Depends(get_db)):
-    projects = ProjectAppService(db).list_projects()
+def list_projects(
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    if current_user.role == "admin":
+        projects = ProjectAppService(db).list_projects()
+    elif current_user.id is None:
+        projects = []
+    else:
+        projects = (
+            db.query(Project)
+            .join(ProjectMembership, ProjectMembership.project_id == Project.id)
+            .filter(
+                Project.deleted_at.is_(None),
+                ProjectMembership.user_id == current_user.id,
+            )
+            .order_by(Project.is_default.desc(), Project.id.asc())
+            .all()
+        )
     return ProjectListResponse(total=len(projects), items=projects)
 
 
 @router.post("", response_model=ProjectResponse, status_code=201)
-def create_project(body: ProjectCreate, db: Session = Depends(get_db)):
+def create_project(
+    body: ProjectCreate,
+    _: object = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
     return ProjectAppService(db).create_project(body)
 
 
 @router.get("/{project_id}", response_model=ProjectResponse)
-def get_project(project_id: int, db: Session = Depends(get_db)):
-    try:
-        return ProjectAppService(db).get_project(project_id)
-    except ProjectNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+def get_project(project: Project = Depends(require_project)):
+    return project
 
 
 @router.get("/{project_id}/readiness", response_model=ProjectReadinessResponse)
@@ -74,11 +94,11 @@ def get_project_readiness(
     checks.append(_scan_readiness_check(project))
 
     try:
-        ai_settings = get_project_ai_settings_strict(db, project.id)
+        ai_settings = resolve_project_ai_runtime_settings(db, project.id)
         get_active_prompt_template_strict(
             db,
             project.id,
-            template_id=ai_settings.active_prompt_template_id,
+            template_id=ai_settings.get("active_prompt_template_id"),
         )
         checks.append(
             ProjectReadinessCheck(
@@ -123,7 +143,10 @@ def get_project_readiness(
 
 @router.put("/{project_id}", response_model=ProjectResponse)
 def update_project(
-    project_id: int, body: ProjectUpdate, db: Session = Depends(get_db)
+    project_id: int,
+    body: ProjectUpdate,
+    _: Project = Depends(require_project_manager),
+    db: Session = Depends(get_db),
 ):
     try:
         return ProjectAppService(db).update_project(project_id, body)
@@ -132,7 +155,11 @@ def update_project(
 
 
 @router.delete("/{project_id}", status_code=204)
-def delete_project(project_id: int, db: Session = Depends(get_db)):
+def delete_project(
+    project_id: int,
+    _: object = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
     try:
         ProjectAppService(db).delete_project(project_id)
     except ProjectNotFoundError as exc:

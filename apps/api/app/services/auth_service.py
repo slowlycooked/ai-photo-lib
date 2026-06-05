@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from ..config import settings
+from ..schemas.user import CurrentUser
 
 SESSION_COOKIE_NAME = "ai_photo_session"
 
@@ -26,11 +27,21 @@ def verify_credentials(username: str, password: str) -> bool:
     )
 
 
-def create_session_cookie(username: str, now: datetime | None = None) -> str:
+def create_session_cookie(
+    username: str,
+    now: datetime | None = None,
+    *,
+    user_id: int | None = None,
+    role: str = "admin",
+    display_name: str | None = None,
+) -> str:
     issued_at = now or datetime.now(timezone.utc)
     expires_at = issued_at + timedelta(minutes=settings.auth_session_timeout_minutes)
     payload = {
         "sub": username,
+        "uid": user_id,
+        "role": role,
+        "name": display_name,
         "iat": int(issued_at.timestamp()),
         "exp": int(expires_at.timestamp()),
     }
@@ -55,7 +66,7 @@ def verify_session_cookie(value: str | None, now: datetime | None = None) -> dic
 
     username = payload.get("sub")
     expires_at = payload.get("exp")
-    if username != settings.auth_username or not isinstance(expires_at, int):
+    if not isinstance(username, str) or not isinstance(expires_at, int):
         return None
 
     current = now or datetime.now(timezone.utc)
@@ -63,6 +74,20 @@ def verify_session_cookie(value: str | None, now: datetime | None = None) -> dic
         return None
 
     return payload
+
+
+def current_user_from_session(session: dict[str, Any]) -> CurrentUser:
+    role = str(session.get("role") or "admin")
+    if role not in {"admin", "project_manager", "viewer"}:
+        role = "viewer"
+    uid = session.get("uid")
+    return CurrentUser(
+        id=uid if isinstance(uid, int) else None,
+        username=str(session["sub"]),
+        display_name=session.get("name") if isinstance(session.get("name"), str) else None,
+        role=role,  # type: ignore[arg-type]
+        bootstrap=uid is None and role == "admin",
+    )
 
 
 def _sign(payload_token: str) -> str:

@@ -1,7 +1,11 @@
 import { request } from "./client";
 
 export interface AuthSession {
+  user_id: number | null;
   username: string;
+  display_name: string | null;
+  role: "admin" | "project_manager" | "viewer";
+  capabilities: string[];
   sessionTimeoutMinutes: number;
 }
 

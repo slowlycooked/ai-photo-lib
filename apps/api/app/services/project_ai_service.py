@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from ..config import settings
 from ..models.ai import ProjectAISettings, ProjectPromptTemplate
+from ..models.user import AIServiceProfile
 from ..models.photo import Photo
 
 TASK_IMAGE_ANALYSIS = "image_analysis"
@@ -189,12 +190,63 @@ def get_project_ai_settings_strict(db: Session, project_id: int) -> ProjectAISet
             f"AI settings are not configured for project_id={project_id}. "
             "Configure them via /projects/{id}/ai-settings before running analysis tasks."
         )
-    if not (settings_row.endpoint_url or "").strip() or not (settings_row.model_name or "").strip():
+    if (
+        settings_row.ai_service_profile_id is None
+        and (
+            not (settings_row.endpoint_url or "").strip()
+            or not (settings_row.model_name or "").strip()
+        )
+    ):
         raise RuntimeError(
             f"AI settings for project_id={project_id} are incomplete. "
             "endpoint_url and model_name are required."
         )
     return settings_row
+
+
+def resolve_project_ai_runtime_settings(db: Session, project_id: int) -> dict[str, Any]:
+    row = get_project_ai_settings_strict(db, project_id)
+    profile: AIServiceProfile | None = None
+    if row.ai_service_profile_id is not None:
+        profile = (
+            db.query(AIServiceProfile)
+            .filter(
+                AIServiceProfile.id == row.ai_service_profile_id,
+                AIServiceProfile.enabled.is_(True),
+            )
+            .first()
+        )
+        if profile is None:
+            raise RuntimeError(
+                f"AI service profile {row.ai_service_profile_id} is not available for project_id={project_id}."
+            )
+        if profile.capability != "vision":
+            raise RuntimeError(
+                f"AI service profile {profile.id} has capability={profile.capability!r}; expected 'vision'."
+            )
+
+    endpoint_url = (profile.endpoint_url if profile is not None else row.endpoint_url) or ""
+    model_name = (profile.model_name if profile is not None else row.model_name) or ""
+    provider = (profile.provider if profile is not None else row.provider) or ""
+    if not endpoint_url.strip() or not model_name.strip():
+        raise RuntimeError(
+            f"AI runtime settings for project_id={project_id} are incomplete. "
+            "endpoint_url and model_name are required."
+        )
+    return {
+        "provider": provider,
+        "endpoint_url": endpoint_url,
+        "api_key": profile.api_key if profile is not None else settings.openai_api_key,
+        "model_name": model_name,
+        "temperature": row.temperature,
+        "top_p": row.top_p,
+        "max_tokens": row.max_tokens,
+        "retry_count": row.retry_count,
+        "output_language": row.output_language,
+        "json_parse_strategy": row.json_parse_strategy,
+        "active_prompt_template_id": row.active_prompt_template_id,
+        "ai_service_profile_id": row.ai_service_profile_id,
+    }
 
 
 def get_active_prompt_template(

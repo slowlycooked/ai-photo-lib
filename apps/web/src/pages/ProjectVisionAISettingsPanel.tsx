@@ -8,6 +8,7 @@ import { Label, SettingsCard } from "@/components/project-ai-settings/SettingsPr
 import { ProjectFaceSettingsPanel } from "./ProjectFaceSettingsPanel";
 
 interface ModelForm {
+  ai_service_profile_id: number | null;
   provider: string;
   endpoint_url: string;
   model_name: string;
@@ -20,6 +21,7 @@ interface ModelForm {
 }
 
 const DEFAULT_MODEL_FORM: ModelForm = {
+  ai_service_profile_id: null,
   provider: "llama-server",
   endpoint_url: "",
   model_name: "",
@@ -34,6 +36,7 @@ const DEFAULT_MODEL_FORM: ModelForm = {
 function toSettingsBody(form: ModelForm, activePromptTemplateId?: number | null): ProjectAISettingsUpdate {
   return {
     provider: form.provider,
+    ai_service_profile_id: form.ai_service_profile_id,
     endpoint_url: form.endpoint_url,
     model_name: form.model_name,
     temperature: Number(form.temperature),
@@ -61,6 +64,12 @@ export function ProjectVisionAISettingsPanel({ projectId }: { projectId: number 
     queryFn: () => api.projectSettings.getAi(projectId),
     staleTime: 30_000,
   });
+  const { data: aiProfiles } = useQuery({
+    queryKey: ["ai-service-profiles"],
+    queryFn: api.admin.listAIProfiles,
+    staleTime: 30_000,
+  });
+  const visionProfiles = (aiProfiles?.items ?? []).filter((profile) => profile.capability === "vision");
 
   const initSettingsMutation = useMutation({
     mutationFn: () => api.projectSettings.initAi(projectId),
@@ -77,6 +86,7 @@ export function ProjectVisionAISettingsPanel({ projectId }: { projectId: number 
   useEffect(() => {
     if (!settingsData) return;
     setModelForm({
+      ai_service_profile_id: settingsData.ai_service_profile_id,
       provider: settingsData.provider,
       endpoint_url: settingsData.endpoint_url,
       model_name: settingsData.model_name,
@@ -138,6 +148,26 @@ export function ProjectVisionAISettingsPanel({ projectId }: { projectId: number 
         ) : (
           <>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div className="md:col-span-2">
+                <Label>系统 AI 服务</Label>
+                <select
+                  value={modelForm.ai_service_profile_id ?? ""}
+                  onChange={(e) =>
+                    setModelForm((x) => ({
+                      ...x,
+                      ai_service_profile_id: e.target.value ? Number(e.target.value) : null,
+                    }))
+                  }
+                  className="w-full px-3 py-2 text-body-sm bg-surface-card border border-hairline rounded-md"
+                >
+                  <option value="">不绑定，使用项目内模型配置</option>
+                  {visionProfiles.map((profile) => (
+                    <option key={profile.id} value={profile.id}>
+                      {profile.name} · {profile.model_name}
+                    </option>
+                  ))}
+                </select>
+              </div>
               <div className="md:col-span-2">
                 <Label>模型服务地址</Label>
                 <input

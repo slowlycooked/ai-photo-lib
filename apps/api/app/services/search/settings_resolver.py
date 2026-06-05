@@ -14,7 +14,8 @@ from typing import Any, Optional
 from sqlalchemy.orm import Session
 
 from ...config import settings as global_settings
-from ...models.ai import ProjectEmbeddingSettings, ProjectQueryPlannerSettings
+from ...models.ai import ProjectAISettings, ProjectEmbeddingSettings, ProjectQueryPlannerSettings
+from ...models.user import AIServiceProfile
 from ...models.project_search_settings import ProjectSearchSettings
 from ..project_query_planner_settings_service import (
     get_project_query_planner_settings,
@@ -310,7 +311,8 @@ class SearchSettingsResolver:
                     "source": sources.get(key, "global_config"),
                 }
                 for key, value in values.items()
-            }
+            },
+            "ai": _effective_ai_sources(db, project_id),
         }
 
 
@@ -431,3 +433,161 @@ def _effective_search_sources(
         sources.update({field: "global_config" for field in query_planner_fields})
 
     return sources
+
+
+def _setting(value: Any, source: str) -> dict[str, Any]:
+    return {"value": value, "source": source}
+
+
+def _profile_for(
+    db: Session,
+    *,
+    profile_id: int | None,
+    capability: str,
+) -> AIServiceProfile | None:
+    if profile_id is None:
+        return None
+    return (
+        db.query(AIServiceProfile)
+        .filter(
+            AIServiceProfile.id == profile_id,
+            AIServiceProfile.capability == capability,
+            AIServiceProfile.enabled.is_(True),
+        )
+        .first()
+    )
+
+
+def _effective_ai_sources(db: Session, project_id: int) -> dict[str, dict[str, dict[str, Any]]]:
+    vision_row = (
+        db.query(ProjectAISettings)
+        .filter(ProjectAISettings.project_id == project_id)
+        .first()
+    )
+    embedding_row = (
+        db.query(ProjectEmbeddingSettings)
+        .filter(ProjectEmbeddingSettings.project_id == project_id)
+        .first()
+    )
+    planner_row = get_project_query_planner_settings(db, project_id)
+
+    vision_profile = _profile_for(
+        db,
+        profile_id=vision_row.ai_service_profile_id if vision_row else None,
+        capability="vision",
+    )
+    embedding_profile = _profile_for(
+        db,
+        profile_id=embedding_row.ai_service_profile_id if embedding_row else None,
+        capability="embedding",
+    )
+    planner_profile = _profile_for(
+        db,
+        profile_id=planner_row.ai_service_profile_id if planner_row else None,
+        capability="query_planner",
+    )
+
+    return {
+        "vision": {
+            "profile_id": _setting(
+                vision_row.ai_service_profile_id if vision_row else None,
+                "project_ai_settings",
+            ),
+            "profile_name": _setting(
+                vision_profile.name if vision_profile else "",
+                "ai_service_profiles" if vision_profile else "project_ai_settings",
+            ),
+            "provider": _setting(
+                vision_profile.provider if vision_profile else (vision_row.provider if vision_row else ""),
+                "ai_service_profiles" if vision_profile else "project_ai_settings",
+            ),
+            "endpoint_url": _setting(
+                vision_profile.endpoint_url if vision_profile else (vision_row.endpoint_url if vision_row else ""),
+                "ai_service_profiles" if vision_profile else "project_ai_settings",
+            ),
+            "model_name": _setting(
+                vision_profile.model_name if vision_profile else (vision_row.model_name if vision_row else ""),
+                "ai_service_profiles" if vision_profile else "project_ai_settings",
+            ),
+            "temperature": _setting(
+                vision_row.temperature if vision_row else global_settings.ai_vision_temperature,
+                "project_ai_settings" if vision_row else "global_config",
+            ),
+            "max_tokens": _setting(
+                vision_row.max_tokens if vision_row else global_settings.ai_vision_max_tokens,
+                "project_ai_settings" if vision_row else "global_config",
+            ),
+        },
+        "embedding": {
+            "profile_id": _setting(
+                embedding_row.ai_service_profile_id if embedding_row else None,
+                "project_embedding_settings",
+            ),
+            "profile_name": _setting(
+                embedding_profile.name if embedding_profile else "",
+                "ai_service_profiles" if embedding_profile else "project_embedding_settings",
+            ),
+            "provider": _setting(
+                embedding_profile.provider if embedding_profile else (embedding_row.provider if embedding_row else "openai-compatible"),
+                "ai_service_profiles" if embedding_profile else "project_embedding_settings",
+            ),
+            "endpoint_url": _setting(
+                embedding_profile.endpoint_url if embedding_profile else (
+                    embedding_row.endpoint_url if embedding_row else (global_settings.embedding_base_url or global_settings.openai_base_url)
+                ),
+                "ai_service_profiles" if embedding_profile else (
+                    "project_embedding_settings" if embedding_row else "global_config"
+                ),
+            ),
+            "model_name": _setting(
+                embedding_profile.model_name if embedding_profile else (
+                    embedding_row.model_name if embedding_row else (global_settings.embedding_model or global_settings.openai_model)
+                ),
+                "ai_service_profiles" if embedding_profile else (
+                    "project_embedding_settings" if embedding_row else "global_config"
+                ),
+            ),
+            "embedding_dimension": _setting(
+                embedding_row.embedding_dimension if embedding_row else global_settings.embedding_dimension,
+                "project_embedding_settings" if embedding_row else "global_config",
+            ),
+        },
+        "query_planner": {
+            "profile_id": _setting(
+                planner_row.ai_service_profile_id if planner_row else None,
+                "project_query_planner_settings",
+            ),
+            "profile_name": _setting(
+                planner_profile.name if planner_profile else "",
+                "ai_service_profiles" if planner_profile else "project_query_planner_settings",
+            ),
+            "provider": _setting(
+                planner_profile.provider if planner_profile else (
+                    planner_row.provider if planner_row else "llama-server"
+                ),
+                "ai_service_profiles" if planner_profile else (
+                    "project_query_planner_settings" if planner_row else "global_config"
+                ),
+            ),
+            "endpoint_url": _setting(
+                planner_profile.endpoint_url if planner_profile else (
+                    planner_row.endpoint_url if planner_row else global_settings.query_planner_base_url
+                ),
+                "ai_service_profiles" if planner_profile else (
+                    "project_query_planner_settings" if planner_row else "global_config"
+                ),
+            ),
+            "model_name": _setting(
+                planner_profile.model_name if planner_profile else (
+                    planner_row.model_name if planner_row else global_settings.query_planner_alias
+                ),
+                "ai_service_profiles" if planner_profile else (
+                    "project_query_planner_settings" if planner_row else "global_config"
+                ),
+            ),
+            "enabled": _setting(
+                planner_row.enabled if planner_row else True,
+                "project_query_planner_settings" if planner_row else "global_config",
+            ),
+        },
+    }

@@ -836,6 +836,7 @@ export interface PersonBatchMoveResponse {
 export interface ProjectAISettings {
   id: number;
   project_id: number;
+  ai_service_profile_id: number | null;
   provider: string;
   endpoint_url: string;
   model_name: string;
@@ -851,6 +852,7 @@ export interface ProjectAISettings {
 }
 
 export interface ProjectAISettingsUpdate {
+  ai_service_profile_id?: number | null;
   provider: string;
   endpoint_url: string;
   model_name: string;
@@ -928,6 +930,7 @@ export type TagField =
 export interface ProjectEmbeddingSettings {
   id: number;
   project_id: number;
+  ai_service_profile_id: number | null;
   provider: string;
   endpoint_url: string;
   model_name: string;
@@ -946,6 +949,7 @@ export interface ProjectEmbeddingSettings {
 }
 
 export interface ProjectEmbeddingSettingsUpdate {
+  ai_service_profile_id?: number | null;
   provider?: string;
   endpoint_url?: string;
   api_key?: string | null;
@@ -1041,6 +1045,7 @@ export interface EffectiveSettingValue<T = unknown> {
 
 export interface ProjectEffectiveSettings {
   search: Record<string, EffectiveSettingValue>;
+  ai?: Record<string, Record<string, EffectiveSettingValue>>;
 }
 
 // ─── Project Query Planner Settings ─────────────────────────────────────────
@@ -1048,6 +1053,7 @@ export interface ProjectEffectiveSettings {
 export interface ProjectQueryPlannerSettings {
   id: number;
   project_id: number;
+  ai_service_profile_id: number | null;
   enabled: boolean;
   provider: string;
   endpoint_url: string | null;

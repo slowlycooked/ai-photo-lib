@@ -103,6 +103,12 @@ class ProjectEmbeddingSettings(Base):
         nullable=False,
         index=True,
     )
+    ai_service_profile_id: Mapped[Optional[int]] = mapped_column(
+        BigInteger,
+        ForeignKey("ai_service_profiles.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     provider: Mapped[str] = mapped_column(
         Text, server_default="openai-compatible", nullable=False
     )
@@ -154,6 +160,12 @@ class ProjectQueryPlannerSettings(Base):
         BigInteger,
         ForeignKey("projects.id", ondelete="CASCADE"),
         nullable=False,
+        index=True,
+    )
+    ai_service_profile_id: Mapped[Optional[int]] = mapped_column(
+        BigInteger,
+        ForeignKey("ai_service_profiles.id", ondelete="SET NULL"),
+        nullable=True,
         index=True,
     )
     enabled: Mapped[bool] = mapped_column(Boolean, server_default="true", nullable=False)
@@ -273,6 +285,12 @@ class ProjectAISettings(Base):
         ForeignKey("projects.id", ondelete="CASCADE"),
         nullable=False,
         unique=True,
+        index=True,
+    )
+    ai_service_profile_id: Mapped[Optional[int]] = mapped_column(
+        BigInteger,
+        ForeignKey("ai_service_profiles.id", ondelete="SET NULL"),
+        nullable=True,
         index=True,
     )
     provider: Mapped[str] = mapped_column(Text, server_default="llama-server", nullable=False)

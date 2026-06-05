@@ -24,8 +24,10 @@ from .logging_config import (
 )
 from .routers import (
     auth,
+    users,
     health,
     settings as settings_router,
+    ai_service_profiles,
     projects,
     folders,
     project_scan,
@@ -50,6 +52,7 @@ from .services.auth_service import (
     SESSION_COOKIE_NAME,
     auth_password_configured,
     create_session_cookie,
+    current_user_from_session,
     verify_session_cookie,
 )
 from .services.runtime_settings_service import (
@@ -147,10 +150,16 @@ async def auth_middleware(request: Request, call_next):
     if session is None:
         return JSONResponse(status_code=401, content={"detail": "Authentication required"})
 
+    current_user = current_user_from_session(session)
     response = await call_next(request)
     response.set_cookie(
         SESSION_COOKIE_NAME,
-        create_session_cookie(str(session["sub"])),
+        create_session_cookie(
+            current_user.username,
+            user_id=current_user.id,
+            role=current_user.role,
+            display_name=current_user.display_name,
+        ),
         httponly=True,
         secure=settings.auth_cookie_secure,
         samesite="lax",
@@ -238,9 +247,11 @@ async def db_unavailable_handler(request: Request, exc: OperationalError) -> JSO
 
 app.include_router(health.router)
 app.include_router(auth.router)
+app.include_router(users.router)
 app.include_router(projects.router)
 app.include_router(folders.router)
 app.include_router(settings_router.router)
+app.include_router(ai_service_profiles.router)
 # ── project-scoped routers ────────────────────────────────────────────────────
 app.include_router(project_photos.router)
 app.include_router(project_scan.router)

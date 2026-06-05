@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from ..api.deps import require_project
+from ..api.deps import require_project, require_project_manager
 from ..database import get_db
 from ..models.project import Project
 from ..schemas.ai import (
@@ -27,7 +27,7 @@ router = APIRouter(prefix="/projects", tags=["projects-ai-jobs"])
 
 @router.post("/{project_id}/ai/analyze/start", response_model=StartAnalysisResponse)
 def start_project_ai(
-    project: Project = Depends(require_project),
+    project: Project = Depends(require_project_manager),
     db: Session = Depends(get_db),
 ):
     """Enqueue AI analysis jobs for all un-analysed photos in a project."""
@@ -48,7 +48,7 @@ class ReanalyzeRequest(BaseModel):
 def restart_project_ai_analysis(
     project_id: int,
     body: ReanalyzeRequest,
-    project: Project = Depends(require_project),
+    project: Project = Depends(require_project_manager),
     db: Session = Depends(get_db),
 ):
     """Re-queue AI analysis for a subset of photos (by scope or explicit IDs)."""
@@ -105,7 +105,7 @@ def list_project_ai_jobs(
 def retry_project_failed_jobs(
     project_id: int,
     job_type: Optional[str] = Query(default=None),
-    project: Project = Depends(require_project),
+    project: Project = Depends(require_project_manager),
     db: Session = Depends(get_db),
 ):
     """Re-queue all failed AI jobs that have not exceeded the retry limit."""
@@ -117,7 +117,7 @@ def retry_project_failed_jobs(
 def clear_project_failed_jobs(
     project_id: int,
     job_type: Optional[str] = Query(default=None),
-    project: Project = Depends(require_project),
+    project: Project = Depends(require_project_manager),
     db: Session = Depends(get_db),
 ):
     """Delete all failed AI jobs for a project."""

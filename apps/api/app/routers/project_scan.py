@@ -5,7 +5,7 @@ from enum import Enum
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from ..api.deps import get_db, require_project
+from ..api.deps import get_db, require_project, require_project_manager
 from ..models.project import Project
 from ..schemas.scan import ScanStatus
 from ..services.project_task_service import (
@@ -25,7 +25,7 @@ router = APIRouter(prefix="/projects", tags=["projects-scan"])
 
 @router.post("/{project_id}/scan/start")
 def start_project_scan(
-    project: Project = Depends(require_project),
+    project: Project = Depends(require_project_manager),
     db: Session = Depends(get_db),
 ):
     """Queue a project library scan for the worker to execute."""
@@ -60,7 +60,7 @@ def get_project_scan_status(
 
 @router.post("/{project_id}/scan/cancel", response_model=ScanStatus)
 def cancel_project_scan(
-    project: Project = Depends(require_project),
+    project: Project = Depends(require_project_manager),
     db: Session = Depends(get_db),
 ):
     """Request cancellation for the active project scan/reindex task."""
@@ -83,7 +83,7 @@ class _ReindexScope(str, Enum):
 @router.post("/{project_id}/scan/reindex")
 def start_project_reindex(
     scope: _ReindexScope = _ReindexScope.missing_metadata,
-    project: Project = Depends(require_project),
+    project: Project = Depends(require_project_manager),
     db: Session = Depends(get_db),
 ):
     """Queue a metadata reindex task for the worker to execute."""

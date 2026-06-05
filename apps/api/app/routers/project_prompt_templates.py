@@ -5,7 +5,7 @@ import time
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from ..api.deps import require_project
+from ..api.deps import require_project, require_project_manager
 from ..database import get_db
 from ..models.ai import ProjectPromptTemplate
 from ..models.project import Project
@@ -23,8 +23,8 @@ from ..services.project_ai_service import (
     analyze_and_parse_with_strict_json_retry,
     get_active_prompt_template,
     get_active_prompt_template_strict,
-    get_project_ai_settings_strict,
     render_analysis_prompt_parts,
+    resolve_project_ai_runtime_settings,
 )
 from ..services.project_prompt_templates_app_service import (
     ActivePromptTemplateDeleteError,
@@ -62,7 +62,7 @@ def list_project_prompt_templates(
 def create_project_prompt_template(
     project_id: int,
     body: PromptTemplateCreate,
-    project: Project = Depends(require_project),
+    project: Project = Depends(require_project_manager),
     db: Session = Depends(get_db),
 ):
     """Create a new prompt template for a project."""
@@ -80,7 +80,7 @@ def update_project_prompt_template(
     project_id: int,
     template_id: int,
     body: PromptTemplateUpdate,
-    project: Project = Depends(require_project),
+    project: Project = Depends(require_project_manager),
     db: Session = Depends(get_db),
 ):
     """Create a new version of an existing prompt template."""
@@ -102,7 +102,7 @@ def update_project_prompt_template(
 def delete_project_prompt_template(
     project_id: int,
     template_id: int,
-    project: Project = Depends(require_project),
+    project: Project = Depends(require_project_manager),
     db: Session = Depends(get_db),
 ):
     """Delete a non-active prompt template."""
@@ -121,7 +121,7 @@ def delete_project_prompt_template(
 )
 def reset_project_prompt_template_default(
     project_id: int,
-    project: Project = Depends(require_project),
+    project: Project = Depends(require_project_manager),
     db: Session = Depends(get_db),
 ):
     """Create and activate a new default prompt template for a project."""
@@ -135,7 +135,7 @@ def reset_project_prompt_template_default(
 def test_project_prompt_template(
     project_id: int,
     body: PromptTemplateTestRequest,
-    project: Project = Depends(require_project),
+    project: Project = Depends(require_project_manager),
     db: Session = Depends(get_db),
 ):
     """Test a prompt template against a specific photo using the live VLM."""
@@ -147,12 +147,12 @@ def test_project_prompt_template(
         raise HTTPException(status_code=404, detail="Photo not found in project")
 
     try:
-        settings_row = get_project_ai_settings_strict(db, project_id)
+        runtime_settings = resolve_project_ai_runtime_settings(db, project_id)
         template = get_active_prompt_template_strict(
             db,
             project_id,
             task_type=TASK_IMAGE_ANALYSIS,
-            template_id=body.prompt_template_id,
+            template_id=body.prompt_template_id or runtime_settings.get("active_prompt_template_id"),
         )
     except RuntimeError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -160,7 +160,7 @@ def test_project_prompt_template(
     system_text, user_text = render_analysis_prompt_parts(
         photo=photo,
         prompt_template=template,
-        output_language=settings_row.output_language,
+        output_language=runtime_settings["output_language"],
         override_prompt=body.override_prompt,
     )
 
@@ -171,14 +171,14 @@ def test_project_prompt_template(
             analyze_image_fn=analyze_image,
             parse_output_fn=parse_model_json_output,
             image_path=image_path,
-            endpoint_url=settings_row.endpoint_url,
-            model_name=settings_row.model_name,
+            endpoint_url=runtime_settings["endpoint_url"],
+            model_name=runtime_settings["model_name"],
             system_text=system_text,
             user_text=user_text,
-            strategy=settings_row.json_parse_strategy,
-            temperature=settings_row.temperature,
-            top_p=settings_row.top_p,
-            max_tokens=settings_row.max_tokens,
+            strategy=runtime_settings["json_parse_strategy"],
+            temperature=runtime_settings["temperature"],
+            top_p=runtime_settings["top_p"],
+            max_tokens=runtime_settings["max_tokens"],
         )
     except VLMRequestError as exc:
         duration_ms = int((time.perf_counter() - started) * 1000)

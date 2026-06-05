@@ -16,13 +16,14 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
 
-from ..api.deps import require_project
+from ..api.deps import require_project, require_project_manager
 from ..config import settings
 from ..database import get_db
 from ..models.project import Project
 from ..services.embedding_client import EmbeddingRequestError, embed_text
 from ..services.project_embedding_settings_service import (
     get_or_create_project_embedding_settings,
+    resolve_embedding_settings_strict,
     update_project_embedding_settings,
 )
 
@@ -39,6 +40,7 @@ class ProjectEmbeddingSettingsResponse(BaseModel):
 
     id: int
     project_id: int
+    ai_service_profile_id: Optional[int] = None
     provider: str
     endpoint_url: str
     # api_key intentionally omitted from response for security
@@ -56,6 +58,7 @@ class ProjectEmbeddingSettingsResponse(BaseModel):
 
 
 class ProjectEmbeddingSettingsUpdate(BaseModel):
+    ai_service_profile_id: Optional[int] = None
     provider: Optional[str] = None
     endpoint_url: Optional[str] = None
     api_key: Optional[str] = None
@@ -115,15 +118,18 @@ def get_embedding_settings(
 def put_embedding_settings(
     project_id: int,
     body: ProjectEmbeddingSettingsUpdate,
-    project: Project = Depends(require_project),
+    project: Project = Depends(require_project_manager),
     db: Session = Depends(get_db),
 ):
     """Update embedding configuration for a project."""
+    updates = body.model_dump(exclude_none=True)
+    if "ai_service_profile_id" in body.model_fields_set:
+        updates["ai_service_profile_id"] = body.ai_service_profile_id
     try:
         row = update_project_embedding_settings(
             db,
             project_id,
-            body.model_dump(exclude_none=True),
+            updates,
         )
     except RuntimeError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -143,7 +149,7 @@ def put_embedding_settings(
 def test_embedding_settings(
     project_id: int,
     body: EmbeddingTestRequest,
-    project: Project = Depends(require_project),
+    project: Project = Depends(require_project_manager),
     db: Session = Depends(get_db),
 ):
     """Send a test text to the configured embedding endpoint.
@@ -153,19 +159,20 @@ def test_embedding_settings(
     """
     try:
         row = get_or_create_project_embedding_settings(db, project_id)
+        resolved = resolve_embedding_settings_strict(db, project_id)
     except RuntimeError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    expected_dim = row.embedding_dimension
+    expected_dim = resolved["embedding_dimension"]
 
     start = time.monotonic()
     try:
         vector = embed_text(
             body.text.strip() or "test",
-            endpoint_url=row.endpoint_url,
-            api_key=row.api_key or settings.embedding_api_key or settings.openai_api_key,
-            model=row.model_name,
-            timeout_seconds=row.timeout_seconds,
+            endpoint_url=resolved["endpoint_url"],
+            api_key=resolved.get("api_key") or settings.embedding_api_key or settings.openai_api_key,
+            model=resolved["model_name"],
+            timeout_seconds=resolved["timeout_seconds"],
             expected_dim=expected_dim,
         )
     except EmbeddingRequestError as exc:
@@ -173,12 +180,12 @@ def test_embedding_settings(
         logger.warning(
             "Embedding test failed. project_id=%s model=%s error=%s",
             project_id,
-            row.model_name,
+            resolved["model_name"],
             exc,
         )
         return EmbeddingTestResponse(
             success=False,
-            model_name=row.model_name,
+            model_name=resolved["model_name"],
             embedding_dimension=expected_dim,
             sample=[],
             duration_ms=round(duration_ms, 1),
@@ -191,7 +198,7 @@ def test_embedding_settings(
     if actual_dim != expected_dim:
         return EmbeddingTestResponse(
             success=False,
-            model_name=row.model_name,
+            model_name=resolved["model_name"],
             embedding_dimension=actual_dim,
             sample=vector[:5],
             duration_ms=round(duration_ms, 1),
@@ -205,13 +212,13 @@ def test_embedding_settings(
     logger.info(
         "Embedding test succeeded. project_id=%s model=%s dimension=%s duration_ms=%.1f",
         project_id,
-        row.model_name,
+        resolved["model_name"],
         actual_dim,
         duration_ms,
     )
     return EmbeddingTestResponse(
         success=True,
-        model_name=row.model_name,
+        model_name=resolved["model_name"],
         embedding_dimension=actual_dim,
         sample=[round(v, 6) for v in vector[:5]],
         duration_ms=round(duration_ms, 1),

@@ -11,6 +11,7 @@ class ProjectAISettingsResponse(BaseModel):
 
     id: int
     project_id: int
+    ai_service_profile_id: Optional[int] = None
     provider: str
     endpoint_url: str
     model_name: str
@@ -26,6 +27,7 @@ class ProjectAISettingsResponse(BaseModel):
 
 
 class ProjectAISettingsUpdate(BaseModel):
+    ai_service_profile_id: Optional[int] = None
     provider: str = "llama-server"
     endpoint_url: str
     model_name: str

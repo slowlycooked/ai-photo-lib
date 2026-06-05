@@ -19,6 +19,7 @@ from app.models import location_cache  # noqa: F401, E402
 from app.models import project_search_settings  # noqa: F401, E402
 from app.models import derivative  # noqa: F401, E402
 from app.models import project_task  # noqa: F401, E402
+from app.models import user  # noqa: F401, E402
 
 config = context.config
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from ..api.deps import require_project
+from ..api.deps import require_project, require_project_manager
 from ..database import get_db
 from ..models.project import Project
 from ..schemas.project_ai import (
@@ -37,7 +37,7 @@ def get_project_ai_settings(
 @router.post("/{project_id}/ai-settings/init", response_model=ProjectAISettingsResponse)
 def init_project_ai_settings(
     project_id: int,
-    project: Project = Depends(require_project),
+    project: Project = Depends(require_project_manager),
     db: Session = Depends(get_db),
 ):
     """Explicitly initialize project AI settings and default prompt template."""
@@ -48,7 +48,7 @@ def init_project_ai_settings(
 def update_project_ai_settings(
     project_id: int,
     body: ProjectAISettingsUpdate,
-    project: Project = Depends(require_project),
+    project: Project = Depends(require_project_manager),
     db: Session = Depends(get_db),
 ):
     """Update AI settings for a project."""

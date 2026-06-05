@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 
 from ..config import settings
 from ..models.ai import ProjectEmbeddingSettings
+from ..models.user import AIServiceProfile
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +79,7 @@ def get_or_create_project_embedding_settings(
 
     row = ProjectEmbeddingSettings(
         project_id=project_id,
+        ai_service_profile_id=None,
         provider="openai-compatible",
         endpoint_url=base_url,
         api_key=settings.embedding_api_key or settings.openai_api_key or None,
@@ -114,6 +116,7 @@ def update_project_embedding_settings(
 
     allowed_fields = {
         "provider",
+        "ai_service_profile_id",
         "endpoint_url",
         "api_key",
         "model_name",
@@ -205,6 +208,27 @@ def resolve_embedding_settings_strict(
 
     endpoint_url = (row.endpoint_url or "").strip()
     model_name = (row.model_name or "").strip()
+    api_key = row.api_key
+    if row.ai_service_profile_id is not None:
+        profile = (
+            db.query(AIServiceProfile)
+            .filter(
+                AIServiceProfile.id == row.ai_service_profile_id,
+                AIServiceProfile.enabled.is_(True),
+            )
+            .first()
+        )
+        if profile is None:
+            raise RuntimeError(
+                f"AI service profile {row.ai_service_profile_id} is not available for project_id={project_id}."
+            )
+        if profile.capability != "embedding":
+            raise RuntimeError(
+                f"AI service profile {profile.id} has capability={profile.capability!r}; expected 'embedding'."
+            )
+        endpoint_url = (profile.endpoint_url or "").strip()
+        model_name = (profile.model_name or "").strip()
+        api_key = profile.api_key
     if not endpoint_url or not model_name:
         raise RuntimeError(
             f"Embedding settings for project_id={project_id} are incomplete. "
@@ -213,7 +237,7 @@ def resolve_embedding_settings_strict(
 
     return {
         "endpoint_url": endpoint_url,
-        "api_key": row.api_key,
+        "api_key": api_key,
         "model_name": model_name,
         "embedding_dimension": row.embedding_dimension,
         "timeout_seconds": row.timeout_seconds,

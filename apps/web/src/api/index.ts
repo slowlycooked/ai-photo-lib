@@ -103,6 +103,21 @@ export type {
   TimelineResponse,
 } from "./types";
 export type { AuthSession } from "./auth";
+export type {
+  AIServiceProfile,
+  AIServiceProfileCreate,
+  AIServiceProfileListResponse,
+  AIServiceProfileUpdate,
+  AICapability,
+  ProjectMembershipListResponse,
+  ProjectMembershipResponse,
+  ProjectRole,
+  SystemRole,
+  UserCreate,
+  UserListResponse,
+  UserResponse,
+  UserUpdate,
+} from "./admin";
 export {
   DEFAULT_DEBUG_PRESETS,
   normaliseDebugMode,
@@ -123,8 +138,10 @@ export { projectSearchApi } from "./projectSearch";
 export { projectSettingsApi } from "./projectSettings";
 export { projectTasksApi } from "./projectTasks";
 export { settingsApi } from "./settings";
+export { adminApi } from "./admin";
 
 import * as authApi from "./auth";
+import { adminApi } from "./admin";
 import { foldersApi } from "./folders";
 import { projectAiJobsApi } from "./projectAiJobs";
 import { projectCoreApi } from "./projectCore";
@@ -168,6 +185,7 @@ export const api = {
   projectTasks: projectTasksApi,
   folders: foldersApi,
   settings: settingsApi,
+  admin: adminApi,
 } as const;
 
 export { authApi };

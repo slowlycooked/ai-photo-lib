@@ -5,13 +5,6 @@ import { ProjectSelector } from "./ProjectSelector";
 import { useProjectContext } from "@/contexts/ProjectContext";
 import { useAuth } from "@/contexts/AuthContext";
 
-const staticNavItems = [
-  { to: "/photos", label: "照片", icon: Images },
-  { to: "/tags", label: "标签", icon: Tag },
-  { to: "/tasks", label: "任务", icon: ListTodo },
-  { to: "/settings", label: "设置", icon: Settings },
-];
-
 export function Header() {
   const { currentProjectId } = useProjectContext();
   const auth = useAuth();
@@ -19,16 +12,29 @@ export function Header() {
   const location = useLocation();
   const navigate = useNavigate();
   const navItems = useMemo(
-    () => [
+    () => {
+      const items = [
       { to: "/photos", label: "照片", icon: Images },
       {
         to: currentProjectId != null ? `/projects/${currentProjectId}/people` : "/photos",
         label: "人物",
         icon: Users,
       },
-      ...staticNavItems.slice(1),
-    ],
-    [currentProjectId],
+      { to: "/tags", label: "标签", icon: Tag },
+      { to: "/tasks", label: "任务", icon: ListTodo },
+      ];
+      if (auth.session?.role === "admin") {
+        items.push({ to: "/settings", label: "设置", icon: Settings });
+      } else if (auth.session?.role === "project_manager" && currentProjectId != null) {
+        items.push({
+          to: `/projects/${currentProjectId}/settings/vision-ai`,
+          label: "项目设置",
+          icon: Settings,
+        });
+      }
+      return items;
+    },
+    [auth.session?.role, currentProjectId],
   );
 
   // Pre-fill search input from URL when on /search

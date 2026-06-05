@@ -36,8 +36,8 @@ from ..services.project_ai_service import (
     TASK_IMAGE_ANALYSIS,
     analyze_and_parse_with_strict_json_retry,
     get_active_prompt_template_strict,
-    get_project_ai_settings_strict,
     render_analysis_prompt_parts,
+    resolve_project_ai_runtime_settings,
 )
 from ..services.project_embedding_settings_service import resolve_embedding_settings_strict
 from ..services.thumbnail import generate_thumbnail
@@ -225,27 +225,29 @@ class AIJobAppService:
         self, job: AIJob, photo: Photo, project_id: int
     ) -> None:
         try:
-            ai_settings = get_project_ai_settings_strict(self._db, project_id)
+            ai_settings = resolve_project_ai_runtime_settings(self._db, project_id)
             prompt_template = get_active_prompt_template_strict(
                 self._db,
                 project_id,
                 task_type=TASK_IMAGE_ANALYSIS,
+                template_id=ai_settings.get("active_prompt_template_id"),
             )
             system_text, user_text = render_analysis_prompt_parts(
                 photo=photo,
                 prompt_template=prompt_template,
-                output_language=ai_settings.output_language,
+                output_language=ai_settings["output_language"],
             )
 
             job.prompt_template_id = prompt_template.id
             job.prompt_version = prompt_template.version
-            job.model_name = ai_settings.model_name
+            job.model_name = ai_settings["model_name"]
             job.model_params = {
-                "endpoint_url": ai_settings.endpoint_url,
-                "temperature": ai_settings.temperature,
-                "top_p": ai_settings.top_p,
-                "max_tokens": ai_settings.max_tokens,
-                "json_parse_strategy": ai_settings.json_parse_strategy,
+                "endpoint_url": ai_settings["endpoint_url"],
+                "ai_service_profile_id": ai_settings.get("ai_service_profile_id"),
+                "temperature": ai_settings["temperature"],
+                "top_p": ai_settings["top_p"],
+                "max_tokens": ai_settings["max_tokens"],
+                "json_parse_strategy": ai_settings["json_parse_strategy"],
             }
 
             image_path = self._pick_image_path(photo)
@@ -265,14 +267,14 @@ class AIJobAppService:
                 analyze_image_fn=analyze_image,
                 parse_output_fn=parse_model_json_output,
                 image_path=image_path,
-                endpoint_url=ai_settings.endpoint_url,
-                model_name=ai_settings.model_name,
+                endpoint_url=ai_settings["endpoint_url"],
+                model_name=ai_settings["model_name"],
                 system_text=system_text,
                 user_text=user_text,
-                strategy=ai_settings.json_parse_strategy,
-                temperature=ai_settings.temperature,
-                top_p=ai_settings.top_p,
-                max_tokens=ai_settings.max_tokens,
+                strategy=ai_settings["json_parse_strategy"],
+                temperature=ai_settings["temperature"],
+                top_p=ai_settings["top_p"],
+                max_tokens=ai_settings["max_tokens"],
             )
             job.raw_model_output = raw_text[:_MAX_ERROR_LEN]
 
@@ -301,7 +303,7 @@ class AIJobAppService:
             analysis = PhotoAIAnalysis(
                 project_id=project_id,
                 photo_id=photo.id,
-                model_name=ai_settings.model_name,
+                model_name=ai_settings["model_name"],
                 model_version=None,
                 caption=parsed.get("caption", ""),
                 ocr_text="\n".join(parsed.get("ocr_text", [])),

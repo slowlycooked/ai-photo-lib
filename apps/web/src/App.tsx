@@ -31,7 +31,7 @@ function AppRoutes() {
   const location = useLocation();
 
   useEffect(() => {
-    if (auth.status !== "authenticated") return;
+    if (auth.status !== "authenticated" || auth.session?.role !== "admin") return;
 
     let cancelled = false;
 
@@ -54,7 +54,7 @@ function AppRoutes() {
     return () => {
       cancelled = true;
     };
-  }, [auth.status]);
+  }, [auth.status, auth.session?.role]);
 
   if (auth.status === "loading") {
     return (
@@ -90,9 +90,19 @@ function AppRoutes() {
           <Route path="/people" element={<Navigate to="/photos" replace />} />
           <Route path="/tags" element={<TagsPage />} />
           <Route path="/tasks" element={<TasksPage />} />
-          <Route path="/settings/*" element={<SettingsPage />} />
+          <Route
+            path="/settings/*"
+            element={auth.session?.role === "admin" ? <SettingsPage /> : <Navigate to="/photos" replace />}
+          />
           {/* Project settings center (keeps /settings/ai compatibility inside page) */}
-          <Route path="/projects/:projectId/settings/*" element={<ProjectAISettingsPage />} />
+          <Route
+            path="/projects/:projectId/settings/*"
+            element={
+              auth.session?.role === "admin" || auth.session?.role === "project_manager"
+                ? <ProjectAISettingsPage />
+                : <Navigate to="/photos" replace />
+            }
+          />
           <Route path="/projects/:projectId/people" element={<PeoplePage />} />
           <Route path="/projects/:projectId/people/review" element={<PeopleReviewPage />} />
         </Routes>

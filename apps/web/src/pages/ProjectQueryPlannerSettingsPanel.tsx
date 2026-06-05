@@ -20,6 +20,12 @@ export default function ProjectQueryPlannerSettingsPanel({ projectId }: Props) {
     queryKey: ["project-query-planner-settings", projectId],
     queryFn: () => api.projectSettings.getQueryPlanner(projectId),
   });
+  const { data: aiProfiles } = useQuery({
+    queryKey: ["ai-service-profiles"],
+    queryFn: api.admin.listAIProfiles,
+    staleTime: 30_000,
+  });
+  const plannerProfiles = (aiProfiles?.items ?? []).filter((profile) => profile.capability === "query_planner");
 
   const [form, setForm] = useState<Partial<ProjectQueryPlannerSettingsUpdate>>({});
   const [saved, setSaved] = useState(false);
@@ -135,6 +141,23 @@ export default function ProjectQueryPlannerSettingsPanel({ projectId }: Props) {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
+        <div className="md:col-span-4 rounded border border-hairline bg-surface-soft px-3 py-2">
+          <p className="text-caption-sm text-mute mb-1">系统 AI 服务</p>
+          <select
+            value={effective.ai_service_profile_id ?? ""}
+            onChange={(e) =>
+              setField("ai_service_profile_id", e.target.value ? Number(e.target.value) : null)
+            }
+            className="w-full rounded-md border border-hairline bg-surface-card px-3 py-1.5 text-body-sm"
+          >
+            <option value="">不绑定，使用项目内 Planner 配置</option>
+            {plannerProfiles.map((profile) => (
+              <option key={profile.id} value={profile.id}>
+                {profile.name} · {profile.model_name}
+              </option>
+            ))}
+          </select>
+        </div>
         <div className="rounded border border-hairline bg-surface-soft px-3 py-2">
           <p className="text-caption-sm text-mute">Enabled</p>
           <p className="text-body-sm text-ink">{effective.enabled ? "Yes" : "No"}</p>

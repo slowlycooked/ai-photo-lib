@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from ..api.deps import get_db, require_project
+from ..api.deps import get_db, require_project, require_project_manager
 from ..models.project import Project
 from ..schemas.project_query_planner_settings import (
     QueryPlannerTestRequest,
@@ -40,10 +40,12 @@ def get_query_planner_settings(
 def put_query_planner_settings(
     project_id: int,
     body: ProjectQueryPlannerSettingsUpdate,
-    project: Project = Depends(require_project),
+    project: Project = Depends(require_project_manager),
     db: Session = Depends(get_db),
 ) -> ProjectQueryPlannerSettingsResponse:
     updates = body.model_dump(exclude_none=True)
+    if "ai_service_profile_id" in body.model_fields_set:
+        updates["ai_service_profile_id"] = body.ai_service_profile_id
     row = update_project_query_planner_settings(db, project_id, updates)
     return ProjectQueryPlannerSettingsResponse.model_validate(row)
 
@@ -51,7 +53,7 @@ def put_query_planner_settings(
 @router.post("/reset", response_model=ProjectQueryPlannerSettingsResponse)
 def post_reset_query_planner_settings(
     project_id: int,
-    project: Project = Depends(require_project),
+    project: Project = Depends(require_project_manager),
     db: Session = Depends(get_db),
 ) -> ProjectQueryPlannerSettingsResponse:
     row = reset_project_query_planner_settings(db, project_id)
@@ -62,7 +64,7 @@ def post_reset_query_planner_settings(
 def post_test_query_planner(
     project_id: int,
     body: QueryPlannerTestRequest,
-    project: Project = Depends(require_project),
+    project: Project = Depends(require_project_manager),
     db: Session = Depends(get_db),
 ) -> QueryPlannerTestResponse:
     settings = SearchSettingsResolver.resolve(db, project_id)

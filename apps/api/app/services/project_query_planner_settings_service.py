@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from ..config import settings as global_settings
 from ..models.ai import ProjectQueryPlannerSettings
+from ..models.user import AIServiceProfile
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +91,7 @@ def get_or_create_project_query_planner_settings(
 
     row = ProjectQueryPlannerSettings(
         project_id=project_id,
+        ai_service_profile_id=None,
         enabled=True,
         provider="llama-server",
         endpoint_url=_default_query_planner_endpoint_url(),
@@ -124,6 +126,7 @@ def update_project_query_planner_settings(
 
     allowed_fields = {
         "enabled",
+        "ai_service_profile_id",
         "provider",
         "endpoint_url",
         "api_key",
@@ -196,12 +199,43 @@ def resolve_query_planner_settings(
 
     row = get_project_query_planner_settings(db, project_id)
     if row is not None:
+        endpoint_url = _as_text(row.endpoint_url)
+        api_key = _as_text(row.api_key, defaults["api_key"])
+        model_name = _as_text(row.model_name)
+        provider = _as_text(row.provider, defaults["provider"])
+        if row.ai_service_profile_id is not None:
+            profile = (
+                db.query(AIServiceProfile)
+                .filter(
+                    AIServiceProfile.id == row.ai_service_profile_id,
+                    AIServiceProfile.enabled.is_(True),
+                )
+                .first()
+            )
+            if profile is None:
+                logger.warning(
+                    "Query planner AI service profile unavailable. project_id=%s profile_id=%s",
+                    project_id,
+                    row.ai_service_profile_id,
+                )
+            elif profile.capability != "query_planner":
+                logger.warning(
+                    "Query planner profile capability mismatch. project_id=%s profile_id=%s capability=%s",
+                    project_id,
+                    profile.id,
+                    profile.capability,
+                )
+            else:
+                endpoint_url = _as_text(profile.endpoint_url)
+                api_key = _as_text(profile.api_key, defaults["api_key"])
+                model_name = _as_text(profile.model_name)
+                provider = _as_text(profile.provider, defaults["provider"])
         return {
             "enabled": bool(row.enabled),
-            "provider": _as_text(row.provider, defaults["provider"]),
-            "endpoint_url": _as_text(row.endpoint_url),
-            "api_key": _as_text(row.api_key, defaults["api_key"]),
-            "model_name": _as_text(row.model_name),
+            "provider": provider,
+            "endpoint_url": endpoint_url,
+            "api_key": api_key,
+            "model_name": model_name,
             "temperature": _as_float(row.temperature, defaults["temperature"]),
             "top_p": _as_float(row.top_p, defaults["top_p"]),
             "max_tokens": _as_int(row.max_tokens, defaults["max_tokens"]),

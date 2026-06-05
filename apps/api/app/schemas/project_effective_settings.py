@@ -13,3 +13,4 @@ class EffectiveSettingValue(BaseModel):
 
 class ProjectEffectiveSettingsResponse(BaseModel):
     search: dict[str, EffectiveSettingValue]
+    ai: dict[str, dict[str, EffectiveSettingValue]] = {}

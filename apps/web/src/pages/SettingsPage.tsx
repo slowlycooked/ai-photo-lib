@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link, Navigate, useLocation } from "react-router-dom";
+import { Link, Navigate, useLocation, useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Loader2,
@@ -15,6 +15,7 @@ import {
   AlertTriangle,
   Activity,
   CheckCircle2,
+  RefreshCw,
 } from "lucide-react";
 import {
   api,
@@ -25,6 +26,8 @@ import {
   type DebugSettingsUpdate,
   type LogLevel,
   type Project,
+  type SystemRole,
+  type AICapability,
 } from "@/api";
 import { queryKeys } from "@/api/queryKeys";
 import {
@@ -34,6 +37,7 @@ import {
   useDeleteProject,
 } from "@/hooks/useProjects";
 import { useProjectContext } from "@/contexts/ProjectContext";
+import { useAuth } from "@/contexts/AuthContext";
 import { configureFrontendLogger } from "@/lib/logger";
 import { SettingsLayout } from "@/components/settings/SettingsLayout";
 
@@ -790,6 +794,570 @@ export function SystemHealthCard() {
   );
 }
 
+function UsersManagementCard() {
+  const queryClient = useQueryClient();
+  const navigate = useNavigate();
+  const auth = useAuth();
+  const { data: projectsData } = useProjects();
+  const { data, isLoading, isError } = useQuery({
+    queryKey: ["admin-users"],
+    queryFn: api.admin.listUsers,
+    staleTime: 30_000,
+  });
+  const [selectedAccessUserId, setSelectedAccessUserId] = useState<number | null>(null);
+  const [form, setForm] = useState({
+    username: "",
+    password: "",
+    display_name: "",
+    role: "viewer" as SystemRole,
+  });
+
+  const createMutation = useMutation({
+    mutationFn: () =>
+      api.admin.createUser({
+        username: form.username.trim(),
+        password: form.password,
+        display_name: form.display_name.trim() || null,
+        role: form.role,
+        status: "active",
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["admin-users"] });
+      setForm({ username: "", password: "", display_name: "", role: "viewer" });
+    },
+  });
+  const updateMutation = useMutation({
+    mutationFn: ({ userId, role, status }: { userId: number; role?: SystemRole; status?: string }) =>
+      api.admin.updateUser(userId, { role, status }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["admin-users"] }),
+  });
+  const deleteMutation = useMutation({
+    mutationFn: (userId: number) => api.admin.deleteUser(userId),
+    onSuccess: async (_data, userId) => {
+      await queryClient.invalidateQueries({ queryKey: ["admin-users"] });
+      if (selectedAccessUserId === userId) {
+        setSelectedAccessUserId(null);
+      }
+      if (auth.session?.user_id === userId) {
+        await auth.logout();
+        navigate("/login", { replace: true });
+      }
+    },
+  });
+
+  const { data: selectedAccessData, isLoading: accessLoading, isError: accessError } = useQuery({
+    queryKey: ["user-project-access", selectedAccessUserId],
+    queryFn: () => api.admin.listUserProjectAccess(selectedAccessUserId!),
+    enabled: selectedAccessUserId != null,
+    staleTime: 30_000,
+  });
+
+  const projectAccessMutation = useMutation({
+    mutationFn: ({ projectId, projectRole }: { projectId: number; projectRole: "viewer" | "manager" }) =>
+      api.admin.upsertUserProjectAccess(selectedAccessUserId!, projectId, { project_role: projectRole }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["user-project-access", selectedAccessUserId] });
+      queryClient.invalidateQueries({ queryKey: ["admin-users"] });
+    },
+  });
+
+  const projectAccessDeleteMutation = useMutation({
+    mutationFn: (projectId: number) => api.admin.deleteUserProjectAccess(selectedAccessUserId!, projectId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["user-project-access", selectedAccessUserId] });
+      queryClient.invalidateQueries({ queryKey: ["admin-users"] });
+    },
+  });
+
+  const selectedAccessUser = data?.items.find((user) => user.id === selectedAccessUserId) ?? null;
+  const selectedAccessMap = useMemo(
+    () => new Map((selectedAccessData?.items ?? []).map((item) => [item.project_id, item])),
+    [selectedAccessData],
+  );
+
+  return (
+    <SettingsCard title="用户管理">
+      <div className="py-4 space-y-4">
+        <div className="grid grid-cols-1 md:grid-cols-[1fr_1fr_1fr_160px_auto] gap-2">
+          <input
+            value={form.username}
+            onChange={(e) => setForm((x) => ({ ...x, username: e.target.value }))}
+            placeholder="用户名"
+            className="px-3 py-2 text-body-sm bg-surface-card border border-hairline rounded-md"
+          />
+          <input
+            value={form.display_name}
+            onChange={(e) => setForm((x) => ({ ...x, display_name: e.target.value }))}
+            placeholder="显示名"
+            className="px-3 py-2 text-body-sm bg-surface-card border border-hairline rounded-md"
+          />
+          <input
+            type="password"
+            value={form.password}
+            onChange={(e) => setForm((x) => ({ ...x, password: e.target.value }))}
+            placeholder="初始密码"
+            className="px-3 py-2 text-body-sm bg-surface-card border border-hairline rounded-md"
+          />
+          <select
+            value={form.role}
+            onChange={(e) => setForm((x) => ({ ...x, role: e.target.value as SystemRole }))}
+            className="px-3 py-2 text-body-sm bg-surface-card border border-hairline rounded-md"
+          >
+            <option value="viewer">viewer</option>
+            <option value="project_manager">project_manager</option>
+            <option value="admin">admin</option>
+          </select>
+          <button
+            onClick={() => createMutation.mutate()}
+            disabled={createMutation.isPending || !form.username.trim() || form.password.length < 6}
+            className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-md bg-primary text-white text-btn-sm font-bold disabled:opacity-50"
+          >
+            {createMutation.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
+            新建
+          </button>
+        </div>
+
+        {createMutation.isError && (
+          <p className="text-caption-sm text-red-500">创建失败：{(createMutation.error as Error).message}</p>
+        )}
+        {deleteMutation.isError && (
+          <p className="text-caption-sm text-red-500">删除失败：{(deleteMutation.error as Error).message}</p>
+        )}
+
+        {isLoading && <div className="py-6 text-body-sm text-mute">加载用户中…</div>}
+        {isError && <div className="py-6 text-body-sm text-red-500">无法加载用户列表</div>}
+        {data && (
+          <div className="overflow-x-auto rounded-md border border-hairline">
+            <table className="min-w-full text-body-sm">
+              <thead className="bg-secondary-bg text-mute">
+                <tr>
+                  <th className="px-3 py-2 text-left">用户</th>
+                  <th className="px-3 py-2 text-left">角色</th>
+                  <th className="px-3 py-2 text-left">状态</th>
+                  <th className="px-3 py-2 text-left">操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.items.map((user) => (
+                  <tr key={user.id} className="border-t border-hairline">
+                    <td className="px-3 py-2">
+                      <div className="font-medium text-ink">{user.username}</div>
+                      <div className="text-caption-sm text-mute">{user.display_name || "-"}</div>
+                    </td>
+                    <td className="px-3 py-2">
+                      <select
+                        value={user.role}
+                        onChange={(e) =>
+                          updateMutation.mutate({ userId: user.id, role: e.target.value as SystemRole })
+                        }
+                        className="px-2 py-1 rounded-md border border-hairline bg-surface-card"
+                      >
+                        <option value="viewer">viewer</option>
+                        <option value="project_manager">project_manager</option>
+                        <option value="admin">admin</option>
+                      </select>
+                    </td>
+                    <td className="px-3 py-2 text-mute">{user.status}</td>
+                    <td className="px-3 py-2">
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() =>
+                            updateMutation.mutate({
+                              userId: user.id,
+                              status: user.status === "active" ? "disabled" : "active",
+                            })
+                          }
+                          className="px-2.5 py-1 rounded-md border border-hairline hover:bg-secondary-bg"
+                        >
+                          {user.status === "active" ? "禁用" : "启用"}
+                        </button>
+                        <button
+                          onClick={() => {
+                            if (!window.confirm(`确定删除用户“${user.username}”吗？此操作不可恢复。`)) {
+                              return;
+                            }
+                            deleteMutation.mutate(user.id);
+                          }}
+                          disabled={deleteMutation.isPending}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md border border-red-200 text-red-600 hover:bg-red-50 disabled:opacity-50"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          删除
+                        </button>
+                        <button
+                          onClick={() => setSelectedAccessUserId(user.id)}
+                          className="px-2.5 py-1 rounded-md border border-hairline hover:bg-secondary-bg"
+                        >
+                          项目权限
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        <SettingsCard title="项目权限配置">
+          <div className="py-4 space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-2 items-end">
+              <div>
+                <label className="block text-caption-sm text-mute mb-1">选择用户</label>
+                <select
+                  value={selectedAccessUserId ?? ""}
+                  onChange={(e) => setSelectedAccessUserId(e.target.value ? Number(e.target.value) : null)}
+                  className="w-full px-3 py-2 text-body-sm bg-surface-card border border-hairline rounded-md"
+                >
+                  <option value="">请选择一个用户</option>
+                  {(data?.items ?? []).map((user) => (
+                    <option key={user.id} value={user.id}>
+                      {user.username} ({user.role})
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="text-caption-sm text-mute">查看=可见项目，管理=可见并可配置该项目成员</div>
+            </div>
+
+            {!selectedAccessUser && <div className="text-body-sm text-mute">选择一个用户后，可以为他配置可查看的项目。</div>}
+
+            {selectedAccessUser && accessLoading && <div className="text-body-sm text-mute">加载项目权限中…</div>}
+            {selectedAccessUser && accessError && <div className="text-body-sm text-red-500">无法加载项目权限</div>}
+
+            {selectedAccessUser && projectsData && (
+              <div className="overflow-hidden rounded-md border border-hairline">
+                {projectsData.items.map((project) => {
+                  const access = selectedAccessMap.get(project.id);
+                  return (
+                    <div key={project.id} className="flex flex-col gap-3 border-b border-hairline px-3 py-3 last:border-0 md:flex-row md:items-center md:justify-between">
+                      <div>
+                        <div className="text-body-sm font-medium text-ink">{project.name}</div>
+                        <div className="text-caption-sm text-mute">{project.description || "未填写描述"}</div>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-caption-sm text-mute rounded border border-hairline px-2 py-1">
+                          {access ? `当前：${access.project_role}` : "未授权"}
+                        </span>
+                        <button
+                          onClick={() => projectAccessMutation.mutate({ projectId: project.id, projectRole: "viewer" })}
+                          disabled={projectAccessMutation.isPending}
+                          className="px-2.5 py-1 rounded-md border border-hairline hover:bg-secondary-bg disabled:opacity-50"
+                        >
+                          查看
+                        </button>
+                        <button
+                          onClick={() => projectAccessMutation.mutate({ projectId: project.id, projectRole: "manager" })}
+                          disabled={projectAccessMutation.isPending}
+                          className="px-2.5 py-1 rounded-md border border-hairline hover:bg-secondary-bg disabled:opacity-50"
+                        >
+                          管理
+                        </button>
+                        <button
+                          onClick={() => projectAccessDeleteMutation.mutate(project.id)}
+                          disabled={projectAccessDeleteMutation.isPending || !access}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md border border-red-200 text-red-600 hover:bg-red-50 disabled:opacity-50"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          移除
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </SettingsCard>
+      </div>
+    </SettingsCard>
+  );
+}
+
+function ProjectMembersCard({ projectId }: { projectId: number | null }) {
+  const queryClient = useQueryClient();
+  const { data: usersData } = useQuery({
+    queryKey: ["admin-users"],
+    queryFn: api.admin.listUsers,
+    staleTime: 30_000,
+  });
+  const { data, isLoading, isError } = useQuery({
+    queryKey: ["project-members", projectId],
+    queryFn: () => api.admin.listProjectMembers(projectId!),
+    enabled: projectId != null,
+    staleTime: 30_000,
+  });
+  const [selectedUserId, setSelectedUserId] = useState<number | "">("");
+  const [projectRole, setProjectRole] = useState<"manager" | "viewer">("viewer");
+
+  const upsertMutation = useMutation({
+    mutationFn: () => api.admin.upsertProjectMember(projectId!, Number(selectedUserId), projectRole),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["project-members", projectId] });
+      setSelectedUserId("");
+      setProjectRole("viewer");
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (userId: number) => api.admin.deleteProjectMember(projectId!, userId),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["project-members", projectId] }),
+  });
+
+  if (projectId == null) {
+    return (
+      <SettingsCard title="项目授权">
+        <div className="py-4 text-body-sm text-mute">请选择一个项目后配置成员授权。</div>
+      </SettingsCard>
+    );
+  }
+
+  return (
+    <SettingsCard title="项目授权">
+      <div className="py-4 space-y-4">
+        <div className="grid grid-cols-1 md:grid-cols-[1fr_180px_auto] gap-2">
+          <select
+            value={selectedUserId}
+            onChange={(e) => setSelectedUserId(e.target.value ? Number(e.target.value) : "")}
+            className="px-3 py-2 text-body-sm bg-surface-card border border-hairline rounded-md"
+          >
+            <option value="">选择用户</option>
+            {(usersData?.items ?? []).map((user) => (
+              <option key={user.id} value={user.id}>
+                {user.username} ({user.role})
+              </option>
+            ))}
+          </select>
+          <select
+            value={projectRole}
+            onChange={(e) => setProjectRole(e.target.value as "manager" | "viewer")}
+            className="px-3 py-2 text-body-sm bg-surface-card border border-hairline rounded-md"
+          >
+            <option value="viewer">viewer</option>
+            <option value="manager">manager</option>
+          </select>
+          <button
+            onClick={() => upsertMutation.mutate()}
+            disabled={upsertMutation.isPending || selectedUserId === ""}
+            className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-md bg-primary text-white text-btn-sm font-bold disabled:opacity-50"
+          >
+            {upsertMutation.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+            授权
+          </button>
+        </div>
+
+        {isLoading && <div className="py-4 text-body-sm text-mute">加载项目成员中…</div>}
+        {isError && <div className="py-4 text-body-sm text-red-500">无法加载项目成员</div>}
+        {data && (
+          <div className="rounded-md border border-hairline overflow-hidden">
+            {data.items.map((member) => (
+              <div key={member.id} className="flex items-center justify-between gap-3 px-3 py-2 border-b border-hairline last:border-0">
+                <div>
+                  <div className="text-body-sm font-medium text-ink">{member.username}</div>
+                  <div className="text-caption-sm text-mute">{member.display_name || "-"} · {member.project_role}</div>
+                </div>
+                <button
+                  onClick={() => deleteMutation.mutate(member.user_id)}
+                  className="px-2.5 py-1 rounded-md border border-hairline text-mute hover:text-red-500 hover:bg-secondary-bg"
+                >
+                  移除
+                </button>
+              </div>
+            ))}
+            {data.items.length === 0 && (
+              <div className="px-3 py-6 text-center text-body-sm text-mute">当前项目尚未授权给任何数据库用户。</div>
+            )}
+          </div>
+        )}
+      </div>
+    </SettingsCard>
+  );
+}
+
+function AIServiceProfilesCard() {
+  const queryClient = useQueryClient();
+  const { data, isLoading, isError } = useQuery({
+    queryKey: ["ai-service-profiles"],
+    queryFn: api.admin.listAIProfiles,
+    staleTime: 30_000,
+  });
+  const [form, setForm] = useState({
+    name: "",
+    capability: "vision" as AICapability,
+    provider: "openai-compatible",
+    endpoint_url: "",
+    api_key: "",
+    model_name: "",
+    timeout_seconds: 60,
+    is_default: false,
+  });
+
+  const createMutation = useMutation({
+    mutationFn: () =>
+      api.admin.createAIProfile({
+        ...form,
+        api_key: form.api_key || null,
+        timeout_seconds: Number(form.timeout_seconds),
+      }),
+    onSuccess: (next) => {
+      queryClient.setQueryData(["ai-service-profiles"], next);
+      setForm({
+        name: "",
+        capability: "vision",
+        provider: "openai-compatible",
+        endpoint_url: "",
+        api_key: "",
+        model_name: "",
+        timeout_seconds: 60,
+        is_default: false,
+      });
+    },
+  });
+  const profileUpdateMutation = useMutation({
+    mutationFn: ({ id, body }: { id: number; body: Parameters<typeof api.admin.updateAIProfile>[1] }) =>
+      api.admin.updateAIProfile(id, body),
+    onSuccess: (next) => queryClient.setQueryData(["ai-service-profiles"], next),
+  });
+  const importEnvMutation = useMutation({
+    mutationFn: api.admin.importAIProfilesFromEnv,
+    onSuccess: (next) => queryClient.setQueryData(["ai-service-profiles"], next),
+  });
+
+  return (
+    <SettingsCard title="系统 AI 服务">
+      <div className="py-4 space-y-4">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+          <input
+            value={form.name}
+            onChange={(e) => setForm((x) => ({ ...x, name: e.target.value }))}
+            placeholder="服务名称"
+            className="px-3 py-2 text-body-sm bg-surface-card border border-hairline rounded-md"
+          />
+          <select
+            value={form.capability}
+            onChange={(e) => setForm((x) => ({ ...x, capability: e.target.value as AICapability }))}
+            className="px-3 py-2 text-body-sm bg-surface-card border border-hairline rounded-md"
+          >
+            <option value="vision">vision</option>
+            <option value="embedding">embedding</option>
+            <option value="query_planner">query_planner</option>
+          </select>
+          <input
+            value={form.provider}
+            onChange={(e) => setForm((x) => ({ ...x, provider: e.target.value }))}
+            placeholder="provider"
+            className="px-3 py-2 text-body-sm bg-surface-card border border-hairline rounded-md"
+          />
+          <input
+            value={form.endpoint_url}
+            onChange={(e) => setForm((x) => ({ ...x, endpoint_url: e.target.value }))}
+            placeholder="endpoint_url"
+            className="md:col-span-2 px-3 py-2 text-body-sm bg-surface-card border border-hairline rounded-md font-mono"
+          />
+          <input
+            value={form.model_name}
+            onChange={(e) => setForm((x) => ({ ...x, model_name: e.target.value }))}
+            placeholder="model_name"
+            className="px-3 py-2 text-body-sm bg-surface-card border border-hairline rounded-md"
+          />
+          <input
+            type="password"
+            value={form.api_key}
+            onChange={(e) => setForm((x) => ({ ...x, api_key: e.target.value }))}
+            placeholder="api_key"
+            className="px-3 py-2 text-body-sm bg-surface-card border border-hairline rounded-md"
+          />
+          <input
+            type="number"
+            value={form.timeout_seconds}
+            onChange={(e) => setForm((x) => ({ ...x, timeout_seconds: Number(e.target.value) }))}
+            className="px-3 py-2 text-body-sm bg-surface-card border border-hairline rounded-md"
+          />
+          <label className="flex items-center gap-2 px-3 py-2 text-body-sm">
+            <input
+              type="checkbox"
+              checked={form.is_default}
+              onChange={(e) => setForm((x) => ({ ...x, is_default: e.target.checked }))}
+            />
+            默认服务
+          </label>
+        </div>
+        <button
+          onClick={() => createMutation.mutate()}
+          disabled={createMutation.isPending || !form.name.trim() || !form.endpoint_url.trim() || !form.model_name.trim()}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-primary text-white text-btn-sm font-bold disabled:opacity-50"
+        >
+          {createMutation.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
+          添加 AI 服务
+        </button>
+        <button
+          onClick={() => importEnvMutation.mutate()}
+          disabled={importEnvMutation.isPending}
+          className="ml-2 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-hairline text-btn-sm text-ink hover:bg-secondary-bg disabled:opacity-50"
+        >
+          {importEnvMutation.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+          从环境配置导入
+        </button>
+
+        {isLoading && <div className="py-6 text-body-sm text-mute">加载 AI 服务中…</div>}
+        {isError && <div className="py-6 text-body-sm text-red-500">无法加载 AI 服务列表</div>}
+        {data && (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+            {data.items.map((profile) => (
+              <div key={profile.id} className="rounded-md border border-hairline p-3 bg-surface-card">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className="text-body-sm font-semibold text-ink">{profile.name}</div>
+                    <div className="text-caption-sm text-mute">{profile.capability} · {profile.provider}</div>
+                  </div>
+                  <div className="flex gap-1">
+                    {profile.is_default && <span className="text-caption-sm px-2 py-0.5 rounded bg-primary/10 text-primary">默认</span>}
+                    <span className="text-caption-sm px-2 py-0.5 rounded bg-secondary-bg text-mute">
+                      {profile.enabled ? "enabled" : "disabled"}
+                    </span>
+                  </div>
+                </div>
+                <div className="mt-3 space-y-1 text-caption-sm text-mute">
+                  <div className="break-all font-mono">{profile.endpoint_url || "endpoint hidden"}</div>
+                  <div>model: {profile.model_name}</div>
+                  <div>api key: {profile.has_api_key ? "已配置" : "未配置"}</div>
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button
+                    onClick={() => profileUpdateMutation.mutate({ id: profile.id, body: { enabled: !profile.enabled } })}
+                    className="px-2.5 py-1 rounded-md border border-hairline text-caption-sm hover:bg-secondary-bg"
+                  >
+                    {profile.enabled ? "停用" : "启用"}
+                  </button>
+                  {!profile.is_default && (
+                    <button
+                      onClick={() => profileUpdateMutation.mutate({ id: profile.id, body: { is_default: true } })}
+                      className="px-2.5 py-1 rounded-md border border-hairline text-caption-sm hover:bg-secondary-bg"
+                    >
+                      设为默认
+                    </button>
+                  )}
+                  <button
+                    onClick={() =>
+                      profileUpdateMutation.mutate({
+                        id: profile.id,
+                        body: { visible_to_projects: !profile.visible_to_projects },
+                      })
+                    }
+                    className="px-2.5 py-1 rounded-md border border-hairline text-caption-sm hover:bg-secondary-bg"
+                  >
+                    {profile.visible_to_projects ? "隐藏给项目" : "开放给项目"}
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </SettingsCard>
+  );
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export function SettingsPage() {
@@ -803,7 +1371,7 @@ export function SettingsPage() {
 
   const section = location.pathname.split("/")[2] ?? "";
   const activeSection = section === "" ? "general" : section;
-  const knownSections = new Set(["general", "monitoring", "debug"]);
+  const knownSections = new Set(["general", "ai-services", "users", "monitoring", "debug"]);
   const legacyProjectSectionMap: Record<string, string> = {
     ai: "vision-ai",
     "vision-ai": "vision-ai",
@@ -904,6 +1472,15 @@ export function SettingsPage() {
               </Link>
             </div>
           </SettingsCard>
+        </>
+      )}
+
+      {activeSection === "ai-services" && <AIServiceProfilesCard />}
+
+      {activeSection === "users" && (
+        <>
+          <UsersManagementCard />
+          <ProjectMembersCard projectId={currentProjectId} />
         </>
       )}
 

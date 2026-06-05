@@ -20,6 +20,12 @@ export function EmbeddingSettingsSection({ projectId }: { projectId: number }) {
     queryFn: () => api.projectSettings.getEmbedding(projectId),
     staleTime: 30_000,
   });
+  const { data: aiProfiles } = useQuery({
+    queryKey: ["ai-service-profiles"],
+    queryFn: api.admin.listAIProfiles,
+    staleTime: 30_000,
+  });
+  const embeddingProfiles = (aiProfiles?.items ?? []).filter((profile) => profile.capability === "embedding");
 
   const { data: status, isLoading: statusLoading, refetch: refetchStatus } = useQuery({
     queryKey: ["project-embedding-status", projectId],
@@ -30,6 +36,7 @@ export function EmbeddingSettingsSection({ projectId }: { projectId: number }) {
   useEffect(() => {
     if (!settings) return;
     setForm({
+      ai_service_profile_id: settings.ai_service_profile_id,
       provider: settings.provider,
       endpoint_url: settings.endpoint_url,
       model_name: settings.model_name,
@@ -127,6 +134,26 @@ export function EmbeddingSettingsSection({ projectId }: { projectId: number }) {
       </div>
 
       <div className="grid grid-cols-2 gap-3">
+        <div className="col-span-2">
+          <Label>系统 AI 服务</Label>
+          <select
+            className="input-base w-full"
+            value={form.ai_service_profile_id ?? ""}
+            onChange={(e) =>
+              setForm((current) => ({
+                ...current,
+                ai_service_profile_id: e.target.value ? Number(e.target.value) : null,
+              }))
+            }
+          >
+            <option value="">不绑定，使用项目内 Embedding 配置</option>
+            {embeddingProfiles.map((profile) => (
+              <option key={profile.id} value={profile.id}>
+                {profile.name} · {profile.model_name}
+              </option>
+            ))}
+          </select>
+        </div>
         <div>
           <Label>Endpoint URL</Label>
           <input
