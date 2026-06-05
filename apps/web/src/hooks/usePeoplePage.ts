@@ -45,7 +45,7 @@ export function usePeoplePage() {
 
   const { data: faceSettings } = useQuery({
     queryKey: ["project-face-settings", selectedProjectId],
-    queryFn: () => api.projects.getFaceSettings(selectedProjectId!),
+    queryFn: () => api.projectSettings.getFace(selectedProjectId!),
     enabled: selectedProjectId != null,
     staleTime: 30_000,
   });
@@ -61,7 +61,7 @@ export function usePeoplePage() {
   } = useQuery({
     queryKey: [...queryKeys.projectPeople(selectedProjectId, true), filterMode, searchText.trim()],
     queryFn: () =>
-      api.projects.people(selectedProjectId!, true, 200, {
+      api.projectPeople.list(selectedProjectId!, true, 200, {
         is_named: filterMode === "named" ? true : filterMode === "unnamed" ? false : undefined,
         has_review_pending: filterMode === "review_pending" ? true : undefined,
         min_auto_assigned_count: filterMode === "auto_assigned" ? 1 : undefined,
@@ -94,14 +94,14 @@ export function usePeoplePage() {
     error: personError,
   } = useQuery({
     queryKey: queryKeys.projectPerson(selectedProjectId, resolvedSelectedPersonId),
-    queryFn: () => api.projects.person(selectedProjectId!, resolvedSelectedPersonId!),
+    queryFn: () => api.projectPeople.get(selectedProjectId!, resolvedSelectedPersonId!),
     enabled: resolvedSelectedPersonId != null,
     staleTime: 15_000,
   });
 
   const { data: reviewData } = useQuery({
     queryKey: ["project-review-pending", selectedProjectId, resolvedSelectedPersonId],
-    queryFn: () => api.projects.reviewPending(selectedProjectId!, resolvedSelectedPersonId, 500, 0),
+    queryFn: () => api.projectPeople.reviewPending(selectedProjectId!, resolvedSelectedPersonId, 500, 0),
     enabled: resolvedSelectedPersonId != null,
     staleTime: 15_000,
   });
@@ -155,14 +155,14 @@ export function usePeoplePage() {
 
   const renameMutation = useMutation({
     mutationFn: (displayName: string) =>
-      api.projects.renamePerson(selectedProjectId!, resolvedSelectedPersonId!, displayName),
+      api.projectPeople.rename(selectedProjectId!, resolvedSelectedPersonId!, displayName),
     onSuccess: (result) => handleSuccess(`人物名称已更新${feedbackSuffix(result.feedback_effects)}`),
     onError: handleError,
   });
 
   const confirmMutation = useMutation({
     mutationFn: (faceId: number) =>
-      api.projects.confirmPersonFace(selectedProjectId!, resolvedSelectedPersonId!, faceId),
+      api.projectPeople.confirmFace(selectedProjectId!, resolvedSelectedPersonId!, faceId),
     onSuccess: (result) =>
       handleSuccess(`已确认这张脸属于当前人物${feedbackSuffix(result.feedback_effects)}`),
     onError: handleError,
@@ -170,14 +170,14 @@ export function usePeoplePage() {
 
   const rejectMutation = useMutation({
     mutationFn: (faceId: number) =>
-      api.projects.rejectPersonFace(selectedProjectId!, resolvedSelectedPersonId!, faceId),
+      api.projectPeople.rejectFace(selectedProjectId!, resolvedSelectedPersonId!, faceId),
     onSuccess: (result) => handleSuccess(`已标记为不是此人${feedbackSuffix(result.feedback_effects)}`),
     onError: handleError,
   });
 
   const moveMutation = useMutation({
     mutationFn: ({ faceId, targetPersonId }: { faceId: number; targetPersonId: number }) =>
-      api.projects.movePersonFace(selectedProjectId!, resolvedSelectedPersonId!, faceId, {
+      api.projectPeople.moveFace(selectedProjectId!, resolvedSelectedPersonId!, faceId, {
         target_person_id: targetPersonId,
       }),
     onSuccess: (result) => handleSuccess(`已移动到目标人物${feedbackSuffix(result.feedback_effects)}`),
@@ -186,14 +186,14 @@ export function usePeoplePage() {
 
   const representativeMutation = useMutation({
     mutationFn: (faceId: number) =>
-      api.projects.setPersonRepresentativeFace(selectedProjectId!, resolvedSelectedPersonId!, faceId),
+      api.projectPeople.setRepresentativeFace(selectedProjectId!, resolvedSelectedPersonId!, faceId),
     onSuccess: (result) => handleSuccess(`代表头像已更新${feedbackSuffix(result.feedback_effects)}`),
     onError: handleError,
   });
 
   const batchConfirmMutation = useMutation({
     mutationFn: (faceIds: number[]) =>
-      api.projects.batchConfirmReview(selectedProjectId!, resolvedSelectedPersonId!, {
+      api.projectPeople.batchConfirmReview(selectedProjectId!, resolvedSelectedPersonId!, {
         face_detection_ids: faceIds,
       }),
     onSuccess: (result) =>
@@ -210,7 +210,7 @@ export function usePeoplePage() {
 
   const batchRejectMutation = useMutation({
     mutationFn: (faceIds: number[]) =>
-      api.projects.batchRejectReview(selectedProjectId!, resolvedSelectedPersonId!, {
+      api.projectPeople.batchRejectReview(selectedProjectId!, resolvedSelectedPersonId!, {
         face_detection_ids: faceIds,
       }),
     onSuccess: (result) =>
@@ -227,7 +227,7 @@ export function usePeoplePage() {
 
   const batchMoveMutation = useMutation({
     mutationFn: ({ faceIds, targetPersonId }: { faceIds: number[]; targetPersonId: number }) =>
-      api.projects.batchMoveReview(selectedProjectId!, resolvedSelectedPersonId!, {
+      api.projectPeople.batchMoveReview(selectedProjectId!, resolvedSelectedPersonId!, {
         face_detection_ids: faceIds,
         target_person_id: targetPersonId,
       }),
@@ -245,7 +245,7 @@ export function usePeoplePage() {
 
   const createPersonMutation = useMutation({
     mutationFn: (payload: { display_name?: string }) =>
-      api.projects.createPerson(selectedProjectId!, {
+      api.projectPeople.create(selectedProjectId!, {
         display_name: payload.display_name,
         is_named: !!payload.display_name,
       }),
@@ -261,7 +261,7 @@ export function usePeoplePage() {
 
   const mergePersonMutation = useMutation({
     mutationFn: (targetPersonId: number) =>
-      api.projects.mergePerson(selectedProjectId!, resolvedSelectedPersonId!, {
+      api.projectPeople.merge(selectedProjectId!, resolvedSelectedPersonId!, {
         target_person_id: targetPersonId,
       }),
     onSuccess: (result) => {
@@ -277,7 +277,7 @@ export function usePeoplePage() {
 
   const splitPersonMutation = useMutation({
     mutationFn: (payload: { faceIds: number[]; newDisplayName?: string }) =>
-      api.projects.splitPerson(selectedProjectId!, resolvedSelectedPersonId!, {
+      api.projectPeople.split(selectedProjectId!, resolvedSelectedPersonId!, {
         face_detection_ids: payload.faceIds,
         new_display_name: payload.newDisplayName,
       }),
@@ -293,7 +293,7 @@ export function usePeoplePage() {
   });
 
   const deletePersonMutation = useMutation({
-    mutationFn: () => api.projects.deletePerson(selectedProjectId!, resolvedSelectedPersonId!),
+    mutationFn: () => api.projectPeople.delete(selectedProjectId!, resolvedSelectedPersonId!),
     onSuccess: () => {
       handleSuccess("人物已删除");
       const nextCandidate = people.find((person) => person.id !== resolvedSelectedPersonId);

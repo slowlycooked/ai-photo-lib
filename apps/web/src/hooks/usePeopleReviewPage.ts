@@ -35,14 +35,14 @@ export function usePeopleReviewPage() {
 
   const { data: peopleData } = useQuery({
     queryKey: ["project-people", selectedProjectId],
-    queryFn: () => api.projects.people(selectedProjectId, true, 500),
+    queryFn: () => api.projectPeople.list(selectedProjectId, true, 500),
     enabled: selectedProjectId > 0,
   });
 
   const { data: reviewData, isLoading, error } = useQuery({
     queryKey: ["project-review-page", selectedProjectId, page],
     queryFn: () =>
-      api.projects.reviewPending(selectedProjectId, null, PAGE_SIZE, (page - 1) * PAGE_SIZE),
+      api.projectPeople.reviewPending(selectedProjectId, null, PAGE_SIZE, (page - 1) * PAGE_SIZE),
     enabled: selectedProjectId > 0,
   });
 
@@ -73,7 +73,7 @@ export function usePeopleReviewPage() {
 
   const batchConfirmMutation = useMutation({
     mutationFn: (params: { personId: number; faceIds: number[] }) =>
-      api.projects.batchConfirmReview(selectedProjectId, params.personId, {
+      api.projectPeople.batchConfirmReview(selectedProjectId, params.personId, {
         face_detection_ids: params.faceIds,
         request_id: buildRequestId(),
         operator: "web_review_page",
@@ -99,7 +99,7 @@ export function usePeopleReviewPage() {
 
   const batchRejectMutation = useMutation({
     mutationFn: (params: { personId: number; faceIds: number[] }) =>
-      api.projects.batchRejectReview(selectedProjectId, params.personId, {
+      api.projectPeople.batchRejectReview(selectedProjectId, params.personId, {
         face_detection_ids: params.faceIds,
         request_id: buildRequestId(),
         operator: "web_review_page",
@@ -125,7 +125,7 @@ export function usePeopleReviewPage() {
 
   const batchMoveMutation = useMutation({
     mutationFn: (params: { personId: number; targetPersonId: number; faceIds: number[] }) =>
-      api.projects.batchMoveReview(selectedProjectId, params.personId, {
+      api.projectPeople.batchMoveReview(selectedProjectId, params.personId, {
         face_detection_ids: params.faceIds,
         target_person_id: params.targetPersonId,
         request_id: buildRequestId(),

@@ -59,6 +59,10 @@ export function Header() {
     navigate("/login", { replace: true });
   };
 
+  const isSettingsRoute =
+    location.pathname.startsWith("/settings") ||
+    /^\/projects\/\d+\/settings(\/|$)/.test(location.pathname);
+
   return (
     <header className="sticky top-0 z-50 bg-canvas border-b border-hairline h-14 flex items-center px-4 sm:px-6 gap-3">
       {/* Logo */}
@@ -83,7 +87,7 @@ export function Header() {
             className={({ isActive }) =>
               [
                 "flex items-center gap-1.5 px-3 py-1.5 rounded-md text-btn-sm transition-colors",
-                isActive
+                isActive || (label === "设置" && isSettingsRoute)
                   ? "bg-secondary-bg text-ink font-bold"
                   : "text-mute hover:text-ink hover:bg-surface-card",
               ].join(" ")

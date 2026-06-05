@@ -54,7 +54,7 @@ export function useSearch(
       hasUnnamedPeople,
     ],
     queryFn: ({ pageParam = 1 }) =>
-      api.projects.search(
+      api.projectSearch.search(
         projectId!,
         query,
         pageParam as number,

@@ -17,13 +17,13 @@ export function EmbeddingSettingsSection({ projectId }: { projectId: number }) {
 
   const { data: settings, isLoading } = useQuery({
     queryKey: ["project-embedding-settings", projectId],
-    queryFn: () => api.projects.getEmbeddingSettings(projectId),
+    queryFn: () => api.projectSettings.getEmbedding(projectId),
     staleTime: 30_000,
   });
 
   const { data: status, isLoading: statusLoading, refetch: refetchStatus } = useQuery({
     queryKey: ["project-embedding-status", projectId],
-    queryFn: () => api.projects.getEmbeddingStatus(projectId),
+    queryFn: () => api.projectSettings.embeddingStatus(projectId),
     staleTime: 15_000,
   });
 
@@ -54,7 +54,7 @@ export function EmbeddingSettingsSection({ projectId }: { projectId: number }) {
 
   const saveMut = useMutation({
     mutationFn: (body: ProjectEmbeddingSettingsUpdate) =>
-      api.projects.updateEmbeddingSettings(projectId, body),
+      api.projectSettings.updateEmbedding(projectId, body),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["project-embedding-settings", projectId] });
       setRebuildMsg("保存成功");
@@ -64,7 +64,7 @@ export function EmbeddingSettingsSection({ projectId }: { projectId: number }) {
 
   const testMut = useMutation({
     mutationFn: (text: string) =>
-      api.projects.testEmbeddingSettings(projectId, {
+      api.projectSettings.testEmbedding(projectId, {
         text,
       }),
     onSuccess: (data) => setTestResult(data),
@@ -81,7 +81,7 @@ export function EmbeddingSettingsSection({ projectId }: { projectId: number }) {
 
   const rebuildMut = useMutation({
     mutationFn: (scope: "all" | "stale" | "failed" | "missing") =>
-      api.projects.rebuildEmbeddings(projectId, { scope }),
+      api.projectSettings.rebuildEmbeddings(projectId, { scope }),
     onSuccess: (data, scope) => {
       setRebuildMsg(`已入队 ${data.created_jobs} 个任务 (${scope})`);
       queryClient.invalidateQueries({ queryKey: ["project-embedding-status", projectId] });

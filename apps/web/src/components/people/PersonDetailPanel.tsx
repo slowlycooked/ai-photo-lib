@@ -55,7 +55,7 @@ function PersonOriginalPhotoLightbox({
         )}
 
         <img
-          src={api.projects.previewUrl(projectId, photoId)}
+          src={api.projectPhotos.previewUrl(projectId, photoId)}
           alt={`face-${faceId}-photo-${photoId}`}
           className="rounded-md object-contain shadow-2xl"
           style={{
@@ -265,7 +265,7 @@ export function PersonDetailPanel({
         >
           {faceCropEnabled && face.face_crop_path ? (
             <img
-              src={api.projects.faceCropUrl(projectId, face.id, face.updated_at)}
+              src={api.projectFaces.cropUrl(projectId, face.id, face.updated_at)}
               alt={`face-${face.id}`}
               className="w-full h-full object-cover"
             />
@@ -428,7 +428,7 @@ export function PersonDetailPanel({
                 aria-label={representativeFace ? "预览代表头像对应原图" : "无可预览原图"}
               >
                 <img
-                  src={api.projects.faceCropUrl(
+                  src={api.projectFaces.cropUrl(
                     projectId,
                     detail.representative_face_detection_id,
                     detail.updated_at,

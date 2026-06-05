@@ -16,13 +16,16 @@ vi.mock("@/api", async () => {
     ...actual,
     api: {
       ...actual.api,
-      projects: {
-        ...actual.api.projects,
-        deletePhotoRecord: (...args: unknown[]) => deletePhotoRecordMock(...args),
-        faces: (...args: unknown[]) => facesMock(...args),
-        photo: (...args: unknown[]) => photoMock(...args),
-        photoAI: (...args: unknown[]) => photoAIMock(...args),
-        scanPhotoFaces: (...args: unknown[]) => scanPhotoFacesMock(...args),
+      projectFaces: {
+        ...actual.api.projectFaces,
+        list: (...args: unknown[]) => facesMock(...args),
+        scanPhoto: (...args: unknown[]) => scanPhotoFacesMock(...args),
+      },
+      projectPhotos: {
+        ...actual.api.projectPhotos,
+        deleteRecord: (...args: unknown[]) => deletePhotoRecordMock(...args),
+        get: (...args: unknown[]) => photoMock(...args),
+        ai: (...args: unknown[]) => photoAIMock(...args),
       },
     },
   };

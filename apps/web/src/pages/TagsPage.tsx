@@ -81,7 +81,7 @@ export function TagsPage() {
   const { currentProjectId } = useProjectContext();
   const { data, isLoading, isError } = useQuery({
     queryKey: queryKeys.tags(currentProjectId),
-    queryFn: () => currentProjectId !== null ? api.projects.tags(currentProjectId) : Promise.resolve(null),
+    queryFn: () => currentProjectId !== null ? api.projectSearch.tags(currentProjectId) : Promise.resolve(null),
     enabled: currentProjectId !== null,
     staleTime: 60_000,
   });

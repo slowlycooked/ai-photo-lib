@@ -63,7 +63,7 @@ export function ProjectFaceSettingsPanel({ projectId }: { projectId: number }) {
 
   const { data, isLoading, error } = useQuery({
     queryKey: ["project-face-settings", projectId],
-    queryFn: () => api.projects.getFaceSettings(projectId),
+    queryFn: () => api.projectSettings.getFace(projectId),
     staleTime: 30_000,
   });
 
@@ -93,7 +93,7 @@ export function ProjectFaceSettingsPanel({ projectId }: { projectId: number }) {
 
   const saveMutation = useMutation({
     mutationFn: (body: ProjectFaceSettingsUpdate) =>
-      api.projects.updateFaceSettings(projectId, body),
+      api.projectSettings.updateFace(projectId, body),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["project-face-settings", projectId] });
       setMessage("人脸识别配置已保存");
@@ -104,7 +104,7 @@ export function ProjectFaceSettingsPanel({ projectId }: { projectId: number }) {
   });
 
   const resetMutation = useMutation({
-    mutationFn: () => api.projects.resetFaceSettings(projectId),
+    mutationFn: () => api.projectSettings.resetFace(projectId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["project-face-settings", projectId] });
       setMessage("已恢复默认配置");

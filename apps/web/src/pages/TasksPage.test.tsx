@@ -8,6 +8,9 @@ import { TasksPage } from "@/pages/TasksPage";
 
 const tasksMock = vi.fn();
 const taskFailuresMock = vi.fn();
+const aiStatusMock = vi.fn();
+const startAiMock = vi.fn();
+const reanalyzeMock = vi.fn();
 const getFaceSettingsMock = vi.fn();
 const projectFaceScanStatusMock = vi.fn();
 const projectFaceClusterUnknownStatusMock = vi.fn();
@@ -30,22 +33,34 @@ vi.mock("@/contexts/ProjectContext", () => ({
 
 vi.mock("@/api", () => ({
   api: {
-    projects: {
-      tasks: (...args: unknown[]) => tasksMock(...args),
-      taskFailures: (...args: unknown[]) => taskFailuresMock(...args),
-      getFaceSettings: (...args: unknown[]) => getFaceSettingsMock(...args),
-      projectFaceScanStatus: (...args: unknown[]) => projectFaceScanStatusMock(...args),
-      projectFaceClusterUnknownStatus: (...args: unknown[]) => projectFaceClusterUnknownStatusMock(...args),
-      projectFaceRematchUnknownStatus: (...args: unknown[]) => projectFaceRematchUnknownStatusMock(...args),
-      startProjectFaceScan: (...args: unknown[]) => startProjectFaceScanMock(...args),
-      clusterUnknownFaces: (...args: unknown[]) => clusterUnknownFacesMock(...args),
-      rematchUnknownFaces: (...args: unknown[]) => rematchUnknownFacesMock(...args),
-      cancelProjectFaceScan: (...args: unknown[]) => cancelProjectFaceScanMock(...args),
-      cancelClusterUnknownFaces: (...args: unknown[]) => cancelClusterUnknownFacesMock(...args),
-      cancelRematchUnknownFaces: (...args: unknown[]) => cancelRematchUnknownFacesMock(...args),
-      cancelTask: vi.fn(),
-      pauseTask: vi.fn(),
-      resumeTask: vi.fn(),
+    projectAiJobs: {
+      status: (...args: unknown[]) => aiStatusMock(...args),
+      startAnalysis: (...args: unknown[]) => startAiMock(...args),
+      reanalyze: (...args: unknown[]) => reanalyzeMock(...args),
+      list: vi.fn().mockResolvedValue({ total: 0, items: [] }),
+      retryFailed: vi.fn(),
+      clearFailed: vi.fn(),
+    },
+    projectTasks: {
+      list: (...args: unknown[]) => tasksMock(...args),
+      failures: (...args: unknown[]) => taskFailuresMock(...args),
+      cancel: vi.fn(),
+      pause: vi.fn(),
+      resume: vi.fn(),
+    },
+    projectFaces: {
+      projectScanStatus: (...args: unknown[]) => projectFaceScanStatusMock(...args),
+      clusterUnknownStatus: (...args: unknown[]) => projectFaceClusterUnknownStatusMock(...args),
+      rematchUnknownStatus: (...args: unknown[]) => projectFaceRematchUnknownStatusMock(...args),
+      startProjectScan: (...args: unknown[]) => startProjectFaceScanMock(...args),
+      clusterUnknown: (...args: unknown[]) => clusterUnknownFacesMock(...args),
+      rematchUnknown: (...args: unknown[]) => rematchUnknownFacesMock(...args),
+      cancelProjectScan: (...args: unknown[]) => cancelProjectFaceScanMock(...args),
+      cancelClusterUnknown: (...args: unknown[]) => cancelClusterUnknownFacesMock(...args),
+      cancelRematchUnknown: (...args: unknown[]) => cancelRematchUnknownFacesMock(...args),
+    },
+    projectSettings: {
+      getFace: (...args: unknown[]) => getFaceSettingsMock(...args),
     },
   },
 }));
@@ -84,6 +99,9 @@ describe("TasksPage", () => {
   beforeEach(() => {
     tasksMock.mockReset();
     taskFailuresMock.mockReset();
+    aiStatusMock.mockReset();
+    startAiMock.mockReset();
+    reanalyzeMock.mockReset();
     getFaceSettingsMock.mockReset();
     projectFaceScanStatusMock.mockReset();
     projectFaceClusterUnknownStatusMock.mockReset();
@@ -120,6 +138,15 @@ describe("TasksPage", () => {
     });
     tasksMock.mockResolvedValue({ total: 0, items: [] });
     taskFailuresMock.mockResolvedValue({ total: 0, items: [] });
+    aiStatusMock.mockResolvedValue({
+      queued: 0,
+      running: 0,
+      success: 0,
+      failed: 0,
+      total: 0,
+    });
+    startAiMock.mockResolvedValue({ created_jobs: 0, message: "ok" });
+    reanalyzeMock.mockResolvedValue({ created_jobs: 0, message: "ok" });
     getFaceSettingsMock.mockResolvedValue({
       face_recognition_enabled: true,
       face_provider: "opencv",

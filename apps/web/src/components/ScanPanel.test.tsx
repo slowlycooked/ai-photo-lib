@@ -13,9 +13,9 @@ vi.mock("@/api", async () => {
     ...actual,
     api: {
       ...actual.api,
-      projects: {
-        ...actual.api.projects,
-        taskFailures: (...args: unknown[]) => taskFailuresMock(...args),
+      projectTasks: {
+        ...actual.api.projectTasks,
+        failures: (...args: unknown[]) => taskFailuresMock(...args),
       },
     },
   };

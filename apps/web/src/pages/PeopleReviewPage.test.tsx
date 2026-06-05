@@ -20,9 +20,9 @@ vi.mock("@/api", async () => {
     ...actual,
     api: {
       ...actual.api,
-      projects: {
-        ...actual.api.projects,
-        people: (...args: unknown[]) => peopleMock(...args),
+      projectPeople: {
+        ...actual.api.projectPeople,
+        list: (...args: unknown[]) => peopleMock(...args),
         reviewPending: (...args: unknown[]) => reviewPendingMock(...args),
         batchConfirmReview: (...args: unknown[]) => batchConfirmReviewMock(...args),
         batchRejectReview: (...args: unknown[]) => batchRejectReviewMock(...args),

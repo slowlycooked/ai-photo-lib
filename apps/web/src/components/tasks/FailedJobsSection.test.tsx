@@ -15,11 +15,11 @@ vi.mock("@/api", async () => {
     ...actual,
     api: {
       ...actual.api,
-      projects: {
-        ...actual.api.projects,
-        aiJobs: (...args: unknown[]) => aiJobsMock(...args),
-        retryFailedAiJobs: (...args: unknown[]) => retryFailedAiJobsMock(...args),
-        clearFailedAiJobs: (...args: unknown[]) => clearFailedAiJobsMock(...args),
+      projectAiJobs: {
+        ...actual.api.projectAiJobs,
+        list: (...args: unknown[]) => aiJobsMock(...args),
+        retryFailed: (...args: unknown[]) => retryFailedAiJobsMock(...args),
+        clearFailed: (...args: unknown[]) => clearFailedAiJobsMock(...args),
       },
     },
   };

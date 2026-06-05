@@ -250,6 +250,7 @@ class StaticQualityGuardTest(unittest.TestCase):
             "app/services/people_query_service.py": 12,
             "app/services/search/people_recall.py": 14,
             "app/services/project_task_app_service.py": 12,
+            "app/services/project_task_handlers.py": 8,
         }
         for relative_path, threshold in budgets.items():
             score = self._max_function_complexity(_API_ROOT / relative_path)
@@ -310,6 +311,7 @@ class StaticQualityGuardTest(unittest.TestCase):
             _API_ROOT / "app/services/people_learning_service.py",
             _API_ROOT / "app/services/people_query_service.py",
             _API_ROOT / "app/services/project_task_app_service.py",
+            _API_ROOT / "app/services/project_task_handlers.py",
             _API_ROOT / "app/services/unknown_face_clustering_service.py",
             _API_ROOT / "app/services/search/people_recall.py",
         ]

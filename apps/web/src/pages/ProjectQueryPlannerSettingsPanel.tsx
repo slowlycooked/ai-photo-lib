@@ -18,7 +18,7 @@ export default function ProjectQueryPlannerSettingsPanel({ projectId }: Props) {
 
   const { data: settings, isLoading, error } = useQuery({
     queryKey: ["project-query-planner-settings", projectId],
-    queryFn: () => api.projects.getQueryPlannerSettings(projectId),
+    queryFn: () => api.projectSettings.getQueryPlanner(projectId),
   });
 
   const [form, setForm] = useState<Partial<ProjectQueryPlannerSettingsUpdate>>({});
@@ -30,7 +30,7 @@ export default function ProjectQueryPlannerSettingsPanel({ projectId }: Props) {
 
   const updateMutation = useMutation({
     mutationFn: (body: ProjectQueryPlannerSettingsUpdate) =>
-      api.projects.updateQueryPlannerSettings(projectId, body),
+      api.projectSettings.updateQueryPlanner(projectId, body),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["project-query-planner-settings", projectId] });
       setForm({});
@@ -40,7 +40,7 @@ export default function ProjectQueryPlannerSettingsPanel({ projectId }: Props) {
   });
 
   const resetMutation = useMutation({
-    mutationFn: () => api.projects.resetQueryPlannerSettings(projectId),
+    mutationFn: () => api.projectSettings.resetQueryPlanner(projectId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["project-query-planner-settings", projectId] });
       setForm({});
@@ -48,7 +48,7 @@ export default function ProjectQueryPlannerSettingsPanel({ projectId }: Props) {
   });
 
   const testMutation = useMutation({
-    mutationFn: (query: string) => api.projects.testQueryPlanner(projectId, query),
+    mutationFn: (query: string) => api.projectSettings.testQueryPlanner(projectId, query),
     onSuccess: (result) => {
       setTestResult(result);
     },

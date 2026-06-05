@@ -17,7 +17,7 @@ export function usePhotos({ projectId, dateFrom, dateTo, folderId, folderScope =
     queryKey: queryKeys.photos(projectId ?? null, dateFrom, dateTo, folderId, folderScope),
     queryFn: ({ pageParam = 1 }) =>
       projectId != null
-        ? api.projects.photos(projectId, pageParam as number, PAGE_SIZE, dateFrom, dateTo, folderId, folderScope)
+        ? api.projectPhotos.list(projectId, pageParam as number, PAGE_SIZE, dateFrom, dateTo, folderId, folderScope)
         : Promise.resolve({ total: 0, page: 1, page_size: PAGE_SIZE, items: [] }),
     initialPageParam: 1,
     enabled: projectId != null,
@@ -48,7 +48,7 @@ export function useTimeline(projectId?: number | null, folderId?: number | null,
   return useQuery({
     queryKey: queryKeys.timeline(projectId ?? null, folderId, folderScope),
     queryFn: () => projectId != null
-      ? api.projects.timeline(projectId, folderId, folderScope)
+      ? api.projectPhotos.timeline(projectId, folderId, folderScope)
       : Promise.resolve({ items: [] }),
     enabled: projectId != null,
     staleTime: 60_000,

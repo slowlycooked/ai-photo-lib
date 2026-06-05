@@ -33,7 +33,7 @@ function AISection({ projectId }: { projectId: number | null }) {
 
   const { data: status, isLoading } = useProjectQueuedTaskStatus(
     queryKeys.aiStatus(projectId),
-    () => api.projects.aiStatus(projectId!),
+    () => api.projectAiJobs.status(projectId!),
     projectId != null
   );
 
@@ -48,7 +48,7 @@ function AISection({ projectId }: { projectId: number | null }) {
   }, [status, queryClient]);
 
   const startMutation = useMutation({
-    mutationFn: () => api.projects.startAI(projectId!),
+    mutationFn: () => api.projectAiJobs.startAnalysis(projectId!),
     onSuccess: (data) => {
       setMessage(
         data.created_jobs > 0
@@ -63,7 +63,7 @@ function AISection({ projectId }: { projectId: number | null }) {
 
   const reanalyzeCompletedMutation = useMutation({
     mutationFn: () =>
-      api.projects.reanalyze(projectId!, {
+      api.projectAiJobs.reanalyze(projectId!, {
         scope: "completed",
         clear_existing_analysis: true,
       }),
@@ -81,7 +81,7 @@ function AISection({ projectId }: { projectId: number | null }) {
 
   const reanalyzeAllMutation = useMutation({
     mutationFn: () =>
-      api.projects.reanalyze(projectId!, {
+      api.projectAiJobs.reanalyze(projectId!, {
         scope: "all",
         clear_existing_analysis: true,
       }),
@@ -228,19 +228,19 @@ function FaceScanSection({ projectId }: { projectId: number | null }) {
 
   const { data: faceSettings, isLoading: settingsLoading } = useQuery({
     queryKey: ["project-face-settings", projectId],
-    queryFn: () => api.projects.getFaceSettings(projectId!),
+    queryFn: () => api.projectSettings.getFace(projectId!),
     enabled: canRun,
   });
 
   const { data: status, isLoading: statusLoading } = useProjectQueuedTaskStatus(
     ["face-scan-status", projectId],
-    () => api.projects.projectFaceScanStatus(projectId!),
+    () => api.projectFaces.projectScanStatus(projectId!),
     canRun
   );
 
   const { data: clusterStatus } = useQuery({
     queryKey: ["face-cluster-unknown-status", projectId],
-    queryFn: () => api.projects.projectFaceClusterUnknownStatus(projectId!),
+    queryFn: () => api.projectFaces.clusterUnknownStatus(projectId!),
     enabled: canRun,
     refetchInterval: (query) => {
       const d = query.state.data;
@@ -250,7 +250,7 @@ function FaceScanSection({ projectId }: { projectId: number | null }) {
 
   const { data: rematchStatus } = useQuery({
     queryKey: ["face-rematch-unknown-status", projectId],
-    queryFn: () => api.projects.projectFaceRematchUnknownStatus(projectId!),
+    queryFn: () => api.projectFaces.rematchUnknownStatus(projectId!),
     enabled: canRun,
     refetchInterval: (query) => {
       const d = query.state.data;
@@ -296,7 +296,7 @@ function FaceScanSection({ projectId }: { projectId: number | null }) {
 
   const previewMutation = useMutation({
     mutationFn: (scope: FaceScanScope) =>
-      api.projects.startProjectFaceScan(projectId!, { scope, dry_run: true }),
+      api.projectFaces.startProjectScan(projectId!, { scope, dry_run: true }),
     onSuccess: (result) => {
       setPreview({
         scope: result.scope,
@@ -318,7 +318,7 @@ function FaceScanSection({ projectId }: { projectId: number | null }) {
 
   const startMutation = useMutation({
     mutationFn: (scope: FaceScanScope) =>
-      api.projects.startProjectFaceScan(projectId!, { scope }),
+      api.projectFaces.startProjectScan(projectId!, { scope }),
     onSuccess: (result) => {
       setError(null);
       setMessage(
@@ -337,7 +337,7 @@ function FaceScanSection({ projectId }: { projectId: number | null }) {
   });
 
   const clusterMutation = useMutation({
-    mutationFn: () => api.projects.clusterUnknownFaces(projectId!),
+    mutationFn: () => api.projectFaces.clusterUnknown(projectId!),
     onSuccess: (result) => {
       setError(null);
       setMessage(
@@ -353,7 +353,7 @@ function FaceScanSection({ projectId }: { projectId: number | null }) {
   });
 
   const rematchMutation = useMutation({
-    mutationFn: () => api.projects.rematchUnknownFaces(projectId!),
+    mutationFn: () => api.projectFaces.rematchUnknown(projectId!),
     onSuccess: (result) => {
       setError(null);
       setMessage(
@@ -369,7 +369,7 @@ function FaceScanSection({ projectId }: { projectId: number | null }) {
   });
 
   const cancelFaceScanMutation = useMutation({
-    mutationFn: () => api.projects.cancelProjectFaceScan(projectId!),
+    mutationFn: () => api.projectFaces.cancelProjectScan(projectId!),
     onSuccess: () => {
       setError(null);
       setMessage("已请求取消人脸扫描任务");
@@ -379,7 +379,7 @@ function FaceScanSection({ projectId }: { projectId: number | null }) {
   });
 
   const cancelClusterMutation = useMutation({
-    mutationFn: () => api.projects.cancelClusterUnknownFaces(projectId!),
+    mutationFn: () => api.projectFaces.cancelClusterUnknown(projectId!),
     onSuccess: () => {
       setError(null);
       setMessage("已请求取消未知人脸聚类任务");
@@ -389,7 +389,7 @@ function FaceScanSection({ projectId }: { projectId: number | null }) {
   });
 
   const cancelRematchMutation = useMutation({
-    mutationFn: () => api.projects.cancelRematchUnknownFaces(projectId!),
+    mutationFn: () => api.projectFaces.cancelRematchUnknown(projectId!),
     onSuccess: () => {
       setError(null);
       setMessage("已请求取消未知人脸重匹配任务");

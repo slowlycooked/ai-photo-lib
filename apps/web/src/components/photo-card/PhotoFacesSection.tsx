@@ -74,7 +74,7 @@ export function PhotoFacesSection({
                 <div className="w-20 h-20 flex-shrink-0 rounded-md overflow-hidden bg-canvas border border-hairline">
                   {face.face_crop_path ? (
                     <img
-                      src={api.projects.faceCropUrl(projectId, face.id, face.updated_at)}
+                      src={api.projectFaces.cropUrl(projectId, face.id, face.updated_at)}
                       alt={`face-${face.id}`}
                       className="w-full h-full object-cover"
                     />

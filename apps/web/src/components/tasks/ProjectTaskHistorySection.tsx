@@ -17,7 +17,7 @@ export function ProjectTaskHistorySection({ projectId }: { projectId: number | n
   const queryClient = useQueryClient();
   const { data, isLoading, error } = useQuery({
     queryKey: queryKeys.projectTasks(projectId, 8),
-    queryFn: () => api.projects.tasks(projectId!, { limit: 8 }),
+    queryFn: () => api.projectTasks.list(projectId!, { limit: 8 }),
     enabled: canLoad,
     refetchInterval: (query) => {
       const hasActive = query.state.data?.items.some((task) =>
@@ -28,21 +28,21 @@ export function ProjectTaskHistorySection({ projectId }: { projectId: number | n
   });
 
   const pauseTaskMutation = useMutation({
-    mutationFn: (taskId: number) => api.projects.pauseTask(projectId!, taskId),
+    mutationFn: (taskId: number) => api.projectTasks.pause(projectId!, taskId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.projectTasks(projectId, 8) });
     },
   });
 
   const cancelTaskMutation = useMutation({
-    mutationFn: (taskId: number) => api.projects.cancelTask(projectId!, taskId),
+    mutationFn: (taskId: number) => api.projectTasks.cancel(projectId!, taskId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.projectTasks(projectId, 8) });
     },
   });
 
   const resumeTaskMutation = useMutation({
-    mutationFn: (taskId: number) => api.projects.resumeTask(projectId!, taskId),
+    mutationFn: (taskId: number) => api.projectTasks.resume(projectId!, taskId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.projectTasks(projectId, 8) });
     },

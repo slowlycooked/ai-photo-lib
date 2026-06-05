@@ -39,7 +39,7 @@ export function TaskProgressStream({
 }) {
   const { data, isLoading } = useQuery({
     queryKey: [listQueryKey, projectId],
-    queryFn: () => api.projects.aiJobs(projectId!, undefined, 30, 0, jobType),
+    queryFn: () => api.projectAiJobs.list(projectId!, undefined, 30, 0, jobType),
     enabled: projectId != null,
     staleTime: 0,
     refetchInterval: (query) => {

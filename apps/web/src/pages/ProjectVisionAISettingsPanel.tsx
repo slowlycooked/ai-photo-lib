@@ -58,12 +58,12 @@ export function ProjectVisionAISettingsPanel({ projectId }: { projectId: number 
     error: settingsError,
   } = useQuery({
     queryKey: ["project-ai-settings", projectId],
-    queryFn: () => api.projects.getAiSettings(projectId),
+    queryFn: () => api.projectSettings.getAi(projectId),
     staleTime: 30_000,
   });
 
   const initSettingsMutation = useMutation({
-    mutationFn: () => api.projects.initAiSettings(projectId),
+    mutationFn: () => api.projectSettings.initAi(projectId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["project-ai-settings", projectId] });
       setMessage("已初始化项目 AI 配置，请继续完善模型参数并保存。");
@@ -91,7 +91,7 @@ export function ProjectVisionAISettingsPanel({ projectId }: { projectId: number 
 
   const saveSettingsMutation = useMutation({
     mutationFn: (body: ProjectAISettingsUpdate) =>
-      api.projects.updateAiSettings(projectId, body),
+      api.projectSettings.updateAi(projectId, body),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["project-ai-settings", projectId] });
       setMessage("视觉 AI 模型配置已保存");

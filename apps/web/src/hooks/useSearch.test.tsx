@@ -10,8 +10,8 @@ vi.mock("@/api", async () => {
     ...actual,
     api: {
       ...actual.api,
-      projects: {
-        ...actual.api.projects,
+      projectSearch: {
+        ...actual.api.projectSearch,
         search: (...args: unknown[]) => searchMock(...args),
       },
     },

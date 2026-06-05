@@ -64,7 +64,7 @@ export function PhotoCard({ photo, selectMode = false, selected = false, onToggl
           >
             {!loaded && <div className="absolute inset-0 bg-secondary-bg animate-pulse" />}
             <img
-              src={api.projects.thumbnailUrl(photo.project_id, photo.id, photo.updated_at)}
+              src={api.projectPhotos.thumbnailUrl(photo.project_id, photo.id, photo.updated_at)}
               alt={photo.file_name}
               className="w-full block"
               style={{ opacity: loaded ? 1 : 0, transition: "opacity 0.2s" }}

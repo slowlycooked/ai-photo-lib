@@ -31,7 +31,7 @@ const ProjectContext = createContext<ProjectContextValue>({
 export function ProjectProvider({ children }: { children: ReactNode }) {
   const { data, isLoading } = useQuery({
     queryKey: queryKeys.projects(),
-    queryFn: api.projects.list,
+    queryFn: api.projectCore.list,
     staleTime: 60_000,
   });
 

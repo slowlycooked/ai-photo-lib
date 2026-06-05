@@ -5,7 +5,7 @@ import { queryKeys } from "@/api/queryKeys";
 export function useScanStatus(projectId: number | null) {
   return useQuery({
     queryKey: queryKeys.projectScanStatus(projectId),
-    queryFn: () => api.projects.scanStatus(projectId!),
+    queryFn: () => api.projectScans.status(projectId!),
     enabled: projectId !== null,
     refetchInterval: (query) => (query.state.data?.running ? 1500 : false),
     staleTime: 0,
@@ -19,7 +19,7 @@ export function useStartReindex(projectId: number | null) {
       scope: "all" | "missing_metadata" | "missing_location" = "missing_metadata",
     ) => {
       if (projectId === null) return Promise.reject(new Error("No project selected"));
-      return api.projects.startReindex(projectId, scope);
+      return api.projectScans.reindex(projectId, scope);
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: queryKeys.projectScanStatus(projectId) });
@@ -38,7 +38,7 @@ export function useStartScan(projectId: number | null) {
   return useMutation({
     mutationFn: () => {
       if (projectId === null) return Promise.reject(new Error("No project selected"));
-      return api.projects.startScan(projectId);
+      return api.projectScans.start(projectId);
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: queryKeys.projectScanStatus(projectId) });
@@ -57,7 +57,7 @@ export function useCancelScan(projectId: number | null) {
   return useMutation({
     mutationFn: () => {
       if (projectId === null) return Promise.reject(new Error("No project selected"));
-      return api.projects.cancelScan(projectId);
+      return api.projectScans.cancel(projectId);
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: queryKeys.projectScanStatus(projectId) });

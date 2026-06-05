@@ -86,7 +86,7 @@ export function TimelineGrid({ projectId, folderId, folderScope = "subtree" }: T
       if (projectId == null) {
         throw new Error("未选择项目");
       }
-      return api.projects.batchDeletePhotoRecords(projectId, {
+      return api.projectPhotos.batchDeleteRecords(projectId, {
         photo_ids: selectedPhotoIds,
         delete_original: deleteOriginalInBatch,
       });

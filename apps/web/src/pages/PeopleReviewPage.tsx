@@ -162,7 +162,7 @@ export function PeopleReviewPage() {
                       <div className="w-full aspect-square rounded-md overflow-hidden border border-hairline bg-canvas mb-2">
                         {assignment.face_detection.face_crop_path ? (
                           <img
-                            src={api.projects.faceCropUrl(
+                            src={api.projectFaces.cropUrl(
                               selectedProjectId,
                               assignment.face_detection.id,
                               assignment.face_detection.updated_at,

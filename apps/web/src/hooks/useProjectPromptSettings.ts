@@ -134,7 +134,7 @@ export function useProjectPromptSettings({
 
   const { data: templatesData, isLoading: templatesLoading } = useQuery({
     queryKey: ["project-prompt-templates", projectId],
-    queryFn: () => api.projects.promptTemplates(projectId),
+    queryFn: () => api.projectPrompts.list(projectId),
     staleTime: 15_000,
   });
 
@@ -144,13 +144,13 @@ export function useProjectPromptSettings({
     isError: photosIsError,
   } = useQuery({
     queryKey: ["project-test-photos", projectId],
-    queryFn: () => api.projects.photos(projectId, 1, 100),
+    queryFn: () => api.projectPhotos.list(projectId, 1, 100),
     staleTime: 30_000,
   });
 
   const { data: failedJobsData } = useQuery({
     queryKey: ["project-ai-failed-jobs-latest", projectId],
-    queryFn: () => api.projects.aiJobs(projectId, "failed", 10),
+    queryFn: () => api.projectAiJobs.list(projectId, "failed", 10),
     staleTime: 10_000,
   });
 
@@ -216,14 +216,14 @@ export function useProjectPromptSettings({
   const savePromptMutation = useMutation({
     mutationFn: () => {
       if (!currentTemplate) {
-        return api.projects.createPromptTemplate(projectId, {
+        return api.projectPrompts.create(projectId, {
           name: templateName.trim() || "图片分析模板",
           task_type: "image_analysis",
           user_prompt: effectivePrompt,
           is_active: true,
         });
       }
-      return api.projects.updatePromptTemplate(projectId, currentTemplate.id, {
+      return api.projectPrompts.update(projectId, currentTemplate.id, {
         name: templateName.trim() || currentTemplate.name,
         user_prompt: effectivePrompt,
         is_active: true,
@@ -240,7 +240,7 @@ export function useProjectPromptSettings({
 
   const activateTemplateMutation = useMutation({
     mutationFn: (templateId: number) =>
-      api.projects.updateAiSettings(projectId, toSettingsBody(modelForm, templateId)),
+      api.projectSettings.updateAi(projectId, toSettingsBody(modelForm, templateId)),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["project-ai-settings", projectId] });
       queryClient.invalidateQueries({ queryKey: ["project-prompt-templates", projectId] });
@@ -250,7 +250,7 @@ export function useProjectPromptSettings({
   });
 
   const resetPromptMutation = useMutation({
-    mutationFn: () => api.projects.resetDefaultPromptTemplate(projectId),
+    mutationFn: () => api.projectPrompts.resetDefault(projectId),
     onSuccess: (template) => {
       setSelectedTemplateId(template.id);
       queryClient.invalidateQueries({ queryKey: ["project-prompt-templates", projectId] });
@@ -261,7 +261,7 @@ export function useProjectPromptSettings({
   });
 
   const deletePromptMutation = useMutation({
-    mutationFn: (templateId: number) => api.projects.deletePromptTemplate(projectId, templateId),
+    mutationFn: (templateId: number) => api.projectPrompts.delete(projectId, templateId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["project-prompt-templates", projectId] });
       queryClient.invalidateQueries({ queryKey: ["project-ai-settings", projectId] });
@@ -272,7 +272,7 @@ export function useProjectPromptSettings({
 
   const testPromptMutation = useMutation({
     mutationFn: () =>
-      api.projects.testPromptTemplate(projectId, {
+      api.projectPrompts.test(projectId, {
         image_id: testPhotoId!,
         prompt_template_id: currentTemplate?.id,
         override_prompt: effectivePrompt,

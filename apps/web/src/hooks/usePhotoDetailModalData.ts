@@ -22,14 +22,14 @@ export function usePhotoDetailModalData({
 
   const { data: detail } = useQuery({
     queryKey: queryKeys.projectPhotoDetail(projectId, photo.id),
-    queryFn: () => api.projects.photo(projectId, photo.id),
+    queryFn: () => api.projectPhotos.get(projectId, photo.id),
     enabled: projectId != null,
     staleTime: 30_000,
   });
 
   const { data: aiData, isLoading: aiLoading } = useQuery({
     queryKey: queryKeys.projectPhotoAi(projectId, photo.id),
-    queryFn: () => api.projects.photoAI(projectId, photo.id),
+    queryFn: () => api.projectPhotos.ai(projectId, photo.id),
     enabled: projectId != null,
     retry: false,
   });
@@ -41,13 +41,13 @@ export function usePhotoDetailModalData({
     refetch: refreshFaces,
   } = useQuery({
     queryKey: queryKeys.projectFaces(projectId, photo.id),
-    queryFn: () => api.projects.faces(projectId, 1, 50, photo.id),
+    queryFn: () => api.projectFaces.list(projectId, 1, 50, photo.id),
     enabled: projectId != null,
     staleTime: 10_000,
   });
 
   const faceScanMutation = useMutation({
-    mutationFn: () => api.projects.scanPhotoFaces(projectId, photo.id),
+    mutationFn: () => api.projectFaces.scanPhoto(projectId, photo.id),
     onSuccess: (result) => {
       let detail = "";
       if (result.message && result.message !== "Face scan completed") {
@@ -69,7 +69,7 @@ export function usePhotoDetailModalData({
   });
 
   const deletePhotoMutation = useMutation({
-    mutationFn: () => api.projects.deletePhotoRecord(projectId, photo.id, deleteOriginal),
+    mutationFn: () => api.projectPhotos.deleteRecord(projectId, photo.id, deleteOriginal),
     onSuccess: () => {
       setDeleteMessage(deleteOriginal ? "已删除库记录、缩略图和本地原图" : "已删除库记录和缩略图");
       queryClient.invalidateQueries({ queryKey: queryKeys.photosBase(projectId) });

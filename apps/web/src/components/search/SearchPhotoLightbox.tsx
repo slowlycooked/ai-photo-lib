@@ -42,16 +42,16 @@ export function SearchPhotoLightbox({
 
   const previewUrl =
     projectId != null
-      ? api.projects.previewUrl(projectId, item.photo_id)
+      ? api.projectPhotos.previewUrl(projectId, item.photo_id)
       : item.thumbnail_url;
 
   const downloadUrl =
     projectId != null
-      ? api.projects.originalUrl(projectId, item.photo_id)
+      ? api.projectPhotos.originalUrl(projectId, item.photo_id)
       : undefined;
 
   const deletePhotoMutation = useMutation({
-    mutationFn: () => api.projects.deletePhotoRecord(projectId!, item.photo_id, deleteOriginal),
+    mutationFn: () => api.projectPhotos.deleteRecord(projectId!, item.photo_id, deleteOriginal),
     onSuccess: () => {
       setDeleteMessage(deleteOriginal ? "已删除库记录、缩略图和本地原图" : "已删除库记录和缩略图");
       if (projectId != null) {

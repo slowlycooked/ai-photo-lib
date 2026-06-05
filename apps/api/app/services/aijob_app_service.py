@@ -26,6 +26,7 @@ from ..models.photo import Photo
 from ..services.embedding_client import EmbeddingRequestError
 from ..services.embedding_service import upsert_photo_embeddings
 from ..services.face_scan_service import FaceScanDisabledError, FaceScanService
+from ..services.unknown_face_clustering_service import cluster_unknown_faces
 from ..services.concept_normalizer import (
     attach_semantic_concepts_to_raw_result,
     normalize_concepts_from_payload,
@@ -437,6 +438,18 @@ class AIJobAppService:
     ) -> None:
         try:
             result = FaceScanService(self._db).scan_photo(project_id, photo.id)
+            cluster_assignments_created = 0
+            if result.faces_detected > 0:
+                cluster_result = cluster_unknown_faces(
+                    self._db,
+                    project_id=project_id,
+                    max_faces=max(result.faces_detected, 1),
+                    photo_ids=[photo.id],
+                )
+                cluster_assignments_created = max(
+                    int(getattr(cluster_result, "assignments_created", 0) or 0),
+                    0,
+                )
             now = datetime.now(timezone.utc)
             job.status = "success"
             job.error_message = None
@@ -444,8 +457,9 @@ class AIJobAppService:
             job.raw_model_output = (
                 "face_scan_result: "
                 f"faces_detected={result.faces_detected}, "
-                f"review_pending={result.review_pending}, "
+                f"review_pending={result.review_pending + cluster_assignments_created}, "
                 f"auto_assigned={result.auto_assigned}, "
+                f"cluster_assignments_created={cluster_assignments_created}, "
                 f"failures={result.failures}"
             )
             job.finished_at = now

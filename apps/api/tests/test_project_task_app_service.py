@@ -17,7 +17,10 @@ os.environ.setdefault("OPENAI_VISION_MODEL", "test-model")
 
 from app.models.project_task import ProjectTask  # noqa: E402
 from app.models.project import Project  # noqa: E402
-from app.services.project_task_app_service import ProjectTaskAppService  # noqa: E402
+from app.services.project_task_app_service import (  # noqa: E402
+    ProjectTaskAppService,
+    ProjectTaskRunContext,
+)
 from app.services.project_task_service import (  # noqa: E402
     TASK_TYPE_FACE_SCAN_PROJECT,
     TASK_TYPE_FACE_REMATCH_UNKNOWN,
@@ -129,7 +132,7 @@ class ProjectTaskAppServiceTest(unittest.TestCase):
             }
 
         with patch(
-            "app.services.project_task_app_service.scan_project",
+            "app.services.project_task_handlers.scan_project",
             side_effect=fake_scan,
         ):
             ProjectTaskAppService(db, session_factory=self._SessionLocal).process_task(task)
@@ -192,7 +195,7 @@ class ProjectTaskAppServiceTest(unittest.TestCase):
             }
 
         with patch(
-            "app.services.project_task_app_service.scan_project",
+            "app.services.project_task_handlers.scan_project",
             side_effect=fake_scan,
         ):
             ProjectTaskAppService(db, session_factory=self._SessionLocal).process_task(task)
@@ -244,7 +247,7 @@ class ProjectTaskAppServiceTest(unittest.TestCase):
         db.refresh(task)
 
         with patch(
-            "app.services.project_task_app_service.reindex_project",
+            "app.services.project_task_handlers.reindex_project",
             side_effect=RuntimeError("boom"),
         ):
             ProjectTaskAppService(db, session_factory=self._SessionLocal).process_task(task)
@@ -253,6 +256,46 @@ class ProjectTaskAppServiceTest(unittest.TestCase):
         self.assertEqual(task.status, "failed")
         self.assertIn("boom", task.error_message or "")
         self.assertGreaterEqual(task.progress_payload["errors"], 1)
+        db.close()
+
+    def test_process_task_uses_injected_handler_registry(self) -> None:
+        db = self._SessionLocal()
+        task = ProjectTask(
+            project_id=1,
+            task_type="custom_test_task",
+            status="queued",
+            request_params={},
+        )
+        db.add(task)
+        db.commit()
+        db.refresh(task)
+
+        class _CustomHandler:
+            def run(self, task: ProjectTask, context: ProjectTaskRunContext) -> dict:
+                context.persist_progress(
+                    task.id,
+                    {
+                        "running": True,
+                        "errors": 0,
+                        "message": "custom-running",
+                    },
+                )
+                return {
+                    "running": False,
+                    "errors": 0,
+                    "message": "custom-done",
+                }
+
+        ProjectTaskAppService(
+            db,
+            session_factory=self._SessionLocal,
+            handlers={"custom_test_task": _CustomHandler()},
+        ).process_task(task)
+
+        db.refresh(task)
+        self.assertEqual(task.status, "success")
+        self.assertEqual(task.progress_payload["message"], "custom-done")
+        self.assertEqual(task.result_payload["message"], "custom-done")
         db.close()
 
     def test_cancel_queued_scan_task_marks_cancelled(self) -> None:
@@ -319,7 +362,7 @@ class ProjectTaskAppServiceTest(unittest.TestCase):
             raise AssertionError("cancelled task should not continue after progress callback")
 
         with patch(
-            "app.services.project_task_app_service.scan_project",
+            "app.services.project_task_handlers.scan_project",
             side_effect=fake_scan,
         ):
             ProjectTaskAppService(db, session_factory=self._SessionLocal).process_task(task)
@@ -505,7 +548,7 @@ class ProjectTaskAppServiceTest(unittest.TestCase):
             raise AssertionError("paused task should not continue after progress callback")
 
         with patch(
-            "app.services.project_task_app_service.scan_project",
+            "app.services.project_task_handlers.scan_project",
             side_effect=fake_scan,
         ):
             ProjectTaskAppService(db, session_factory=self._SessionLocal).process_task(task)
@@ -536,7 +579,7 @@ class ProjectTaskAppServiceTest(unittest.TestCase):
             assignments_created = 21
 
         with patch(
-            "app.services.project_task_app_service.cluster_unknown_faces",
+            "app.services.project_task_handlers.cluster_unknown_faces",
             return_value=_Result(),
         ):
             ProjectTaskAppService(db, session_factory=self._SessionLocal).process_task(task)
@@ -591,7 +634,7 @@ class ProjectTaskAppServiceTest(unittest.TestCase):
             raise AssertionError("cancelled cluster task should not continue")
 
         with patch(
-            "app.services.project_task_app_service.cluster_unknown_faces",
+            "app.services.project_task_handlers.cluster_unknown_faces",
             side_effect=fake_cluster,
         ):
             ProjectTaskAppService(db, session_factory=self._SessionLocal).process_task(task)
@@ -644,7 +687,7 @@ class ProjectTaskAppServiceTest(unittest.TestCase):
                 return _EnqueueResult()
 
         with patch(
-            "app.services.project_task_app_service.FaceScanBatchService",
+            "app.services.project_task_handlers.FaceScanBatchService",
             _FakeFaceScanBatchService,
         ):
             ProjectTaskAppService(db, session_factory=self._SessionLocal).process_task(task)
@@ -675,7 +718,7 @@ class ProjectTaskAppServiceTest(unittest.TestCase):
             review_pending = 3
 
         with patch(
-            "app.services.project_task_app_service.rematch_unknown_faces",
+            "app.services.project_task_handlers.rematch_unknown_faces",
             return_value=_Result(),
         ):
             ProjectTaskAppService(db, session_factory=self._SessionLocal).process_task(task)
@@ -745,7 +788,7 @@ class ProjectTaskAppServiceTest(unittest.TestCase):
             raise AssertionError("cancelled rematch task should not continue")
 
         with patch(
-            "app.services.project_task_app_service.rematch_unknown_faces",
+            "app.services.project_task_handlers.rematch_unknown_faces",
             side_effect=fake_rematch,
         ):
             ProjectTaskAppService(db, session_factory=self._SessionLocal).process_task(task)

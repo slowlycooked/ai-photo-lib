@@ -11,11 +11,11 @@ const resetSearchSettingsMock = vi.fn();
 
 vi.mock("@/api", () => ({
   api: {
-    projects: {
-      getSearchSettings: (...args: unknown[]) => getSearchSettingsMock(...args),
-      getEffectiveSettings: (...args: unknown[]) => getEffectiveSettingsMock(...args),
-      updateSearchSettings: (...args: unknown[]) => updateSearchSettingsMock(...args),
-      resetSearchSettings: (...args: unknown[]) => resetSearchSettingsMock(...args),
+    projectSettings: {
+      getSearch: (...args: unknown[]) => getSearchSettingsMock(...args),
+      effective: (...args: unknown[]) => getEffectiveSettingsMock(...args),
+      updateSearch: (...args: unknown[]) => updateSearchSettingsMock(...args),
+      resetSearch: (...args: unknown[]) => resetSearchSettingsMock(...args),
     },
   },
 }));

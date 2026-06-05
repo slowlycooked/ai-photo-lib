@@ -10,9 +10,9 @@ vi.mock("@/api", async () => {
     ...actual,
     api: {
       ...actual.api,
-      projects: {
-        ...actual.api.projects,
-        photos: (...args: unknown[]) => photosMock(...args),
+      projectPhotos: {
+        ...actual.api.projectPhotos,
+        list: (...args: unknown[]) => photosMock(...args),
       },
     },
   };

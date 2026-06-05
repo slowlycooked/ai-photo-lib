@@ -28,7 +28,7 @@ export function PhotoDetailHeader({
         </div>
       )}
       <img
-        src={api.projects.thumbnailUrl(projectId, photo.id, photo.updated_at)}
+        src={api.projectPhotos.thumbnailUrl(projectId, photo.id, photo.updated_at)}
         alt={photo.file_name}
         className="w-full object-cover"
         style={{ maxHeight: "40vh", opacity: loaded ? 1 : 0, transition: "opacity 0.2s" }}
@@ -42,7 +42,7 @@ export function PhotoDetailHeader({
         <X className="w-4 h-4 text-ink" />
       </button>
       <a
-        href={api.projects.originalUrl(projectId, photo.id)}
+        href={api.projectPhotos.originalUrl(projectId, photo.id)}
         download={photo.file_name}
         onClick={(e) => e.stopPropagation()}
         className="absolute top-3 right-14 w-9 h-9 rounded-full bg-canvas flex items-center justify-center shadow-md hover:bg-surface-card transition-colors"

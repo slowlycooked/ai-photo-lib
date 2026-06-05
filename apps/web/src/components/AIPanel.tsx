@@ -12,7 +12,7 @@ export function AIPanel({ projectId }: { projectId: number }) {
 
   const { data: status, isLoading } = useQuery({
     queryKey: queryKeys.aiStatus(projectId),
-    queryFn: () => api.projects.aiStatus(projectId),
+    queryFn: () => api.projectAiJobs.status(projectId),
     refetchInterval: (query) => {
       const d = query.state.data;
       return d && (d.queued > 0 || d.running > 0) ? 3000 : 15000;
@@ -31,7 +31,7 @@ export function AIPanel({ projectId }: { projectId: number }) {
   }, [status, queryClient, projectId]);
 
   const startMutation = useMutation({
-    mutationFn: () => api.projects.startAI(projectId),
+    mutationFn: () => api.projectAiJobs.startAnalysis(projectId),
     onSuccess: (data) => {
       if (data.created_jobs > 0) {
         setMessage(`已创建 ${data.created_jobs} 个分析任务`);
@@ -45,7 +45,7 @@ export function AIPanel({ projectId }: { projectId: number }) {
   });
 
   const retryMutation = useMutation({
-    mutationFn: () => api.projects.retryFailedAiJobs(projectId),
+    mutationFn: () => api.projectAiJobs.retryFailed(projectId),
     onSuccess: (data) => {
       setMessage(`已重新排队 ${data.retried_jobs} 个失败任务`);
       queryClient.invalidateQueries({ queryKey: queryKeys.aiStatus(projectId) });

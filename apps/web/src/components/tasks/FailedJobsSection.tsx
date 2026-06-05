@@ -128,13 +128,13 @@ export function FailedJobsSection({
 
   const { data } = useQuery({
     queryKey: [listQueryKey, projectId],
-    queryFn: () => api.projects.aiJobs(projectId!, "failed", 50, 0, jobType),
+    queryFn: () => api.projectAiJobs.list(projectId!, "failed", 50, 0, jobType),
     enabled: projectId != null,
     staleTime: 10_000,
   });
 
   const retryMutation = useMutation({
-    mutationFn: () => api.projects.retryFailedAiJobs(projectId!, jobType),
+    mutationFn: () => api.projectAiJobs.retryFailed(projectId!, jobType),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.aiStatus(projectId) });
       queryClient.invalidateQueries({ queryKey: [listQueryKey, projectId] });
@@ -145,7 +145,7 @@ export function FailedJobsSection({
   });
 
   const clearFailedJobsMutation = useMutation({
-    mutationFn: () => api.projects.clearFailedAiJobs(projectId!, jobType),
+    mutationFn: () => api.projectAiJobs.clearFailed(projectId!, jobType),
     onSuccess: () => {
       setError(null);
       queryClient.invalidateQueries({ queryKey: queryKeys.aiStatus(projectId) });

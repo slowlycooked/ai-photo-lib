@@ -18,8 +18,10 @@ os.environ.setdefault("OPENAI_MODEL", "test-model")
 os.environ.setdefault("OPENAI_VISION_MODEL", "test-model")
 
 from app.models.ai import AIJob  # noqa: E402
+from app.models.photo import Photo  # noqa: E402,F401
+from app.models.project import Project  # noqa: E402,F401
 from app.models.project_task import ProjectTask  # noqa: E402
-from app.services.task_claim_service import TaskClaimService  # noqa: E402
+from app.services.task_claim_service import TaskClaimService, _QueueCandidate  # noqa: E402
 
 
 SCHEMA_SQL = """
@@ -151,6 +153,76 @@ class TaskClaimServiceTest(unittest.TestCase):
             assert claimed is not None
             self.assertEqual(claimed.kind, "ai_job")
             self.assertEqual(claimed.item.id, job.id)
+
+    def test_claim_next_locks_only_selected_queue(self) -> None:
+        base = datetime(2026, 1, 1, 12, 0, 0)
+        with self._SessionLocal() as db:
+            task = ProjectTask(
+                project_id=1,
+                task_type="library_scan",
+                status="queued",
+                created_at=base,
+            )
+            job = AIJob(
+                id=1,
+                project_id=1,
+                photo_id=1,
+                job_type="analysis",
+                status="queued",
+                created_at=base + timedelta(seconds=1),
+            )
+            db.add_all([task, job])
+            db.commit()
+
+            class _SpyClaimService(TaskClaimService):
+                ai_job_claim_calls = 0
+
+                def _claim_ai_job(self, job_id: int):  # type: ignore[no-untyped-def]
+                    self.ai_job_claim_calls += 1
+                    return super()._claim_ai_job(job_id)
+
+            service = _SpyClaimService(db)
+            claimed = service.claim_next()
+
+            self.assertIsNotNone(claimed)
+            assert claimed is not None
+            self.assertEqual(claimed.kind, "project_task")
+            self.assertEqual(service.ai_job_claim_calls, 0)
+
+    def test_claim_next_falls_back_when_older_candidate_cannot_be_locked(self) -> None:
+        base = datetime(2026, 1, 1, 12, 0, 0)
+
+        class _FallbackClaimService(TaskClaimService):
+            def _peek_next_project_task(self):
+                return _QueueCandidate(kind="project_task", id=10, created_at=base)
+
+            def _peek_next_ai_job(self):
+                return _QueueCandidate(
+                    kind="ai_job",
+                    id=20,
+                    created_at=base + timedelta(seconds=1),
+                )
+
+            def _claim_project_task(self, task_id: int):
+                return None
+
+            def _claim_ai_job(self, job_id: int):
+                return AIJob(
+                    id=job_id,
+                    project_id=1,
+                    photo_id=1,
+                    job_type="analysis",
+                    status="queued",
+                    created_at=base + timedelta(seconds=1),
+                )
+
+        with self._SessionLocal() as db:
+            claimed = _FallbackClaimService(db).claim_next()
+
+        self.assertIsNotNone(claimed)
+        assert claimed is not None
+        self.assertEqual(claimed.kind, "ai_job")
+        self.assertEqual(claimed.item.id, 20)
 
 
 if __name__ == "__main__":

@@ -114,12 +114,12 @@ export default function ProjectSearchSettingsPanel({ projectId }: Props) {
 
   const { data: settings, isLoading, error } = useQuery({
     queryKey: ["project-search-settings", projectId],
-    queryFn: () => api.projects.getSearchSettings(projectId),
+    queryFn: () => api.projectSettings.getSearch(projectId),
   });
 
   const { data: effectiveSettings } = useQuery({
     queryKey: ["project-effective-settings", projectId],
-    queryFn: () => api.projects.getEffectiveSettings(projectId),
+    queryFn: () => api.projectSettings.effective(projectId),
   });
 
   const [form, setForm] = useState<Partial<ProjectSearchSettingsUpdate>>({});
@@ -129,7 +129,7 @@ export default function ProjectSearchSettingsPanel({ projectId }: Props) {
 
   const updateMutation = useMutation({
     mutationFn: (body: ProjectSearchSettingsUpdate) =>
-      api.projects.updateSearchSettings(projectId, body),
+      api.projectSettings.updateSearch(projectId, body),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["project-search-settings", projectId] });
       queryClient.invalidateQueries({ queryKey: ["project-effective-settings", projectId] });
@@ -140,7 +140,7 @@ export default function ProjectSearchSettingsPanel({ projectId }: Props) {
   });
 
   const resetMutation = useMutation({
-    mutationFn: () => api.projects.resetSearchSettings(projectId),
+    mutationFn: () => api.projectSettings.resetSearch(projectId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["project-search-settings", projectId] });
       queryClient.invalidateQueries({ queryKey: ["project-effective-settings", projectId] });

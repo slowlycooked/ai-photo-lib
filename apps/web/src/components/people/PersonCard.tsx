@@ -30,7 +30,7 @@ export function PersonCard({
         <div className="w-16 h-16 rounded-lg overflow-hidden border border-hairline bg-surface-soft flex-shrink-0">
           {faceCropEnabled && person.representative_face_detection_id ? (
             <img
-              src={api.projects.faceCropUrl(
+              src={api.projectFaces.cropUrl(
                 projectId,
                 person.representative_face_detection_id,
                 person.updated_at,

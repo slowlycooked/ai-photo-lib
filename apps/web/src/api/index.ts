@@ -112,25 +112,60 @@ export {
   normalisePresets,
 } from "./settings.helpers";
 export { foldersApi } from "./folders";
-export { projectsApi } from "./projects";
+export { projectAiJobsApi } from "./projectAiJobs";
+export { projectCoreApi } from "./projectCore";
+export { projectFacesApi } from "./projectFaces";
+export { projectPeopleApi } from "./projectPeople";
+export { projectPhotosApi } from "./projectPhotos";
+export { projectPromptsApi } from "./projectPrompts";
+export { projectScansApi } from "./projectScans";
+export { projectSearchApi } from "./projectSearch";
+export { projectSettingsApi } from "./projectSettings";
+export { projectTasksApi } from "./projectTasks";
 export { settingsApi } from "./settings";
 
 import * as authApi from "./auth";
 import { foldersApi } from "./folders";
-import { projectsApi } from "./projects";
+import { projectAiJobsApi } from "./projectAiJobs";
+import { projectCoreApi } from "./projectCore";
+import { projectFacesApi } from "./projectFaces";
+import { projectPeopleApi } from "./projectPeople";
+import { projectPhotosApi } from "./projectPhotos";
+import { projectPromptsApi } from "./projectPrompts";
+import { projectScansApi } from "./projectScans";
+import { projectSearchApi } from "./projectSearch";
+import { projectSettingsApi } from "./projectSettings";
+import { projectTasksApi } from "./projectTasks";
 import { settingsApi } from "./settings";
 
 /**
  * Namespaced API object — preferred usage.
  *
- * api.projects.list()
- * api.projects.photos(id, page, pageSize)
+ * api.projectCore.list()
+ * api.projectPhotos.list(id, page, pageSize)
+ * api.projectPrompts.list(id)
+ * api.projectSearch.search(id, query)
+ * api.projectScans.status(id)
+ * api.projectAiJobs.status(id)
+ * api.projectFaces.list(id)
+ * api.projectPeople.list(id)
+ * api.projectTasks.list(id)
+ * api.projectSettings.getAi(id)
  * api.folders.tree(projectId)
  * api.settings.getDebug()
  */
 export const api = {
   auth: authApi,
-  projects: projectsApi,
+  projectCore: projectCoreApi,
+  projectAiJobs: projectAiJobsApi,
+  projectFaces: projectFacesApi,
+  projectPeople: projectPeopleApi,
+  projectPhotos: projectPhotosApi,
+  projectPrompts: projectPromptsApi,
+  projectScans: projectScansApi,
+  projectSearch: projectSearchApi,
+  projectSettings: projectSettingsApi,
+  projectTasks: projectTasksApi,
   folders: foldersApi,
   settings: settingsApi,
 } as const;
