@@ -1,0 +1,44 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    box-sizing: border-box;
+  }
+
+  body {
+    @apply bg-mobileBg text-mobileInk font-sans antialiased;
+  }
+}
+
+@layer components {
+  .mobile-page {
+    min-height: 100vh;
+    background:
+      radial-gradient(1200px 450px at 20% -20%, #d8efe5 0%, transparent 60%),
+      radial-gradient(700px 380px at 100% 0%, #f3ead7 0%, transparent 55%),
+      #f7f8f5;
+  }
+
+  .mobile-grid {
+    columns: 2;
+    column-gap: 8px;
+  }
+
+  .mobile-grid-item {
+    break-inside: avoid;
+    margin-bottom: 8px;
+    display: block;
+    overflow: hidden;
+    border-radius: 14px;
+    border: 1px solid #d9dbd2;
+    background: #ffffff;
+  }
+
+  @media (min-width: 640px) {
+    .mobile-grid {
+      columns: 3;
+    }
+  }
+}

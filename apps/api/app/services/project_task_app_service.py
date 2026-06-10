@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from ..database import SessionLocal
 from ..models.project_task import ProjectTask
+from .task_claim_service import TaskClaimService
 from .project_task_handlers import (
     ProjectTaskHandler,
     ProjectTaskRunContext,
@@ -43,6 +44,7 @@ class ProjectTaskAppService:
         self._db = db
         self._session_factory = session_factory
         self._handlers = dict(handlers or build_default_project_task_handlers())
+        self._claim_service = TaskClaimService(db)
 
     def process_task(self, task: ProjectTask) -> None:
         now = datetime.now(timezone.utc)
@@ -53,15 +55,17 @@ class ProjectTaskAppService:
             self._persist_paused(task.id)
             return
 
-        task.status = "running"
-        task.started_at = now
-        task.updated_at = now
-        task.progress_payload = build_queued_progress_payload(
-            task.task_type,
-            task.request_params,
-            project_id=task.project_id,
-        )
-        self._db.commit()
+        if task.status != "running":
+            task.status = "running"
+            task.started_at = now
+            task.updated_at = now
+            task.progress_payload = build_queued_progress_payload(
+                task.task_type,
+                task.request_params,
+                project_id=task.project_id,
+            )
+            self._claim_service.touch_project_task_lease(task)
+            self._db.commit()
 
         try:
             final_state = self._run_task(task)
@@ -81,6 +85,10 @@ class ProjectTaskAppService:
             task.result_payload = dict(final_state)
             task.finished_at = datetime.now(timezone.utc)
             task.updated_at = task.finished_at
+            task.locked_by = None
+            task.locked_at = None
+            task.heartbeat_at = None
+            task.lease_expires_at = None
             self._db.commit()
         except ProjectTaskCancelled:
             self._db.rollback()
@@ -109,6 +117,7 @@ class ProjectTaskAppService:
                 raise ProjectTaskPaused()
             task.progress_payload = dict(state)
             task.updated_at = datetime.now(timezone.utc)
+            TaskClaimService(db).touch_project_task_lease(task)
             db.commit()
 
     def _persist_cancelled(self, task_id: int, state: Optional[dict] = None) -> None:
@@ -134,6 +143,10 @@ class ProjectTaskAppService:
             task.error_message = None
             task.finished_at = datetime.now(timezone.utc)
             task.updated_at = task.finished_at
+            task.locked_by = None
+            task.locked_at = None
+            task.heartbeat_at = None
+            task.lease_expires_at = None
             db.commit()
 
     def _persist_paused(self, task_id: int, state: Optional[dict] = None) -> None:
@@ -158,6 +171,10 @@ class ProjectTaskAppService:
             task.result_payload = progress
             task.error_message = None
             task.updated_at = datetime.now(timezone.utc)
+            task.locked_by = None
+            task.locked_at = None
+            task.heartbeat_at = None
+            task.lease_expires_at = None
             db.commit()
 
     def _persist_failure(self, task_id: int, error_message: str) -> None:
@@ -170,6 +187,12 @@ class ProjectTaskAppService:
             task.error_message = error_message[:_MAX_ERROR_LEN]
             task.finished_at = datetime.now(timezone.utc)
             task.updated_at = task.finished_at
+            task.last_error_code = "task_failed"
+            task.last_error_at = task.finished_at
+            task.locked_by = None
+            task.locked_at = None
+            task.heartbeat_at = None
+            task.lease_expires_at = None
             progress = dict(
                 task.progress_payload
                 or empty_project_task_state(

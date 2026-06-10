@@ -18,6 +18,8 @@ class ProjectTask(Base):
         sa.Index("ix_project_tasks_project_created_at", "project_id", "created_at"),
         sa.Index("ix_project_tasks_project_status", "project_id", "status"),
         sa.Index("ix_project_tasks_project_type_status", "project_id", "task_type", "status"),
+        sa.Index("ix_project_tasks_status_created_at", "status", "created_at"),
+        sa.Index("ix_project_tasks_status_lease_expires_at", "status", "lease_expires_at"),
         sa.Index(
             "uq_project_tasks_one_active_scan",
             "project_id",
@@ -80,6 +82,12 @@ class ProjectTask(Base):
     progress_payload: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     result_payload: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    locked_by: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    locked_at: Mapped[Optional[datetime]] = mapped_column(TIMESTAMP, nullable=True)
+    heartbeat_at: Mapped[Optional[datetime]] = mapped_column(TIMESTAMP, nullable=True)
+    lease_expires_at: Mapped[Optional[datetime]] = mapped_column(TIMESTAMP, nullable=True)
+    last_error_code: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    last_error_at: Mapped[Optional[datetime]] = mapped_column(TIMESTAMP, nullable=True)
     started_at: Mapped[Optional[datetime]] = mapped_column(TIMESTAMP, nullable=True)
     finished_at: Mapped[Optional[datetime]] = mapped_column(TIMESTAMP, nullable=True)
     created_at: Mapped[datetime] = mapped_column(

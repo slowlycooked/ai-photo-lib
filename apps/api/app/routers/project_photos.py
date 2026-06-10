@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse, Response
 from sqlalchemy.orm import Session
 
-from ..api.deps import require_project, require_project_photo
+from ..api.deps import require_project, require_project_manager, require_project_photo
 from ..database import get_db
 from ..models.photo import Photo
 from ..models.project import Project
@@ -176,6 +176,7 @@ def get_project_photo_ai(
 def delete_project_photo(
     project_id: int,
     delete_original: bool = Query(False),
+    _project: Project = Depends(require_project_manager),
     photo: Photo = Depends(require_project_photo),
     db: Session = Depends(get_db),
 ):
@@ -212,7 +213,7 @@ def delete_project_photo(
 def batch_delete_project_photos(
     project_id: int,
     payload: PhotoBatchDeleteRequest,
-    project: Project = Depends(require_project),
+    _project: Project = Depends(require_project_manager),
     db: Session = Depends(get_db),
 ):
     """Delete selected project photo records and optionally delete originals."""
@@ -248,6 +249,7 @@ def batch_delete_project_photos(
 def delete_project_photo_compat(
     project_id: int,
     delete_original: bool = Query(False),
+    _project: Project = Depends(require_project_manager),
     photo: Photo = Depends(require_project_photo),
     db: Session = Depends(get_db),
 ):
@@ -255,6 +257,7 @@ def delete_project_photo_compat(
     return delete_project_photo(
         project_id=project_id,
         delete_original=delete_original,
+        _project=_project,
         photo=photo,
         db=db,
     )

@@ -7,6 +7,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 API_DIR="$ROOT/apps/api"
 WEB_DIR="$ROOT/apps/web"
+MOBILE_WEB_DIR="$ROOT/apps/mobile-web"
 PYTHON_BIN="$ROOT/.venv/bin/python"
 
 if [ ! -x "$PYTHON_BIN" ]; then
@@ -20,7 +21,7 @@ if ! command -v npm >/dev/null 2>&1; then
   exit 1
 fi
 
-echo "[preflight] 1/3 backend release guard and core regressions"
+echo "[preflight] 1/4 backend release guard and core regressions"
 cd "$API_DIR"
 AUTH_ENABLED=0 "$PYTHON_BIN" -m pytest \
   tests/test_release_audit_guards.py \
@@ -35,7 +36,7 @@ AUTH_ENABLED=0 "$PYTHON_BIN" -m pytest \
   tests/test_search_hybrid.py \
   -q
 
-echo "[preflight] 2/3 frontend maturity rendering regressions"
+echo "[preflight] 2/4 frontend maturity rendering regressions"
 cd "$WEB_DIR"
 npm test -- \
   src/components/common/CapabilityMaturityBadge.test.tsx \
@@ -46,7 +47,12 @@ npm test -- \
   src/pages/SettingsPage.test.tsx \
   src/pages/TasksPage.test.tsx
 
-echo "[preflight] 3/3 frontend build"
+echo "[preflight] 3/4 frontend build"
+npm run typecheck
+npm run build
+
+echo "[preflight] 4/4 mobile frontend build"
+cd "$MOBILE_WEB_DIR"
 npm run typecheck
 npm run build
 

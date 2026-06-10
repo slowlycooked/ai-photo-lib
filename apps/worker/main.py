@@ -13,6 +13,8 @@ Environment variables (see .env.example):
 from __future__ import annotations
 
 import logging
+import os
+import socket
 import signal
 import sys
 import time
@@ -68,6 +70,8 @@ _shutdown = False
 _DEBUG_CONFIG_REFRESH_INTERVAL = 60
 _last_debug_config_refresh: float = 0.0
 _last_debug_matrix: dict | None = None
+_RECOVERY_SCAN_INTERVAL = 30
+_last_recovery_scan: float = 0.0
 
 
 def _handle_signal(signum, frame):
@@ -108,8 +112,12 @@ def _maybe_refresh_debug_config(db) -> None:
 
 
 def run() -> None:
+    global _last_recovery_scan
+
+    worker_id = f"worker-{socket.gethostname()}-{os.getpid()}"
     logger.info(
-        "worker_started model=%s base_url=%s max_retries=%d",
+        "worker_started worker_id=%s model=%s base_url=%s max_retries=%d",
+        worker_id,
         settings.openai_vision_model,
         settings.openai_base_url,
         settings.ai_max_retries,
@@ -123,7 +131,19 @@ def run() -> None:
             with SessionLocal() as db:
                 _maybe_refresh_debug_config(db)
 
-                claimed = TaskClaimService(db).claim_next()
+                claim_service = TaskClaimService(db, worker_id=worker_id)
+                now = time.monotonic()
+                if now - _last_recovery_scan >= _RECOVERY_SCAN_INTERVAL:
+                    recovered = claim_service.recover_stuck_running_tasks()
+                    _last_recovery_scan = now
+                    if recovered["project_tasks"] or recovered["ai_jobs"]:
+                        logger.warning(
+                            "worker_recovered_stuck_tasks project_tasks=%d ai_jobs=%d",
+                            recovered["project_tasks"],
+                            recovered["ai_jobs"],
+                        )
+
+                claimed = claim_service.claim_next()
 
                 if claimed is None:
                     idle_polls += 1

@@ -41,6 +41,7 @@ from ..services.project_ai_service import (
 )
 from ..services.project_embedding_settings_service import resolve_embedding_settings_strict
 from ..services.thumbnail import generate_thumbnail
+from .task_claim_service import TaskClaimService
 from ..services.vlm_client import VLMRequestError, analyze_image
 from ..face.providers import FaceRecognitionProviderUnavailableError
 
@@ -122,6 +123,7 @@ class AIJobAppService:
 
     def __init__(self, db: Session) -> None:
         self._db = db
+        self._claim_service = TaskClaimService(db)
 
     # ── public entry point ────────────────────────────────────────────────────
 
@@ -134,11 +136,13 @@ class AIJobAppService:
 
         project_id: int = job.project_id
 
-        # Mark running
-        now = datetime.now(timezone.utc)
-        job.status = "running"
-        job.started_at = now
-        job.updated_at = now
+        # Keep compatibility for direct callers that bypass claim service.
+        if job.status != "running":
+            now = datetime.now(timezone.utc)
+            job.status = "running"
+            job.started_at = now
+            job.updated_at = now
+        self._claim_service.touch_ai_job_lease(job)
         self._db.commit()
 
         photo = (
@@ -166,6 +170,12 @@ class AIJobAppService:
             f"Job {job.id} has no project_id and cannot be processed. "
             "Re-queue the job with a valid project_id."
         )
+        job.last_error_code = "missing_project_id"
+        job.last_error_at = now
+        job.locked_by = None
+        job.locked_at = None
+        job.heartbeat_at = None
+        job.lease_expires_at = None
         job.finished_at = now
         job.updated_at = now
         self._db.commit()
@@ -177,6 +187,12 @@ class AIJobAppService:
         now = datetime.now(timezone.utc)
         job.status = "failed"
         job.error_message = f"Photo {job.photo_id} not found in project {project_id}"
+        job.last_error_code = "missing_photo"
+        job.last_error_at = now
+        job.locked_by = None
+        job.locked_at = None
+        job.heartbeat_at = None
+        job.lease_expires_at = None
         job.finished_at = now
         job.updated_at = now
         self._db.commit()
@@ -276,6 +292,7 @@ class AIJobAppService:
                 top_p=ai_settings["top_p"],
                 max_tokens=ai_settings["max_tokens"],
             )
+            self._claim_service.touch_ai_job_lease(job)
             job.raw_model_output = raw_text[:_MAX_ERROR_LEN]
 
             normalized = normalize_concepts_from_payload(
@@ -363,6 +380,12 @@ class AIJobAppService:
             job.updated_at = job.finished_at
             job.error_message = None
             job.parse_error = None
+            job.last_error_code = None
+            job.last_error_at = None
+            job.locked_by = None
+            job.locked_at = None
+            job.heartbeat_at = None
+            job.lease_expires_at = None
 
             self._db.commit()
             logger.info("Photo %d analyzed successfully.", photo.id)
@@ -389,6 +412,12 @@ class AIJobAppService:
             now = datetime.now(timezone.utc)
             job.status = "failed"
             job.error_message = "No AI analysis found"
+            job.last_error_code = "missing_ai_analysis"
+            job.last_error_at = now
+            job.locked_by = None
+            job.locked_at = None
+            job.heartbeat_at = None
+            job.lease_expires_at = None
             job.finished_at = now
             job.updated_at = now
             self._db.commit()
@@ -419,6 +448,12 @@ class AIJobAppService:
             job.parse_error = None
             job.finished_at = now
             job.updated_at = now
+            job.last_error_code = None
+            job.last_error_at = None
+            job.locked_by = None
+            job.locked_at = None
+            job.heartbeat_at = None
+            job.lease_expires_at = None
             self._db.commit()
 
         except Exception as exc:  # noqa: BLE001
@@ -466,6 +501,12 @@ class AIJobAppService:
             )
             job.finished_at = now
             job.updated_at = now
+            job.last_error_code = None
+            job.last_error_at = None
+            job.locked_by = None
+            job.locked_at = None
+            job.heartbeat_at = None
+            job.lease_expires_at = None
             self._db.commit()
         except Exception as exc:  # noqa: BLE001
             self._db.rollback()
@@ -506,6 +547,12 @@ class AIJobAppService:
         job.parse_error = error_detail[:_MAX_ERROR_LEN]
         job.finished_at = datetime.now(timezone.utc)
         job.updated_at = job.finished_at
+        job.last_error_code = "retryable_error" if is_retryable else "non_retryable_error"
+        job.last_error_at = job.finished_at
+        job.locked_by = None
+        job.locked_at = None
+        job.heartbeat_at = None
+        job.lease_expires_at = None
 
         if is_retryable and job.retry_count < global_settings.ai_max_retries:
             job.status = "queued"

@@ -208,6 +208,10 @@ class ProjectQueryPlannerSettings(Base):
 
 class AIJob(Base):
     __tablename__ = "ai_jobs"
+    __table_args__ = (
+        sa.Index("ix_ai_jobs_status_created_at", "status", "created_at"),
+        sa.Index("ix_ai_jobs_status_lease_expires_at", "status", "lease_expires_at"),
+    )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     photo_id: Mapped[int] = mapped_column(
@@ -220,6 +224,12 @@ class AIJob(Base):
     status: Mapped[str] = mapped_column(Text, server_default="queued", nullable=False)
     retry_count: Mapped[int] = mapped_column(Integer, server_default="0", nullable=False)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    locked_by: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    locked_at: Mapped[Optional[datetime]] = mapped_column(TIMESTAMP, nullable=True)
+    heartbeat_at: Mapped[Optional[datetime]] = mapped_column(TIMESTAMP, nullable=True)
+    lease_expires_at: Mapped[Optional[datetime]] = mapped_column(TIMESTAMP, nullable=True)
+    last_error_code: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    last_error_at: Mapped[Optional[datetime]] = mapped_column(TIMESTAMP, nullable=True)
     prompt_template_id: Mapped[Optional[int]] = mapped_column(
         BigInteger,
         ForeignKey("project_prompt_templates.id", ondelete="SET NULL"),

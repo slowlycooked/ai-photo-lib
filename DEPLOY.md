@@ -120,6 +120,12 @@ brew install llama.cpp
 ./scripts/svc.sh start
 ```
 
+仅启动手机端前端：
+
+```bash
+./scripts/svc.sh start mobile-web
+```
+
 常用运维命令：
 
 ```bash
@@ -221,8 +227,96 @@ npm run dev -- --host 0.0.0.0 --port 8088
 ## 6. 本地化构建产物说明
 
 - 前端构建产物目录：`apps/web/dist`
+- 手机端前端构建产物目录：`apps/mobile-web/dist`
 - 后端为 Python 运行时，不需要单独打包二进制
 - Worker 与 API 共享 `apps/api` 代码与依赖环境
+
+### 6.1 手机端切换建议
+
+推荐生产部署使用同域路径：
+
+- 桌面端：`/`
+- 手机端：`/m/`
+- API：`/api/`
+
+这样可以复用同源 Cookie session，并启用桌面端的“移动端自动跳转 `/m`”能力。
+
+说明：桌面端会在移动浏览器下探测 `/m/` 是否可用；仅在可用时才自动跳转，不会影响独立端口开发模式。
+
+推荐目录落位：
+
+- `apps/web/dist` -> Nginx 根目录（例如 `/usr/share/nginx/html`）
+- `apps/mobile-web/dist` -> Nginx 子目录（例如 `/usr/share/nginx/html/m`）
+
+示例 Nginx 配置（同域 `/` + `/m/` + `/api/`）：
+
+```nginx
+server {
+	listen 80;
+	server_name _;
+	root /usr/share/nginx/html;
+	index index.html;
+
+	location /api/ {
+		proxy_pass http://api:8000/;
+		proxy_set_header Host $host;
+		proxy_set_header X-Real-IP $remote_addr;
+		proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+		proxy_read_timeout 120s;
+	}
+
+	location /m/ {
+		try_files $uri $uri/ /m/index.html;
+	}
+
+	location / {
+		try_files $uri $uri/ /index.html;
+	}
+}
+```
+
+发布后建议做冒烟验证：
+
+```bash
+# 1) 桌面端
+curl -I http://<host>/
+
+# 2) 手机端入口
+curl -I http://<host>/m/
+
+# 3) API
+curl http://<host>/api/health
+```
+
+手机浏览器自动切换验证：
+
+1. 在手机访问 `http://<host>/photos`，应自动进入 `/m/photos`。
+2. 访问 `http://<host>/photos?desktop=1`，应保持桌面端并记住偏好。
+3. 访问 `http://<host>/photos?mobile=1`，应清除偏好并恢复自动跳转。
+
+### 6.2 一键发布桌面+手机前端（单机）
+
+仓库已提供脚本：`scripts/publish-web.sh`
+
+示例：
+
+```bash
+./scripts/publish-web.sh \
+	--desktop-dir /usr/share/nginx/html \
+	--mobile-dir /usr/share/nginx/html/m
+```
+
+脚本行为：
+
+1. 构建 `apps/web` 与 `apps/mobile-web`
+2. 同步 `apps/web/dist` 到 `--desktop-dir`
+3. 同步 `apps/mobile-web/dist` 到 `--mobile-dir`
+4. 同步时会删除目标目录中已不存在于 dist 的旧文件（`rsync --delete`）
+
+常用选项：
+
+- `--dry-run`：仅打印计划动作，不写入文件
+- `--no-build`：跳过构建，仅同步已有 dist 产物
 
 建议在升级前后执行基础检查：
 

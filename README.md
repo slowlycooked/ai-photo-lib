@@ -142,9 +142,52 @@ People Recognition 已经从“只读调试阶段”进入“人工纠错闭环�
 | PostgreSQL | 元数据、任务、向量索引 | `5432` | 本地进程 |
 | API | FastAPI 后端 | `8000` | `uvicorn` |
 | Web | React 前端 | `8088` | `vite dev` 或 `vite preview` |
+| Mobile Web | 手机端只读前端 | `8090` | `vite dev` 或 `vite preview` |
 | Worker | AI 任务处理 | - | Python 进程 |
 | llama-server | 视觉模型服务 | `8082` | 本地进程 |
 | llama embedding | 向量模型服务 | `8083` | 本地进程 |
+
+## Mobile Web（手机端）
+
+手机端作为独立应用位于 `apps/mobile-web`，能力边界为只读浏览：
+
+- 登录 / 登出
+- 项目切换
+- 照片流浏览（分页 + 无限滚动）
+- 照片搜索（固定自动模式）
+- 详情预览与原图下载
+
+不包含设置、任务中心、AI 配置、People 管理等管理能力。
+
+### 启动方式
+
+```bash
+# 仅启动手机端前端
+./scripts/svc.sh start mobile-web
+
+# 查看运行状态
+./scripts/svc.sh status
+```
+
+默认地址：`http://127.0.0.1:8090`
+
+### 手机端自动切换（同域 /m 部署）
+
+桌面端 `apps/web` 已支持自动检测移动端 UA：
+
+- 当请求来自手机浏览器时，会探测同域 `/m/` 是否可用。
+- 若 `/m/` 可用，则自动跳转到手机端对应页面。
+- 若 `/m/` 不可用（例如本地开发独立端口模式），不会跳转。
+
+手动覆盖参数：
+
+- `?desktop=1`：记住“停留桌面端”偏好（关闭自动跳转）
+- `?mobile=1`：清除桌面偏好，重新启用自动跳转
+
+例如：
+
+- `http://host:8088/photos?desktop=1`
+- `http://host:8088/photos?mobile=1`
 
 ## 设计原则
 

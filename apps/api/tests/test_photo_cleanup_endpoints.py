@@ -21,8 +21,10 @@ os.environ.setdefault("OPENAI_BASE_URL", "http://127.0.0.1:9999/v1")
 os.environ.setdefault("OPENAI_MODEL", "test-model")
 os.environ.setdefault("OPENAI_VISION_MODEL", "test-model")
 
+from app.api.deps import require_project, require_project_manager  # noqa: E402
 from app.database import get_db  # noqa: E402
 from app.main import app  # noqa: E402
+from app.models.project import Project  # noqa: E402
 from app.models.project_task import ProjectTask  # noqa: E402
 from app.services.project_task_app_service import ProjectTaskAppService  # noqa: E402
 from app.services.project_task_service import TASK_TYPE_LIBRARY_SCAN  # noqa: E402
@@ -108,6 +110,12 @@ CREATE TABLE project_tasks (
     progress_payload TEXT,
     result_payload TEXT,
     error_message TEXT,
+    locked_by TEXT,
+    locked_at TEXT,
+    heartbeat_at TEXT,
+    lease_expires_at TEXT,
+    last_error_code TEXT,
+    last_error_at TEXT,
     started_at TEXT,
     finished_at TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -260,7 +268,23 @@ class PhotoDeleteEndpointTest(unittest.TestCase):
             finally:
                 db.close()
 
+        def override_require_project_manager(project_id: int) -> Project:
+            db = self._SessionLocal()
+            try:
+                project = (
+                    db.query(Project)
+                    .filter(Project.id == project_id, Project.deleted_at.is_(None))
+                    .first()
+                )
+                if project is None:
+                    raise RuntimeError("Project not found")
+                return project
+            finally:
+                db.close()
+
         app.dependency_overrides[get_db] = override_get_db
+        app.dependency_overrides[require_project] = override_require_project_manager
+        app.dependency_overrides[require_project_manager] = override_require_project_manager
         self.client = TestClient(app)
 
     def tearDown(self) -> None:

@@ -2,7 +2,7 @@
 # scripts/svc.sh — macOS native service manager
 # 用法: ./scripts/svc.sh {start|stop|restart|status|logs} [服务名...]
 #
-# 服务名: postgres planner ai embed api worker web all（默认全部）
+# 服务名: postgres planner ai embed api worker web mobile-web all（默认全部）
 
 set -euo pipefail
 
@@ -69,6 +69,10 @@ API_RELOAD="${SVC_RELOAD:-0}"
 WEB_HOST="${WEB_HOST:-127.0.0.1}"
 WEB_PORT="${WEB_PORT:-8088}"
 WEB_MODE="${WEB_MODE:-$([ "$DEPLOY_PROFILE" = "prd" ] && echo preview || echo dev)}"
+
+MOBILE_WEB_HOST="${MOBILE_WEB_HOST:-$WEB_HOST}"
+MOBILE_PORT="${MOBILE_PORT:-8090}"
+MOBILE_WEB_MODE="${MOBILE_WEB_MODE:-$([ "$DEPLOY_PROFILE" = "prd" ] && echo preview || echo dev)}"
 
 LLAMA_SERVER="${LLAMA_SERVER:-$(command -v llama-server 2>/dev/null || true)}"
 LLAMA_MODEL="${LLAMA_MODEL:-}"
@@ -152,6 +156,7 @@ service_port() {
     postgres) echo "$POSTGRES_PORT" ;;
     api)      echo "$API_PORT" ;;
     web)      echo "$WEB_PORT" ;;
+    mobile-web) echo "$MOBILE_PORT" ;;
     ai)       echo "$LLAMA_PORT" ;;
     planner)  echo "$QUERY_PLANNER_PORT" ;;
     embed)    echo "$EMBED_PORT" ;;
@@ -164,6 +169,7 @@ service_cmd_pattern() {
     postgres) echo 'postgres .* -D |postmaster' ;;
     api)      echo 'ai-photo-api|uvicorn .*(app\.main:app|main:app)' ;;
     web)      echo 'ai-photo-web|vite|npm run (dev|preview)' ;;
+    mobile-web) echo 'ai-photo-mobile-web|vite|npm run (dev|preview)' ;;
     ai)       echo 'ai-photo-llama|llama-server' ;;
     planner)  echo 'ai-photo-query-planner|llama-server' ;;
     embed)    echo 'ai-photo-embed|llama-server' ;;
@@ -589,6 +595,48 @@ start_web() {
   fi
 }
 
+start_mobile_web() {
+  if is_running mobile-web; then
+    log_ok "mobile-web 已在运行 (PID $(cat "$(pid_file mobile-web)"), port $MOBILE_PORT)"
+    return 0
+  fi
+
+  if ! command -v npm >/dev/null 2>&1; then
+    log_error "未找到 npm，请先安装 Node.js 20+"
+    return 1
+  fi
+
+  cd "$ROOT/apps/mobile-web"
+  if [ ! -d "node_modules" ]; then
+    log_info "安装 mobile 前端依赖..."
+    npm install --silent
+  fi
+
+  case "$MOBILE_WEB_MODE" in
+    dev)
+      log_info "启动 Mobile Web 开发服务 (host=$MOBILE_WEB_HOST, port=$MOBILE_PORT)..."
+      run_named_process "ai-photo-mobile-web" npm run dev -- --host "$MOBILE_WEB_HOST" --port "$MOBILE_PORT" > "$(log_file mobile-web)" 2>&1 &
+      ;;
+    preview)
+      log_info "构建 mobile 前端并启动 Preview 服务 (host=$MOBILE_WEB_HOST, port=$MOBILE_PORT)..."
+      run_named_process "ai-photo-mobile-web" sh -c "cd '$ROOT/apps/mobile-web' && npm run build >/dev/null && npm run preview -- --host '$MOBILE_WEB_HOST' --port '$MOBILE_PORT'" > "$(log_file mobile-web)" 2>&1 &
+      ;;
+    *)
+      log_error "不支持的 MOBILE_WEB_MODE: $MOBILE_WEB_MODE（可选: dev / preview）"
+      return 1
+      ;;
+  esac
+
+  save_bg_pid mobile-web
+  sleep 3
+  if is_running mobile-web; then
+    log_ok "mobile-web 已启动 (PID $(cat "$(pid_file mobile-web)"), log: logs/mobile-web.log)"
+  else
+    log_error "mobile-web 启动失败，请查看 logs/mobile-web.log"
+    return 1
+  fi
+}
+
 stop_web() {
   if is_running web; then
     local pid
@@ -602,6 +650,21 @@ stop_web() {
   fi
   kill_prefixed_processes '(^| )ai-photo-web( |$)' 'web'
   kill_listener_by_service_port web
+}
+
+stop_mobile_web() {
+  if is_running mobile-web; then
+    local pid
+    pid="$(cat "$(pid_file mobile-web)")"
+    log_info "停止 mobile-web (PID $pid)..."
+    terminate_process_tree "$pid" TERM
+    rm -f "$(pid_file mobile-web)"
+    log_ok "mobile-web 已停止"
+  else
+    log_warn "mobile-web 未在运行"
+  fi
+  kill_prefixed_processes '(^| )ai-photo-mobile-web( |$)' 'mobile-web'
+  kill_listener_by_service_port mobile-web
 }
 
 start_worker() {
@@ -923,6 +986,7 @@ show_status() {
   status_postgres
   status_process "api" "API" "$API_PORT"
   status_process "web" "Web" "$WEB_PORT"
+  status_process "mobile-web" "MobileWeb" "$MOBILE_PORT"
   status_process "worker" "Worker" "-"
   status_process "planner" "llm-plan" "$QUERY_PLANNER_PORT"
   status_process "ai" "llama-srv" "$LLAMA_PORT"
@@ -935,7 +999,7 @@ show_status() {
 normalize_service_name() {
   local raw="$1"
   case "$raw" in
-    postgres|planner|ai|embed|api|worker|web|all)
+    postgres|planner|ai|embed|api|worker|web|mobile-web|all)
       echo "$raw"
       ;;
     llm-plan)
@@ -955,7 +1019,7 @@ normalize_service_name() {
 
 resolve_services() {
   if [ "$#" -eq 0 ]; then
-    echo "postgres planner ai embed api worker web"
+    echo "postgres planner ai embed api worker web mobile-web"
   else
     local expanded=()
     local svc canonical
@@ -966,7 +1030,7 @@ resolve_services() {
       fi
 
       if [ "$canonical" = "all" ]; then
-        expanded+=(postgres planner ai embed api worker web)
+        expanded+=(postgres planner ai embed api worker web mobile-web)
       else
         expanded+=("$canonical")
       fi
@@ -1006,6 +1070,7 @@ do_start() {
       api)      start_api ;;
       worker)   start_worker ;;
       web)      start_web ;;
+      mobile-web) start_mobile_web ;;
       *)        log_error "未知服务: $svc"; exit 1 ;;
     esac
   done
@@ -1020,7 +1085,7 @@ do_stop() {
   local requested=( $services )
   local ordered=()
 
-  for s in web worker api embed ai planner postgres; do
+  for s in mobile-web web worker api embed ai planner postgres; do
     if contains_service "$s" "${requested[@]}"; then
       ordered+=("$s")
     fi
@@ -1048,6 +1113,7 @@ do_stop() {
       api)      stop_api ;;
       worker)   stop_worker ;;
       web)      stop_web ;;
+      mobile-web) stop_mobile_web ;;
       *)        log_error "未知服务: $svc"; exit 1 ;;
     esac
   done
@@ -1097,6 +1163,7 @@ case "$COMMAND" in
     echo "  api       — FastAPI / uvicorn"
     echo "  worker    — AI Worker"
     echo "  web       — Vite（WEB_MODE=dev|preview）"
+    echo "  mobile-web — Mobile Vite（MOBILE_WEB_MODE=dev|preview）"
     echo ""
     echo -e "${BOLD}部署角色:${RESET}"
     echo "  DEPLOY_PROFILE=dev      开发环境默认：稳定 API + Web dev server"

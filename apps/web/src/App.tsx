@@ -68,6 +68,7 @@ function AppRoutes() {
     return (
       <Routes>
         <Route path="/login" element={<LoginPage />} />
+        <Route path="/m/*" element={<Navigate to="/login" replace />} />
         <Route
           path="*"
           element={<Navigate to="/login" replace state={{ from: location.pathname + location.search }} />}
@@ -83,6 +84,8 @@ function AppRoutes() {
         <Routes>
           <Route path="/" element={<Navigate to="/photos" replace />} />
           <Route path="/login" element={<Navigate to="/photos" replace />} />
+          <Route path="/m" element={<Navigate to="/photos" replace />} />
+          <Route path="/m/*" element={<Navigate to="/photos" replace />} />
           <Route path="/photos" element={<PhotosPage />} />
           {/* Legacy route: keep redirect-only behavior with explicit deprecation log. */}
           <Route path="/scan" element={<LegacyScanRouteRedirect />} />

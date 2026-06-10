@@ -88,7 +88,7 @@ export function Header() {
       <nav className="hidden sm:flex items-center gap-1">
         {navItems.map(({ to, label, icon: Icon }) => (
           <NavLink
-            key={to}
+            key={`${label}:${to}`}
             to={to}
             className={({ isActive }) =>
               [

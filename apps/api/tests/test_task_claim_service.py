@@ -33,6 +33,12 @@ CREATE TABLE ai_jobs (
     status TEXT NOT NULL DEFAULT 'queued',
     retry_count INTEGER NOT NULL DEFAULT 0,
     error_message TEXT,
+    locked_by TEXT,
+    locked_at TEXT,
+    heartbeat_at TEXT,
+    lease_expires_at TEXT,
+    last_error_code TEXT,
+    last_error_at TEXT,
     prompt_template_id INTEGER,
     prompt_version INTEGER,
     model_name TEXT,
@@ -55,6 +61,12 @@ CREATE TABLE project_tasks (
     progress_payload TEXT,
     result_payload TEXT,
     error_message TEXT,
+    locked_by TEXT,
+    locked_at TEXT,
+    heartbeat_at TEXT,
+    lease_expires_at TEXT,
+    last_error_code TEXT,
+    last_error_at TEXT,
     started_at TEXT,
     finished_at TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -126,6 +138,11 @@ class TaskClaimServiceTest(unittest.TestCase):
             assert claimed is not None
             self.assertEqual(claimed.kind, "project_task")
             self.assertEqual(claimed.item.id, task.id)
+            self.assertEqual(claimed.item.status, "running")
+            self.assertIsNotNone(claimed.item.locked_by)
+            self.assertIsNotNone(claimed.item.locked_at)
+            self.assertIsNotNone(claimed.item.heartbeat_at)
+            self.assertIsNotNone(claimed.item.lease_expires_at)
 
     def test_claim_next_prefers_older_ai_job(self) -> None:
         base = datetime(2026, 1, 1, 12, 0, 0)
@@ -153,6 +170,11 @@ class TaskClaimServiceTest(unittest.TestCase):
             assert claimed is not None
             self.assertEqual(claimed.kind, "ai_job")
             self.assertEqual(claimed.item.id, job.id)
+            self.assertEqual(claimed.item.status, "running")
+            self.assertIsNotNone(claimed.item.locked_by)
+            self.assertIsNotNone(claimed.item.locked_at)
+            self.assertIsNotNone(claimed.item.heartbeat_at)
+            self.assertIsNotNone(claimed.item.lease_expires_at)
 
     def test_claim_next_locks_only_selected_queue(self) -> None:
         base = datetime(2026, 1, 1, 12, 0, 0)
