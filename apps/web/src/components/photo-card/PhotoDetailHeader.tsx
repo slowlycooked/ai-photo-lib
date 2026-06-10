@@ -4,6 +4,7 @@ import { api, type Photo } from "@/api";
 
 interface PhotoDetailHeaderProps {
   photo: Photo;
+  canDelete: boolean;
   deleteOriginal: boolean;
   isDeleting: boolean;
   onClose: () => void;
@@ -12,6 +13,7 @@ interface PhotoDetailHeaderProps {
 
 export function PhotoDetailHeader({
   photo,
+  canDelete,
   deleteOriginal,
   isDeleting,
   onClose,
@@ -51,20 +53,22 @@ export function PhotoDetailHeader({
       >
         <Download className="w-4 h-4 text-ink" />
       </a>
-      <button
-        type="button"
-        onClick={onDeleteRecord}
-        disabled={isDeleting}
-        className="absolute top-3 right-24 w-9 h-9 rounded-full bg-canvas flex items-center justify-center shadow-md hover:bg-surface-card transition-colors disabled:opacity-60"
-        aria-label="删除库记录"
-        title={deleteOriginal ? "删除库记录、缩略图和本地原图" : "仅删除库记录和缩略图"}
-      >
-        {isDeleting ? (
-          <Loader2 className="w-4 h-4 text-danger animate-spin" />
-        ) : (
-          <Trash2 className="w-4 h-4 text-danger" />
-        )}
-      </button>
+      {canDelete && (
+        <button
+          type="button"
+          onClick={onDeleteRecord}
+          disabled={isDeleting}
+          className="absolute top-3 right-24 w-9 h-9 rounded-full bg-canvas flex items-center justify-center shadow-md hover:bg-surface-card transition-colors disabled:opacity-60"
+          aria-label="删除库记录"
+          title={deleteOriginal ? "删除库记录、缩略图和本地原图" : "仅删除库记录和缩略图"}
+        >
+          {isDeleting ? (
+            <Loader2 className="w-4 h-4 text-danger animate-spin" />
+          ) : (
+            <Trash2 className="w-4 h-4 text-danger" />
+          )}
+        </button>
+      )}
     </div>
   );
 }

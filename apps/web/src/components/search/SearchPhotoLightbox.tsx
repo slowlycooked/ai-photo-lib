@@ -4,6 +4,7 @@ import { Download, Loader2, Trash2, X } from "lucide-react";
 import { api } from "@/api";
 import type { SearchResultItem } from "@/api/types";
 import { queryKeys } from "@/api/queryKeys";
+import { useAuth } from "@/contexts/AuthContext";
 import { formatLocationSummary } from "@/lib/utils";
 
 interface SearchPhotoLightboxProps {
@@ -19,6 +20,8 @@ export function SearchPhotoLightbox({
   onClose,
   onDeleted,
 }: SearchPhotoLightboxProps) {
+  const auth = useAuth();
+  const canDeletePhoto = auth.session?.role !== "viewer";
   const [imgLoaded, setImgLoaded] = useState(false);
   const [deleteOriginal, setDeleteOriginal] = useState(false);
   const [deleteMessage, setDeleteMessage] = useState<string | null>(null);
@@ -98,7 +101,7 @@ export function SearchPhotoLightbox({
               <Download className="w-4 h-4 text-white" />
             </a>
           )}
-          {projectId != null && (
+          {projectId != null && canDeletePhoto && (
             <button
               type="button"
               onClick={handleDeleteRecord}
@@ -151,7 +154,7 @@ export function SearchPhotoLightbox({
               </div>
             )}
             <p className="text-white/60 text-xs truncate">{item.file_name}</p>
-            {projectId != null && (
+            {projectId != null && canDeletePhoto && (
               <div className="border-t border-white/15 pt-2 mt-2 space-y-2 text-left">
                 <label className="flex items-center gap-2 text-xs text-white/85">
                   <input

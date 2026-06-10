@@ -1,4 +1,4 @@
-import { GitMerge, Search, Trash2, UserPlus } from "lucide-react";
+import { Archive, GitMerge, Search, Trash2, UserPlus } from "lucide-react";
 import type { PeopleFilterMode } from "@/hooks/usePeoplePage";
 import type { PersonSummary } from "@/api";
 
@@ -12,10 +12,13 @@ export function PeopleToolbar({
   actionBusy,
   onCreatePerson,
   hasSelectedPerson,
+  selectedPersonCount,
   moveCandidates,
   mergeTargetId,
   setMergeTargetId,
   onMergeSelectedPerson,
+  onArchiveSelectedPerson,
+  onArchiveSelectedPeople,
   onDeleteSelectedPerson,
 }: {
   filterMode: PeopleFilterMode;
@@ -27,10 +30,13 @@ export function PeopleToolbar({
   actionBusy: boolean;
   onCreatePerson: () => void;
   hasSelectedPerson: boolean;
+  selectedPersonCount: number;
   moveCandidates: PersonSummary[];
   mergeTargetId: number | null;
   setMergeTargetId: (personId: number) => void;
   onMergeSelectedPerson: () => void;
+  onArchiveSelectedPerson: () => void;
+  onArchiveSelectedPeople: () => void;
   onDeleteSelectedPerson: () => void;
 }) {
   return (
@@ -101,6 +107,30 @@ export function PeopleToolbar({
               合并当前人物
             </button>
           </>
+        )}
+
+        {hasSelectedPerson && (
+          <button
+            type="button"
+            disabled={actionBusy}
+            onClick={onArchiveSelectedPerson}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-hairline text-caption-sm text-ink hover:bg-surface-card disabled:opacity-50"
+          >
+            <Archive className="w-3.5 h-3.5" />
+            加入 archive
+          </button>
+        )}
+
+        {selectedPersonCount > 0 && (
+          <button
+            type="button"
+            disabled={actionBusy}
+            onClick={onArchiveSelectedPeople}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-hairline text-caption-sm text-ink hover:bg-surface-card disabled:opacity-50"
+          >
+            <Archive className="w-3.5 h-3.5" />
+            批量加入 archive（{selectedPersonCount}）
+          </button>
         )}
 
         {hasSelectedPerson && (

@@ -120,7 +120,7 @@ const peopleState: PersonSummary[] = [
     confirmed_sample_count: 0,
     auto_assigned_count: 1,
     review_pending_count: 0,
-    created_by: "system",
+    created_by: "user",
     created_at: "2026-05-26T00:00:00Z",
     updated_at: "2026-05-26T00:00:00Z",
   },
@@ -201,6 +201,10 @@ function renderPage(initialEntry: string) {
 
 describe("PeoplePage", () => {
   beforeEach(() => {
+    if (typeof window.localStorage?.removeItem === "function") {
+      window.localStorage.removeItem("people-manual-archive-v1:1");
+      window.localStorage.removeItem("people-manual-manage-v1:1");
+    }
     peopleState.splice(0, peopleState.length, ...[
       {
         id: 101,
@@ -228,7 +232,7 @@ describe("PeoplePage", () => {
         confirmed_sample_count: 0,
         auto_assigned_count: 1,
         review_pending_count: 0,
-        created_by: "system",
+        created_by: "user",
         created_at: "2026-05-26T00:00:00Z",
         updated_at: "2026-05-26T00:00:00Z",
       },
@@ -415,6 +419,175 @@ describe("PeoplePage", () => {
       expect(mergePersonMock).toHaveBeenCalledWith(1, 101, {
         target_person_id: 102,
       });
+    });
+  });
+
+  it("hides system_cluster people when they have no review-pending faces", async () => {
+    const user = userEvent.setup();
+    peopleState.splice(0, peopleState.length, ...[
+      {
+        id: 101,
+        project_id: 1,
+        display_name: "爸爸",
+        normalized_name: "爸爸",
+        is_named: true,
+        representative_face_detection_id: 301,
+        sample_count: 2,
+        confirmed_sample_count: 1,
+        auto_assigned_count: 0,
+        review_pending_count: 1,
+        created_by: "user",
+        created_at: "2026-05-26T00:00:00Z",
+        updated_at: "2026-05-26T00:00:00Z",
+      },
+      {
+        id: 102,
+        project_id: 1,
+        display_name: "人物 2",
+        normalized_name: "人物 2",
+        is_named: false,
+        representative_face_detection_id: null,
+        sample_count: 0,
+        confirmed_sample_count: 0,
+        auto_assigned_count: 0,
+        review_pending_count: 0,
+        created_by: "system_cluster",
+        created_at: "2026-05-26T00:00:00Z",
+        updated_at: "2026-05-26T00:00:00Z",
+      },
+    ]);
+
+    renderPage("/projects/1/people");
+
+    await screen.findByText("爸爸");
+    expect(screen.queryByText("人物 2")).not.toBeInTheDocument();
+    if (screen.queryByText("archive 文件夹（不再管理）")) {
+      await user.click(screen.getByText("archive 文件夹（不再管理）"));
+      expect(screen.getByText("#102 · 人物 2")).toBeInTheDocument();
+    }
+  });
+
+  it("allows restoring system-cluster archived people back to managed list", async () => {
+    const user = userEvent.setup();
+    peopleState.splice(0, peopleState.length, ...[
+      {
+        id: 101,
+        project_id: 1,
+        display_name: "爸爸",
+        normalized_name: "爸爸",
+        is_named: true,
+        representative_face_detection_id: 301,
+        sample_count: 2,
+        confirmed_sample_count: 1,
+        auto_assigned_count: 0,
+        review_pending_count: 1,
+        created_by: "user",
+        created_at: "2026-05-26T00:00:00Z",
+        updated_at: "2026-05-26T00:00:00Z",
+      },
+      {
+        id: 102,
+        project_id: 1,
+        display_name: "人物 2",
+        normalized_name: "人物 2",
+        is_named: false,
+        representative_face_detection_id: null,
+        sample_count: 0,
+        confirmed_sample_count: 0,
+        auto_assigned_count: 0,
+        review_pending_count: 0,
+        created_by: "system_cluster",
+        created_at: "2026-05-26T00:00:00Z",
+        updated_at: "2026-05-26T00:00:00Z",
+      },
+    ]);
+
+    renderPage("/projects/1/people");
+
+    await screen.findByText("爸爸");
+    await user.click(screen.getByText("archive 文件夹（不再管理）"));
+    await user.click(screen.getByRole("button", { name: "恢复管理" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("人物 2")).toBeInTheDocument();
+    });
+  });
+
+  it("allows manually archiving and restoring a person", async () => {
+    const user = userEvent.setup();
+    renderPage("/projects/1/people?person_id=101");
+
+    await screen.findByText("爸爸");
+    await user.click(screen.getByRole("button", { name: "加入 archive" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("archive 文件夹（不再管理）")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "合并当前人物" })).not.toBeInTheDocument();
+    });
+
+    await user.click(screen.getByText("archive 文件夹（不再管理）"));
+    expect(screen.getByText("#101 · 爸爸")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "恢复管理" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("爸爸")).toBeInTheDocument();
+    });
+  });
+
+  it("supports bulk archive for selected people", async () => {
+    const user = userEvent.setup();
+    peopleState.splice(0, peopleState.length, ...[
+      {
+        id: 101,
+        project_id: 1,
+        display_name: "爸爸",
+        normalized_name: "爸爸",
+        is_named: true,
+        representative_face_detection_id: 301,
+        sample_count: 2,
+        confirmed_sample_count: 1,
+        auto_assigned_count: 0,
+        review_pending_count: 1,
+        created_by: "user",
+        created_at: "2026-05-26T00:00:00Z",
+        updated_at: "2026-05-26T00:00:00Z",
+      },
+      {
+        id: 102,
+        project_id: 1,
+        display_name: "妈妈",
+        normalized_name: "妈妈",
+        is_named: true,
+        representative_face_detection_id: 302,
+        sample_count: 1,
+        confirmed_sample_count: 1,
+        auto_assigned_count: 0,
+        review_pending_count: 0,
+        created_by: "user",
+        created_at: "2026-05-26T00:00:00Z",
+        updated_at: "2026-05-26T00:00:00Z",
+      },
+    ]);
+
+    renderPage("/projects/1/people?person_id=101");
+
+    await screen.findByText("爸爸");
+    await user.click(screen.getByRole("checkbox", { name: "选择人物 爸爸" }));
+    await user.click(screen.getByRole("checkbox", { name: "选择人物 妈妈" }));
+    await user.click(screen.getByRole("button", { name: "批量加入 archive（2）" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("archive 文件夹（不再管理）")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "合并当前人物" })).not.toBeInTheDocument();
+    });
+
+    await user.click(screen.getByText("archive 文件夹（不再管理）"));
+    expect(screen.getByText("#101 · 爸爸")).toBeInTheDocument();
+    expect(screen.getByText("#102 · 妈妈")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "#102 · 妈妈" }));
+    await waitFor(() => {
+      expect(personMock).toHaveBeenCalledWith(1, 102);
     });
   });
 });

@@ -1,4 +1,5 @@
 import type { Photo } from "@/api";
+import { useAuth } from "@/contexts/AuthContext";
 import { usePhotoDetailModalData } from "@/hooks/usePhotoDetailModalData";
 import { PhotoAiSection } from "./PhotoAiSection";
 import { PhotoDeletePanel } from "./PhotoDeletePanel";
@@ -13,6 +14,8 @@ interface PhotoDetailModalProps {
 }
 
 export function PhotoDetailModal({ photo, onClose, onDeleted }: PhotoDetailModalProps) {
+  const auth = useAuth();
+  const canDeletePhoto = auth.session?.role !== "viewer";
   const {
     aiData,
     aiLoading,
@@ -44,6 +47,7 @@ export function PhotoDetailModal({ photo, onClose, onDeleted }: PhotoDetailModal
       >
         <PhotoDetailHeader
           photo={photo}
+          canDelete={canDeletePhoto}
           deleteOriginal={deleteOriginal}
           isDeleting={deletePhotoMutation.isPending}
           onClose={onClose}
@@ -81,13 +85,15 @@ export function PhotoDetailModal({ photo, onClose, onDeleted }: PhotoDetailModal
           <PhotoAiSection aiData={aiData} isLoading={aiLoading} />
 
           <div className="pt-2 border-t border-hairline">
-            <PhotoDeletePanel
-              deleteOriginal={deleteOriginal}
-              setDeleteOriginal={setDeleteOriginal}
-              deleteMessage={deleteMessage}
-              deletePhotoMutation={deletePhotoMutation}
-              onDeleteRecord={handleDeleteRecord}
-            />
+            {canDeletePhoto && (
+              <PhotoDeletePanel
+                deleteOriginal={deleteOriginal}
+                setDeleteOriginal={setDeleteOriginal}
+                deleteMessage={deleteMessage}
+                deletePhotoMutation={deletePhotoMutation}
+                onDeleteRecord={handleDeleteRecord}
+              />
+            )}
             <PhotoFacesSection
               projectId={projectId}
               photoId={photo.id}

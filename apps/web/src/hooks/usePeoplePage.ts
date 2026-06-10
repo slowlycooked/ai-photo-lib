@@ -5,6 +5,15 @@ import { api } from "@/api";
 import { queryKeys } from "@/api/queryKeys";
 import { useProjectContext } from "@/contexts/ProjectContext";
 import { formatBatchFeedbackToast } from "@/lib/peopleFeedback";
+import {
+  archivePersonManually,
+  getManualArchivedPersonIds,
+  getManualManagedPersonIds,
+  forceManagePersonManually,
+  isArchivedPerson,
+  unforceManagePersonManually,
+  unarchivePersonManually,
+} from "@/lib/personArchive";
 
 export type PeopleFilterMode =
   | "all"
@@ -29,6 +38,9 @@ export function usePeoplePage() {
   const [createDisplayName, setCreateDisplayName] = useState("");
   const [filterMode, setFilterMode] = useState<PeopleFilterMode>("all");
   const [searchText, setSearchText] = useState("");
+  const [manualArchivedPersonIds, setManualArchivedPersonIds] = useState<Set<number>>(new Set());
+  const [manualManagedPersonIds, setManualManagedPersonIds] = useState<Set<number>>(new Set());
+  const [selectedPersonIds, setSelectedPersonIds] = useState<number[]>([]);
 
   const routeProjectId = projectId ? Number(projectId) : NaN;
   const normalizedRouteProjectId = Number.isFinite(routeProjectId) ? routeProjectId : null;
@@ -42,6 +54,16 @@ export function usePeoplePage() {
   }, [normalizedCurrentProjectId, normalizedRouteProjectId, setCurrentProjectId]);
 
   const selectedProjectId = normalizedRouteProjectId ?? normalizedCurrentProjectId;
+
+  useEffect(() => {
+    if (selectedProjectId == null) {
+      setManualArchivedPersonIds(new Set());
+      setManualManagedPersonIds(new Set());
+      return;
+    }
+    setManualArchivedPersonIds(getManualArchivedPersonIds(selectedProjectId));
+    setManualManagedPersonIds(getManualManagedPersonIds(selectedProjectId));
+  }, [selectedProjectId]);
 
   const { data: faceSettings } = useQuery({
     queryKey: ["project-face-settings", selectedProjectId],
@@ -71,14 +93,63 @@ export function usePeoplePage() {
     staleTime: 15_000,
   });
 
+  // Dedicated query for archive candidates — runs independently of the active filter
+  // so the archive section stays visible even when named/review_pending/etc. filters are applied.
+  const { data: archivePeopleData } = useQuery({
+    queryKey: ["project-people-archive-candidates", selectedProjectId],
+    queryFn: () => api.projectPeople.list(selectedProjectId!, true, 500),
+    enabled: selectedProjectId != null,
+    staleTime: 30_000,
+  });
+
   const people = peopleData?.items ?? [];
+  const archivedPeople = useMemo(
+    () =>
+      (archivePeopleData?.items ?? []).filter(
+        (item) =>
+          manualArchivedPersonIds.has(item.id) ||
+          (isArchivedPerson(item) && !manualManagedPersonIds.has(item.id)),
+      ),
+    [archivePeopleData, manualArchivedPersonIds, manualManagedPersonIds],
+  );
+  const archivedPersonIds = useMemo(
+    () => new Set(archivedPeople.map((person) => person.id)),
+    [archivedPeople],
+  );
+  const managedPeople = useMemo(
+    () =>
+      people.filter(
+        (item) =>
+          !manualArchivedPersonIds.has(item.id) &&
+          (!isArchivedPerson(item) || manualManagedPersonIds.has(item.id)),
+      ),
+    [manualArchivedPersonIds, manualManagedPersonIds, people],
+  );
+  const managedPersonIds = useMemo(
+    () => new Set(managedPeople.map((person) => person.id)),
+    [managedPeople],
+  );
   const resolvedSelectedPersonId = useMemo(() => {
-    if (!people.length) return null;
-    if (selectedPersonId != null && people.some((item) => item.id === selectedPersonId)) {
+    if (
+      selectedPersonId != null &&
+      (managedPersonIds.has(selectedPersonId) || archivedPersonIds.has(selectedPersonId))
+    ) {
       return selectedPersonId;
     }
-    return people[0].id;
-  }, [people, selectedPersonId]);
+    if (!managedPeople.length && !archivedPeople.length) return null;
+    if (managedPeople.length > 0) return managedPeople[0].id;
+    if (archivedPeople.length > 0) return archivedPeople[0].id;
+    return managedPeople[0].id;
+  }, [archivedPeople, archivedPersonIds, managedPeople, managedPersonIds, selectedPersonId]);
+  const selectedPersonIsArchived =
+    resolvedSelectedPersonId != null && archivedPersonIds.has(resolvedSelectedPersonId);
+  const selectedPersonIsManageable =
+    resolvedSelectedPersonId != null && managedPersonIds.has(resolvedSelectedPersonId);
+
+  useEffect(() => {
+    const managedIds = new Set(managedPeople.map((person) => person.id));
+    setSelectedPersonIds((prev) => prev.filter((id) => managedIds.has(id)));
+  }, [managedPeople]);
 
   useEffect(() => {
     if (!resolvedSelectedPersonId) return;
@@ -108,6 +179,7 @@ export function usePeoplePage() {
 
   const refreshPeopleData = () => {
     queryClient.invalidateQueries({ queryKey: ["project-people", selectedProjectId] });
+    queryClient.invalidateQueries({ queryKey: ["project-people-archive-candidates", selectedProjectId] });
     queryClient.invalidateQueries({
       queryKey: queryKeys.projectPerson(selectedProjectId, resolvedSelectedPersonId),
     });
@@ -322,10 +394,12 @@ export function usePeoplePage() {
     splitPersonMutation.isPending ||
     deletePersonMutation.isPending;
 
-  const moveCandidates = people.filter((person) => person.id !== resolvedSelectedPersonId);
+  const moveCandidates = selectedPersonIsManageable
+    ? managedPeople.filter((person) => person.id !== resolvedSelectedPersonId)
+    : [];
   const reviewFaceIds = (reviewData?.items ?? []).map((item) => item.face_detection_id);
-  const namedCount = people.filter((item) => item.is_named).length;
-  const unnamedCount = Math.max(0, people.length - namedCount);
+  const namedCount = managedPeople.filter((item) => item.is_named).length;
+  const unnamedCount = Math.max(0, managedPeople.length - namedCount);
 
   const mergeTargetIdParam = parsePositiveIntParam(searchParams.get("merge_target_id"));
   const mergeTargetId =
@@ -360,6 +434,51 @@ export function usePeoplePage() {
     setSearchParams(next, { replace: true });
   };
 
+  const toggleSelectPerson = (personId: number, checked: boolean) => {
+    setSelectedPersonIds((prev) => {
+      if (checked) {
+        if (prev.includes(personId)) return prev;
+        return [...prev, personId];
+      }
+      return prev.filter((id) => id !== personId);
+    });
+  };
+
+  const archiveSelectedPerson = () => {
+    if (selectedProjectId == null || resolvedSelectedPersonId == null) return;
+    const updated = archivePersonManually(selectedProjectId, resolvedSelectedPersonId);
+    const managedUpdated = unforceManagePersonManually(selectedProjectId, resolvedSelectedPersonId);
+    setManualArchivedPersonIds(updated);
+    setManualManagedPersonIds(managedUpdated);
+    setStatusMessage("已加入 archive，后续不再出现在管理列表");
+    setErrorMessage(null);
+  };
+
+  const archiveSelectedPeople = () => {
+    if (selectedProjectId == null || selectedPersonIds.length === 0) return;
+    let updated = getManualArchivedPersonIds(selectedProjectId);
+    let managedUpdated = getManualManagedPersonIds(selectedProjectId);
+    for (const personId of selectedPersonIds) {
+      updated = archivePersonManually(selectedProjectId, personId);
+      managedUpdated = unforceManagePersonManually(selectedProjectId, personId);
+    }
+    setManualArchivedPersonIds(updated);
+    setManualManagedPersonIds(managedUpdated);
+    setSelectedPersonIds([]);
+    setStatusMessage(`已将 ${selectedPersonIds.length} 个人物加入 archive`);
+    setErrorMessage(null);
+  };
+
+  const unarchivePerson = (personId: number) => {
+    if (selectedProjectId == null) return;
+    const updated = unarchivePersonManually(selectedProjectId, personId);
+    const managedUpdated = forceManagePersonManually(selectedProjectId, personId);
+    setManualArchivedPersonIds(updated);
+    setManualManagedPersonIds(managedUpdated);
+    setStatusMessage("已从 archive 恢复到管理列表");
+    setErrorMessage(null);
+  };
+
   return {
     currentProject,
     selectedProjectId,
@@ -373,11 +492,14 @@ export function usePeoplePage() {
     setFilterMode,
     searchText,
     setSearchText,
-    people,
+    people: managedPeople,
+    archivedPeople,
     peopleLoading,
     peopleError,
     resolvedSelectedPersonId,
     personDetail,
+    selectedPersonIsArchived,
+    selectedPersonIsManageable,
     personLoading,
     personError,
     actionBusy,
@@ -386,8 +508,14 @@ export function usePeoplePage() {
     namedCount,
     unnamedCount,
     mergeTargetId,
+    manualArchivedPersonIds,
+    selectedPersonIds,
     setSelectedPersonId,
     setMergeTargetId,
+    toggleSelectPerson,
+    archiveSelectedPerson,
+    archiveSelectedPeople,
+    unarchivePerson,
     createPerson: () =>
       createPersonMutation.mutate({ display_name: createDisplayName.trim() || undefined }),
     mergeSelectedPerson: () => {

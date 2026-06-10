@@ -13,6 +13,7 @@ export function PeopleReviewPage() {
     statusMessage,
     errorMessage,
     grouped,
+    groupedArchived,
     peopleData,
     peopleById,
     reviewData,
@@ -91,7 +92,7 @@ export function PeopleReviewPage() {
           <AlertCircle className="w-4 h-4" />
           {(error as Error).message}
         </div>
-      ) : grouped.length === 0 ? (
+      ) : grouped.length === 0 && groupedArchived.length === 0 ? (
         <div className="bg-canvas rounded-xl border border-hairline p-8 text-center text-mute">
           当前没有 review_pending 人脸
         </div>
@@ -183,6 +184,56 @@ export function PeopleReviewPage() {
               </section>
             );
           })}
+
+          {groupedArchived.length > 0 && (
+            <section className="bg-canvas rounded-xl border border-hairline p-4 space-y-3">
+              <div>
+                <h2 className="text-body-sm font-semibold text-mute">archive 文件夹（不再管理）</h2>
+                <p className="text-caption-sm text-mute mt-1">
+                  以下系统人物页已归档，仅展示，不提供批量确认/排除/移动操作。
+                </p>
+              </div>
+
+              <div className="space-y-3">
+                {groupedArchived.map(([personId, items]) => (
+                  <div key={personId} className="rounded-lg border border-hairline bg-surface-soft p-3">
+                    <div className="text-caption-sm text-mute mb-2">
+                      人物 #{personId} · {peopleById.get(personId) ?? "未命名"} · 当前页 {items.length} 张
+                    </div>
+                    <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-6 gap-2">
+                      {items.map((assignment) => (
+                        <div
+                          key={assignment.id}
+                          className="rounded-lg border border-hairline bg-canvas p-2"
+                        >
+                          <div className="w-full aspect-square rounded-md overflow-hidden border border-hairline bg-surface-soft mb-2">
+                            {assignment.face_detection.face_crop_path ? (
+                              <img
+                                src={api.projectFaces.cropUrl(
+                                  selectedProjectId,
+                                  assignment.face_detection.id,
+                                  assignment.face_detection.updated_at,
+                                )}
+                                alt={`face-${assignment.face_detection.id}`}
+                                className="w-full h-full object-cover"
+                              />
+                            ) : (
+                              <div className="w-full h-full flex items-center justify-center text-mute">
+                                <ScanFace className="w-4 h-4" />
+                              </div>
+                            )}
+                          </div>
+                          <div className="text-[11px] text-mute">
+                            face #{assignment.face_detection_id}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
         </div>
       )}
     </main>

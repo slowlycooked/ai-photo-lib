@@ -7,7 +7,6 @@ import {
   Play,
   RefreshCw,
   Clock,
-  Settings2,
   RotateCcw,
   ScanFace,
   XCircle,
@@ -662,13 +661,6 @@ export function TasksPage() {
             这里只保留执行类操作；模型、Prompt、Embedding 与搜索参数已收敛到独立配置页。
           </p>
         </div>
-        <Link
-          to={currentProjectId != null ? `/projects/${currentProjectId}/settings/vision-ai` : "/photos"}
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-hairline text-btn-sm hover:bg-surface-card transition-colors"
-        >
-          <Settings2 className="w-3.5 h-3.5" />
-          打开项目 AI 配置
-        </Link>
       </div>
 
       {/* Tab nav */}

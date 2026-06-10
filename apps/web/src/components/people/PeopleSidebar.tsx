@@ -6,18 +6,28 @@ export function PeopleSidebar({
   projectId,
   faceCropEnabled,
   people,
+  archivedPeople,
+  manualArchivedPersonIds,
+  selectedPersonIds,
   peopleLoading,
   peopleError,
   selectedPersonId,
   onSelectPerson,
+  onToggleSelectPerson,
+  onUnarchivePerson,
 }: {
   projectId: number;
   faceCropEnabled: boolean;
   people: PersonSummary[];
+  archivedPeople: PersonSummary[];
+  manualArchivedPersonIds: Set<number>;
+  selectedPersonIds: number[];
   peopleLoading: boolean;
   peopleError: Error | null;
   selectedPersonId: number | null;
   onSelectPerson: (personId: number) => void;
+  onToggleSelectPerson: (personId: number, checked: boolean) => void;
+  onUnarchivePerson: (personId: number) => void;
 }) {
   return (
     <section className="space-y-3">
@@ -41,7 +51,7 @@ export function PeopleSidebar({
           <AlertCircle className="w-4 h-4" />
           {peopleError.message}
         </div>
-      ) : people.length === 0 ? (
+      ) : people.length === 0 && archivedPeople.length === 0 ? (
         <div className="bg-canvas rounded-xl border border-hairline p-8 text-center text-mute">
           <ScanFace className="w-8 h-8 mx-auto mb-3" />
           还没有人物分组。请先在 AI / Face 配置中启用人脸识别，然后执行项目级人脸扫描。
@@ -55,9 +65,47 @@ export function PeopleSidebar({
               faceCropEnabled={faceCropEnabled}
               person={person}
               selected={selectedPersonId === person.id}
+              checked={selectedPersonIds.includes(person.id)}
+              showCheckbox
               onSelect={() => onSelectPerson(person.id)}
+              onToggleChecked={(checked) => onToggleSelectPerson(person.id, checked)}
             />
           ))}
+
+          {archivedPeople.length > 0 && (
+            <details className="rounded-xl border border-hairline bg-surface-soft" open={false}>
+              <summary className="cursor-pointer list-none px-4 py-3 text-body-sm font-medium text-mute flex items-center justify-between">
+                <span>archive 文件夹（不再管理）</span>
+                <span className="text-caption-sm">{archivedPeople.length}</span>
+              </summary>
+              <div className="px-4 pb-3 space-y-1 text-caption-sm text-mute">
+                {archivedPeople.map((person) => (
+                  <div
+                    key={person.id}
+                    className="rounded-md border border-hairline bg-canvas px-2.5 py-2 flex items-center justify-between gap-2"
+                  >
+                    <button
+                      type="button"
+                      onClick={() => onSelectPerson(person.id)}
+                      className={[
+                        "text-left text-caption-sm hover:text-ink",
+                        selectedPersonId === person.id ? "text-ink font-medium" : "text-mute",
+                      ].join(" ")}
+                    >
+                      #{person.id} · {person.display_name}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onUnarchivePerson(person.id)}
+                      className="px-2 py-0.5 rounded border border-hairline text-[11px] text-ink hover:bg-surface-card"
+                    >
+                      恢复管理
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </details>
+          )}
         </div>
       )}
     </section>

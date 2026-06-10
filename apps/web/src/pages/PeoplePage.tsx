@@ -20,9 +20,12 @@ export function PeoplePage() {
     searchText,
     setSearchText,
     people,
+    archivedPeople,
     peopleLoading,
     peopleError,
     resolvedSelectedPersonId,
+    selectedPersonIsArchived,
+    selectedPersonIsManageable,
     personDetail,
     personLoading,
     personError,
@@ -32,8 +35,14 @@ export function PeoplePage() {
     namedCount,
     unnamedCount,
     mergeTargetId,
+    manualArchivedPersonIds,
+    selectedPersonIds,
     setSelectedPersonId,
     setMergeTargetId,
+    toggleSelectPerson,
+    archiveSelectedPerson,
+    archiveSelectedPeople,
+    unarchivePerson,
     createPerson,
     mergeSelectedPerson,
     deleteSelectedPerson,
@@ -83,11 +92,14 @@ export function PeoplePage() {
         setCreateDisplayName={setCreateDisplayName}
         actionBusy={actionBusy}
         onCreatePerson={createPerson}
-        hasSelectedPerson={resolvedSelectedPersonId != null}
+        hasSelectedPerson={selectedPersonIsManageable}
+        selectedPersonCount={selectedPersonIds.length}
         moveCandidates={moveCandidates}
         mergeTargetId={mergeTargetId}
         setMergeTargetId={setMergeTargetId}
         onMergeSelectedPerson={mergeSelectedPerson}
+        onArchiveSelectedPerson={archiveSelectedPerson}
+        onArchiveSelectedPeople={archiveSelectedPeople}
         onDeleteSelectedPerson={() => {
           if (!window.confirm("删除人物前，请确保没有 active assignment。确认继续？")) return;
           deleteSelectedPerson();
@@ -99,10 +111,15 @@ export function PeoplePage() {
           projectId={selectedProjectId}
           faceCropEnabled={faceCropEnabled}
           people={people}
+          archivedPeople={archivedPeople}
+          manualArchivedPersonIds={manualArchivedPersonIds}
+          selectedPersonIds={selectedPersonIds}
           peopleLoading={peopleLoading}
           peopleError={peopleError as Error | null}
           selectedPersonId={resolvedSelectedPersonId}
           onSelectPerson={setSelectedPersonId}
+          onToggleSelectPerson={toggleSelectPerson}
+          onUnarchivePerson={unarchivePerson}
         />
 
         <section>
@@ -116,41 +133,41 @@ export function PeoplePage() {
             reviewFaceIds={reviewFaceIds}
             statusMessage={statusMessage}
             errorMessage={errorMessage}
-            actionBusy={actionBusy}
+            actionBusy={actionBusy || selectedPersonIsArchived}
             onRename={(displayName) => {
-              if (!resolvedSelectedPersonId) return;
+              if (!resolvedSelectedPersonId || !selectedPersonIsManageable) return;
               renameSelectedPerson(displayName);
             }}
             onConfirmFace={(faceId) => {
-              if (!resolvedSelectedPersonId) return;
+              if (!resolvedSelectedPersonId || !selectedPersonIsManageable) return;
               confirmFace(faceId);
             }}
             onRejectFace={(faceId) => {
-              if (!resolvedSelectedPersonId) return;
+              if (!resolvedSelectedPersonId || !selectedPersonIsManageable) return;
               rejectFace(faceId);
             }}
             onMoveFace={(faceId, targetPersonId) => {
-              if (!resolvedSelectedPersonId) return;
+              if (!resolvedSelectedPersonId || !selectedPersonIsManageable) return;
               moveFace(faceId, targetPersonId);
             }}
             onBatchConfirmReview={(faceIds) => {
-              if (!resolvedSelectedPersonId || faceIds.length === 0) return;
+              if (!resolvedSelectedPersonId || !selectedPersonIsManageable || faceIds.length === 0) return;
               batchConfirmReview(faceIds);
             }}
             onBatchRejectReview={(faceIds) => {
-              if (!resolvedSelectedPersonId || faceIds.length === 0) return;
+              if (!resolvedSelectedPersonId || !selectedPersonIsManageable || faceIds.length === 0) return;
               batchRejectReview(faceIds);
             }}
             onBatchMoveReview={(faceIds, targetPersonId) => {
-              if (!resolvedSelectedPersonId || faceIds.length === 0) return;
+              if (!resolvedSelectedPersonId || !selectedPersonIsManageable || faceIds.length === 0) return;
               batchMoveReview(faceIds, targetPersonId);
             }}
             onSplitFaces={(faceIds, newDisplayName) => {
-              if (!resolvedSelectedPersonId || faceIds.length === 0) return;
+              if (!resolvedSelectedPersonId || !selectedPersonIsManageable || faceIds.length === 0) return;
               splitFaces(faceIds, newDisplayName);
             }}
             onSetRepresentative={(faceId) => {
-              if (!resolvedSelectedPersonId) return;
+              if (!resolvedSelectedPersonId || !selectedPersonIsManageable) return;
               setRepresentativeFace(faceId);
             }}
           />

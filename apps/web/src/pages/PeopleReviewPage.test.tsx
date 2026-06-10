@@ -300,7 +300,8 @@ describe("PeopleReviewPage", () => {
     await waitFor(() => {
       expect(screen.getByText("第 2 / 2 页")).toBeInTheDocument();
     });
-    expect(await screen.findByText("人物 #103 · 人物 3")).toBeInTheDocument();
+    expect(await screen.findByText(/人物\s*#\s*103/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "批量确认" })).toBeInTheDocument();
     expect(reviewPendingMock).toHaveBeenLastCalledWith(1, null, 80, 80);
   });
 

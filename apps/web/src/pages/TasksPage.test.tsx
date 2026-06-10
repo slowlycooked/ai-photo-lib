@@ -201,13 +201,10 @@ describe("TasksPage", () => {
     cancelRematchUnknownFacesMock.mockResolvedValue({});
   });
 
-  it("shows the canonical ai settings link and no embedded ai-settings tab", () => {
+  it("does not show embedded ai-settings entry in task center", () => {
     renderPage();
 
-    expect(screen.getByRole("link", { name: "打开项目 AI 配置" })).toHaveAttribute(
-      "href",
-      "/projects/7/settings/vision-ai",
-    );
+    expect(screen.queryByRole("link", { name: "打开项目 AI 配置" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "AI 配置" })).not.toBeInTheDocument();
   });
 

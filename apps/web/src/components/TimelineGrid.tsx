@@ -8,6 +8,7 @@ import { TimelineRail } from "./TimelineRail";
 import { api } from "@/api";
 import { queryKeys } from "@/api/queryKeys";
 import type { Photo, FolderScope } from "@/api";
+import { useAuth } from "@/contexts/AuthContext";
 
 interface TimelineGridProps {
   projectId?: number | null;
@@ -47,6 +48,8 @@ function groupPhotosByMonth(photos: Photo[]): Map<string, Photo[]> {
 }
 
 export function TimelineGrid({ projectId, folderId, folderScope = "subtree" }: TimelineGridProps) {
+  const auth = useAuth();
+  const canDeletePhoto = auth.session?.role !== "viewer";
   const [dateFrom, setDateFrom] = useState<string | null>(null);
   const [dateTo, setDateTo] = useState<string | null>(null);
   const [activeKey, setActiveKey] = useState<string | null>(null);
@@ -162,6 +165,9 @@ export function TimelineGrid({ projectId, folderId, folderScope = "subtree" }: T
   };
 
   const handleBatchDelete = () => {
+    if (!canDeletePhoto) {
+      return;
+    }
     if (selectedCount === 0 || batchDeleteMutation.isPending) {
       return;
     }
@@ -229,14 +235,16 @@ export function TimelineGrid({ projectId, folderId, folderScope = "subtree" }: T
           <p className="text-body-sm text-mute">
             共 <span className="font-semibold text-ink">{total.toLocaleString()}</span> 张照片
           </p>
-          <button
-            type="button"
-            onClick={toggleSelectAllLoaded}
-            className="text-caption-sm text-primary hover:text-primary-pressed"
-          >
-            {allLoadedSelected ? "取消当前页全选" : "勾选当前页全部"}
-          </button>
-          {selectedCount > 0 && (
+          {canDeletePhoto && (
+            <button
+              type="button"
+              onClick={toggleSelectAllLoaded}
+              className="text-caption-sm text-primary hover:text-primary-pressed"
+            >
+              {allLoadedSelected ? "取消当前页全选" : "勾选当前页全部"}
+            </button>
+          )}
+          {canDeletePhoto && selectedCount > 0 && (
             <button
               type="button"
               onClick={clearSelected}
@@ -259,30 +267,32 @@ export function TimelineGrid({ projectId, folderId, folderScope = "subtree" }: T
           )}
         </div>
 
-        <div className="rounded-md border border-danger/30 bg-danger/5 p-3">
-          <div className="flex flex-wrap items-center gap-3">
-            <span className="text-body-sm text-ink">已勾选 {selectedCount} 张</span>
-            <label className="flex items-center gap-2 text-caption-sm text-ink">
-              <input
-                type="checkbox"
-                checked={deleteOriginalInBatch}
-                onChange={(e) => setDeleteOriginalInBatch(e.target.checked)}
-                className="h-4 w-4"
-              />
-              同时删除本地原图
-            </label>
-            <button
-              type="button"
-              onClick={handleBatchDelete}
-              disabled={selectedCount === 0 || batchDeleteMutation.isPending}
-              className="inline-flex items-center gap-2 rounded-md border border-danger/40 px-3 py-1.5 text-body-sm text-danger hover:bg-danger/10 disabled:opacity-60"
-            >
-              {batchDeleteMutation.isPending && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-              批量删除已选
-            </button>
+        {canDeletePhoto && (
+          <div className="rounded-md border border-danger/30 bg-danger/5 p-3">
+            <div className="flex flex-wrap items-center gap-3">
+              <span className="text-body-sm text-ink">已勾选 {selectedCount} 张</span>
+              <label className="flex items-center gap-2 text-caption-sm text-ink">
+                <input
+                  type="checkbox"
+                  checked={deleteOriginalInBatch}
+                  onChange={(e) => setDeleteOriginalInBatch(e.target.checked)}
+                  className="h-4 w-4"
+                />
+                同时删除本地原图
+              </label>
+              <button
+                type="button"
+                onClick={handleBatchDelete}
+                disabled={selectedCount === 0 || batchDeleteMutation.isPending}
+                className="inline-flex items-center gap-2 rounded-md border border-danger/40 px-3 py-1.5 text-body-sm text-danger hover:bg-danger/10 disabled:opacity-60"
+              >
+                {batchDeleteMutation.isPending && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                批量删除已选
+              </button>
+            </div>
+            {batchMessage && <p className="mt-2 text-caption-sm text-mute">{batchMessage}</p>}
           </div>
-          {batchMessage && <p className="mt-2 text-caption-sm text-mute">{batchMessage}</p>}
-        </div>
+        )}
 
         {[...groups.entries()].map(([key, photos]) => (
           <section key={key}>
@@ -293,20 +303,29 @@ export function TimelineGrid({ projectId, folderId, folderScope = "subtree" }: T
 
               return (
                 <div className="mb-3 flex flex-wrap items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => toggleSelectByPhotoIds(groupPhotoIds)}
-                    className="text-heading-md font-semibold text-ink hover:text-primary-pressed"
-                    title={groupAllSelected ? "取消该日期全选" : "全选该日期"}
-                  >
-                    {formatGroupLabel(key)}
-                    <span className="ml-2 text-body-sm font-normal text-mute">
-                      {photos.length} 张
-                    </span>
-                    <span className="ml-2 text-caption-sm text-primary">
-                      {groupAllSelected ? "取消全选" : "全选"}
-                    </span>
-                  </button>
+                  {canDeletePhoto ? (
+                    <button
+                      type="button"
+                      onClick={() => toggleSelectByPhotoIds(groupPhotoIds)}
+                      className="text-heading-md font-semibold text-ink hover:text-primary-pressed"
+                      title={groupAllSelected ? "取消该日期全选" : "全选该日期"}
+                    >
+                      {formatGroupLabel(key)}
+                      <span className="ml-2 text-body-sm font-normal text-mute">
+                        {photos.length} 张
+                      </span>
+                      <span className="ml-2 text-caption-sm text-primary">
+                        {groupAllSelected ? "取消全选" : "全选"}
+                      </span>
+                    </button>
+                  ) : (
+                    <p className="text-heading-md font-semibold text-ink">
+                      {formatGroupLabel(key)}
+                      <span className="ml-2 text-body-sm font-normal text-mute">
+                        {photos.length} 张
+                      </span>
+                    </p>
+                  )}
                 </div>
               );
             })()}
@@ -315,7 +334,7 @@ export function TimelineGrid({ projectId, folderId, folderScope = "subtree" }: T
                 <PhotoCard
                   key={photo.id}
                   photo={photo}
-                  selectMode
+                  selectMode={canDeletePhoto}
                   selected={selectedPhotoIds.includes(photo.id)}
                   onToggleSelect={togglePhotoSelection}
                   onDeleted={(photoId) => {

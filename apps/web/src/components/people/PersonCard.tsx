@@ -7,25 +7,45 @@ export function PersonCard({
   faceCropEnabled,
   person,
   selected,
+  checked = false,
+  showCheckbox = false,
   onSelect,
+  onToggleChecked,
 }: {
   projectId: number;
   faceCropEnabled: boolean;
   person: PersonSummary;
   selected: boolean;
+  checked?: boolean;
+  showCheckbox?: boolean;
   onSelect: () => void;
+  onToggleChecked?: (checked: boolean) => void;
 }) {
   return (
     <button
       type="button"
       onClick={onSelect}
       className={[
-        "w-full text-left rounded-xl border p-4 transition-colors",
+        "relative w-full text-left rounded-xl border p-4 transition-colors",
         selected
           ? "border-primary bg-primary/5 shadow-sm"
           : "border-hairline bg-canvas hover:bg-surface-card",
       ].join(" ")}
     >
+      {showCheckbox && (
+        <label
+          className="absolute left-2 top-2 z-10 rounded-full bg-canvas/95 p-1 shadow-sm"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <input
+            type="checkbox"
+            checked={checked}
+            onChange={(e) => onToggleChecked?.(e.target.checked)}
+            className="h-4 w-4"
+            aria-label={`选择人物 ${person.display_name}`}
+          />
+        </label>
+      )}
       <div className="flex gap-3">
         <div className="w-16 h-16 rounded-lg overflow-hidden border border-hairline bg-surface-soft flex-shrink-0">
           {faceCropEnabled && person.representative_face_detection_id ? (

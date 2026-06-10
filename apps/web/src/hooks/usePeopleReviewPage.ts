@@ -5,6 +5,7 @@ import type { PersonFaceAssignment } from "@/api";
 import { api } from "@/api";
 import { useProjectContext } from "@/contexts/ProjectContext";
 import { formatBatchFeedbackToast } from "@/lib/peopleFeedback";
+import { isArchivedPerson } from "@/lib/personArchive";
 
 const PAGE_SIZE = 80;
 
@@ -54,6 +55,16 @@ export function usePeopleReviewPage() {
     return map;
   }, [peopleData?.items]);
 
+  const archivedPersonIds = useMemo(() => {
+    const ids = new Set<number>();
+    for (const person of peopleData?.items ?? []) {
+      if (isArchivedPerson(person)) {
+        ids.add(person.id);
+      }
+    }
+    return ids;
+  }, [peopleData?.items]);
+
   const grouped = useMemo(() => {
     const map = new Map<number, PersonFaceAssignment[]>();
     for (const item of reviewData?.items ?? []) {
@@ -63,6 +74,16 @@ export function usePeopleReviewPage() {
     }
     return Array.from(map.entries()).sort((a, b) => b[1].length - a[1].length);
   }, [reviewData?.items]);
+
+  const groupedManaged = useMemo(
+    () => grouped.filter(([personId]) => !archivedPersonIds.has(personId)),
+    [archivedPersonIds, grouped],
+  );
+
+  const groupedArchived = useMemo(
+    () => grouped.filter(([personId]) => archivedPersonIds.has(personId)),
+    [archivedPersonIds, grouped],
+  );
 
   const maxPage = Math.max(1, Math.ceil((reviewData?.total ?? 0) / PAGE_SIZE));
 
@@ -163,7 +184,8 @@ export function usePeopleReviewPage() {
     setPage,
     statusMessage,
     errorMessage,
-    grouped,
+    grouped: groupedManaged,
+    groupedArchived,
     peopleData,
     peopleById,
     reviewData,
