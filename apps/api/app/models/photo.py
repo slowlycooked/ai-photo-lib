@@ -14,6 +14,7 @@ class Photo(Base):
         sa.UniqueConstraint("project_id", "file_path", name="uq_photos_project_file_path"),
         Index("ix_photos_project_taken_at", "project_id", "taken_at"),
         Index("ix_photos_project_status", "project_id", "status"),
+        Index("ix_photos_project_status_deleted_at", "project_id", "status", "deleted_at"),
         Index("ix_photos_project_folder_taken_at", "project_id", "folder_id", "taken_at"),
         Index("ix_photos_project_country_name", "project_id", "country_name"),
         Index("ix_photos_project_admin1", "project_id", "admin1"),

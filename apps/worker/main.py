@@ -166,6 +166,15 @@ def run() -> None:
                     tok_photo = photo_id_ctx.set(None)
                     try:
                         ProjectTaskAppService(db).process_task(project_task)
+                        db.commit()
+                    except Exception as exc:  # noqa: BLE001
+                        db.rollback()
+                        logger.exception(
+                            "Unexpected error processing project task. task_id=%s project_id=%s task_type=%s",
+                            project_task.id,
+                            project_task.project_id,
+                            project_task.task_type,
+                        )
                     finally:
                         project_id_ctx.reset(tok_proj)
                         task_id_ctx.reset(tok_task)
@@ -179,6 +188,15 @@ def run() -> None:
                     tok_photo = photo_id_ctx.set(str(job.photo_id) if job.photo_id else None)
                     try:
                         AIJobAppService(db).process_job(job)
+                        db.commit()
+                    except Exception as exc:  # noqa: BLE001
+                        db.rollback()
+                        logger.exception(
+                            "AI job processing failed. job_id=%s project_id=%s photo_id=%s",
+                            job.id,
+                            job.project_id,
+                            job.photo_id,
+                        )
                     finally:
                         project_id_ctx.reset(tok_proj)
                         task_id_ctx.reset(tok_task)

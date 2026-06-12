@@ -40,6 +40,8 @@ DEFAULT_OCR_VECTOR_FIELD_WEIGHTS: Dict[str, float] = {
     "ocr_embedding": 0.40,
 }
 
+DEFAULT_SEARCH_RESULT_CACHE_TTL_SECONDS: int = 600
+
 # Tier multipliers for keyword scoring
 EXACT_TERM_MULTIPLIER: float = 1.0
 EXPANDED_TERM_MULTIPLIER: float = 0.7
@@ -98,6 +100,7 @@ class EffectiveSearchSettings:
     enable_query_understanding: bool
     enable_structured_filters: bool
     enable_semantic_tag_boost: bool
+    search_result_cache_ttl_seconds: int = DEFAULT_SEARCH_RESULT_CACHE_TTL_SECONDS
 
     # ── Evidence quality settings (from search_quality_settings JSONB) ────────
     # Vector score required to show a vector-only candidate (no keyword evidence)

@@ -54,6 +54,7 @@ CREATE TABLE project_search_settings (
   enable_query_understanding BOOLEAN NOT NULL DEFAULT 1,
   enable_structured_filters BOOLEAN NOT NULL DEFAULT 0,
   enable_semantic_tag_boost BOOLEAN NOT NULL DEFAULT 0,
+  search_result_cache_ttl_seconds INTEGER NOT NULL DEFAULT 600,
   search_quality_settings JSON,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -89,12 +90,13 @@ VALUES (1, 'Planner Project', '/tmp/p', '/tmp/p-thumb', 1);
 INSERT INTO project_search_settings (
   id, project_id, default_mode, keyword_top_k, vector_top_k, page_size_default, page_size_max,
   rrf_k, keyword_weight, vector_weight, vector_min_score,
-  enable_query_understanding, enable_structured_filters, enable_semantic_tag_boost
+  enable_query_understanding, enable_structured_filters, enable_semantic_tag_boost,
+  search_result_cache_ttl_seconds
 )
 VALUES (
   1, 1, 'hybrid', 2000, 200, 50, 200,
   60, 0.4, 0.6, 0.3,
-  1, 0, 0
+  1, 0, 0, 600
 );
 
 INSERT INTO project_query_planner_settings (

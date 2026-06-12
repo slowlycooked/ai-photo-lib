@@ -12,10 +12,26 @@ from ..models.project import Project
 from ..schemas.search import SearchResponse
 from ..services.search.tag_filter import ALLOWED_TAG_FIELDS, tag_filter_photos
 from ..services.search.app_service import search_photos
+from ..services.search.result_cache import (
+    get_project_search_cache_epoch,
+    get_search_result_cache_stats,
+)
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/projects", tags=["projects-search"])
+
+
+@router.get("/{project_id}/search/cache-stats")
+def project_search_cache_stats(
+    project_id: int,
+    project: Project = Depends(require_project),
+    db: Session = Depends(get_db),
+):
+    stats = get_search_result_cache_stats(project_id=project_id)
+    stats["project_id"] = project_id
+    stats["cache_epoch"] = get_project_search_cache_epoch(db, project_id)
+    return stats
 
 
 @router.get("/{project_id}/search", response_model=SearchResponse)

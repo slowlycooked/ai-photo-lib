@@ -43,6 +43,7 @@ class RRFMergeTest(unittest.TestCase):
     def test_default_settings_match_project_search_settings_defaults(self) -> None:
         settings = _default_settings()
         self.assertFalse(settings.enable_semantic_tag_boost)
+        self.assertEqual(settings.search_result_cache_ttl_seconds, 600)
 
     def test_deduplicates_photo_ids(self) -> None:
         keyword = [

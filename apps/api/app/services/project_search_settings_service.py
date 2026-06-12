@@ -8,7 +8,9 @@ from sqlalchemy.orm import Session
 
 from ..config import settings as global_settings
 from ..models.project_search_settings import ProjectSearchSettings
+from ..services.search.result_cache import bump_project_search_cache_epoch
 from ..services.search.types import (
+    DEFAULT_SEARCH_RESULT_CACHE_TTL_SECONDS,
     DEFAULT_KEYWORD_FIELD_WEIGHTS,
     DEFAULT_OCR_VECTOR_FIELD_WEIGHTS,
     DEFAULT_VECTOR_FIELD_WEIGHTS,
@@ -53,6 +55,7 @@ def get_or_create_project_search_settings(
         enable_query_understanding=True,
         enable_structured_filters=False,
         enable_semantic_tag_boost=False,
+        search_result_cache_ttl_seconds=DEFAULT_SEARCH_RESULT_CACHE_TTL_SECONDS,
     )
     db.add(row)
     db.commit()
@@ -87,6 +90,7 @@ def update_project_search_settings(
         "enable_query_understanding",
         "enable_structured_filters",
         "enable_semantic_tag_boost",
+        "search_result_cache_ttl_seconds",
         "search_quality_settings",
     }
     for key, value in updates.items():
@@ -94,6 +98,11 @@ def update_project_search_settings(
             raise ValueError(f"Unknown search settings field: {key!r}")
         setattr(row, key, value)
 
+    bump_project_search_cache_epoch(
+        db,
+        project_id,
+        reason="project_search_settings_updated",
+    )
     db.commit()
     db.refresh(row)
     return row
@@ -106,6 +115,11 @@ def reset_project_search_settings(
     row = get_project_search_settings(db, project_id)
     if row is not None:
         db.delete(row)
+        bump_project_search_cache_epoch(
+            db,
+            project_id,
+            reason="project_search_settings_reset",
+        )
         db.commit()
         logger.info(
             "Deleted project_search_settings for project_id=%s (reset to defaults)",

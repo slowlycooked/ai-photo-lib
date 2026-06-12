@@ -56,6 +56,14 @@ class PhotoEmbedding(Base):
         sa.UniqueConstraint("project_id", "photo_id", name="uq_photo_embeddings_project_photo"),
         sa.Index("ix_photo_embeddings_project_id", "project_id"),
         sa.Index("ix_photo_embeddings_project_status", "project_id", "embedding_status"),
+        sa.Index(
+            "ix_photo_embeddings_project_status_model_dim_version",
+            "project_id",
+            "embedding_status",
+            "embedding_model",
+            "embedding_dimension",
+            "embedding_input_version",
+        ),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)

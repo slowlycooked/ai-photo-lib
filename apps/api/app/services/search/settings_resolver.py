@@ -23,6 +23,7 @@ from ..project_query_planner_settings_service import (
 )
 from ..query_understanding_rule_packs import DEFAULT_BASE_PACK_ID, normalise_extension_pack_ids
 from .types import (
+    DEFAULT_SEARCH_RESULT_CACHE_TTL_SECONDS,
     DEFAULT_KEYWORD_FIELD_WEIGHTS,
     DEFAULT_OCR_VECTOR_FIELD_WEIGHTS,
     DEFAULT_VECTOR_FIELD_WEIGHTS,
@@ -106,6 +107,7 @@ class SearchSettingsResolver:
             enable_query_understanding=True,
             enable_structured_filters=False,
             enable_semantic_tag_boost=False,
+            search_result_cache_ttl_seconds=DEFAULT_SEARCH_RESULT_CACHE_TTL_SECONDS,
             entity_object_vector_only_min_score=0.62,
             entity_object_tag_min_score=0.62,
             entity_object_caption_min_score=0.58,
@@ -169,6 +171,14 @@ class SearchSettingsResolver:
                 enable_query_understanding=row.enable_query_understanding,
                 enable_structured_filters=row.enable_structured_filters,
                 enable_semantic_tag_boost=row.enable_semantic_tag_boost,
+                search_result_cache_ttl_seconds=max(
+                    0,
+                    int(
+                        row.search_result_cache_ttl_seconds
+                        if row.search_result_cache_ttl_seconds is not None
+                        else DEFAULT_SEARCH_RESULT_CACHE_TTL_SECONDS
+                    ),
+                ),
                 # Evidence quality overrides from JSONB (fall back to dataclass defaults)
                 vector_strict_score=float(_q.get("vector_strict_score", 0.42)),
                 min_display_evidence_level=str(_q.get("min_display_evidence_level", "C")),
@@ -255,6 +265,7 @@ class SearchSettingsResolver:
             enable_query_understanding=True,
             enable_structured_filters=False,
             enable_semantic_tag_boost=False,
+            search_result_cache_ttl_seconds=DEFAULT_SEARCH_RESULT_CACHE_TTL_SECONDS,
             concept_taxonomy=[],
             query_understanding_base_pack=DEFAULT_BASE_PACK_ID,
             query_understanding_extension_packs=[],
@@ -352,6 +363,7 @@ def _effective_search_sources(
         "enable_query_understanding",
         "enable_structured_filters",
         "enable_semantic_tag_boost",
+        "search_result_cache_ttl_seconds",
     }
     json_weight_fields = {
         "keyword_field_weights": "keyword_field_weights",

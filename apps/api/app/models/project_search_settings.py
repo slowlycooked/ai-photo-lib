@@ -103,6 +103,9 @@ class ProjectSearchSettings(Base):
     enable_semantic_tag_boost: Mapped[bool] = mapped_column(
         Boolean, server_default="false", nullable=False
     )
+    search_result_cache_ttl_seconds: Mapped[int] = mapped_column(
+        Integer, server_default="600", nullable=False
+    )
 
     # ── Evidence / quality settings (JSONB) ───────────────────────────────────
     # Overrides for vector_strict_score, min_display_evidence_level, etc.

@@ -40,6 +40,7 @@ from ..services.project_ai_service import (
     resolve_project_ai_runtime_settings,
 )
 from ..services.project_embedding_settings_service import resolve_embedding_settings_strict
+from ..services.search.result_cache import bump_project_search_cache_epoch
 from ..services.thumbnail import generate_thumbnail
 from .task_claim_service import TaskClaimService
 from ..services.vlm_client import VLMRequestError, analyze_image
@@ -125,6 +126,13 @@ class AIJobAppService:
         self._db = db
         self._claim_service = TaskClaimService(db)
 
+    def _invalidate_project_search_cache(self, project_id: int, reason: str) -> None:
+        bump_project_search_cache_epoch(
+            self._db,
+            project_id,
+            reason=reason,
+        )
+
     # ── public entry point ────────────────────────────────────────────────────
 
     def process_job(self, job: AIJob) -> None:
@@ -143,7 +151,7 @@ class AIJobAppService:
             job.started_at = now
             job.updated_at = now
         self._claim_service.touch_ai_job_lease(job)
-        self._db.commit()
+        self._db.flush()
 
         photo = (
             self._db.query(Photo)
@@ -178,7 +186,7 @@ class AIJobAppService:
         job.lease_expires_at = None
         job.finished_at = now
         job.updated_at = now
-        self._db.commit()
+        self._db.flush()
         logger.error(
             "Job %d rejected: missing project_id (photo_id=%d)", job.id, job.photo_id
         )
@@ -195,7 +203,7 @@ class AIJobAppService:
         job.lease_expires_at = None
         job.finished_at = now
         job.updated_at = now
-        self._db.commit()
+        self._db.flush()
 
     # ── private: image path resolution ───────────────────────────────────────
 
@@ -215,7 +223,7 @@ class AIJobAppService:
                 new_thumb,
             )
             photo.thumbnail_path = new_thumb
-            self._db.commit()
+            self._db.flush()
             return new_thumb
 
         suffix = Path(photo.file_path).suffix.lower()
@@ -387,13 +395,13 @@ class AIJobAppService:
             job.heartbeat_at = None
             job.lease_expires_at = None
 
-            self._db.commit()
+            self._db.flush()
+            self._invalidate_project_search_cache(project_id, "ai_analysis_completed")
             logger.info("Photo %d analyzed successfully.", photo.id)
 
         except Exception as exc:  # noqa: BLE001
-            self._db.rollback()
             self._handle_job_error(job, photo, exc)
-            self._db.commit()
+            self._db.flush()
 
     # ── private: embedding job ────────────────────────────────────────────────
 
@@ -420,7 +428,7 @@ class AIJobAppService:
             job.lease_expires_at = None
             job.finished_at = now
             job.updated_at = now
-            self._db.commit()
+            self._db.flush()
             return
 
         try:
@@ -454,10 +462,10 @@ class AIJobAppService:
             job.locked_at = None
             job.heartbeat_at = None
             job.lease_expires_at = None
-            self._db.commit()
+            self._db.flush()
+            self._invalidate_project_search_cache(project_id, "embedding_rebuild_completed")
 
         except Exception as exc:  # noqa: BLE001
-            self._db.rollback()
             is_retryable = not isinstance(exc, EmbeddingRequestError) or exc.retryable
             self._handle_job_error(
                 job,
@@ -466,7 +474,7 @@ class AIJobAppService:
                 is_retryable=is_retryable,
                 log_prefix="Embedding job",
             )
-            self._db.commit()
+            self._db.flush()
 
     # ── private: face scan job ───────────────────────────────────────────────
 
@@ -507,9 +515,8 @@ class AIJobAppService:
             job.locked_at = None
             job.heartbeat_at = None
             job.lease_expires_at = None
-            self._db.commit()
+            self._db.flush()
         except Exception as exc:  # noqa: BLE001
-            self._db.rollback()
             is_retryable = not isinstance(
                 exc,
                 (
@@ -525,7 +532,7 @@ class AIJobAppService:
                 is_retryable=is_retryable,
                 log_prefix="Face scan job",
             )
-            self._db.commit()
+            self._db.flush()
 
     # ── private: error handler ────────────────────────────────────────────────
 

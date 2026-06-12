@@ -333,17 +333,14 @@ class ProjectTaskAppServiceTest(unittest.TestCase):
         db.add(task)
         db.commit()
         db.refresh(task)
-        task_id = task.id
 
         def fake_scan(session, project_id, progress_callback=None):
-            request_db = self._SessionLocal()
-            active = request_db.query(ProjectTask).filter(ProjectTask.id == task_id).first()
-            assert active is not None
-            progress = dict(active.progress_payload or {})
-            progress["cancel_requested"] = True
-            active.progress_payload = progress
-            request_db.commit()
-            request_db.close()
+            # Modify task via the passed session (main session) to avoid SQLite concurrent access issues
+            db.refresh(task)
+            if task.progress_payload is None:
+                task.progress_payload = {}
+            task.progress_payload["cancel_requested"] = True
+            db.flush()
 
             if progress_callback is not None:
                 progress_callback(
@@ -519,17 +516,14 @@ class ProjectTaskAppServiceTest(unittest.TestCase):
         db.add(task)
         db.commit()
         db.refresh(task)
-        task_id = task.id
 
         def fake_scan(session, project_id, progress_callback=None):
-            request_db = self._SessionLocal()
-            active = request_db.query(ProjectTask).filter(ProjectTask.id == task_id).first()
-            assert active is not None
-            progress = dict(active.progress_payload or {})
-            progress["pause_requested"] = True
-            active.progress_payload = progress
-            request_db.commit()
-            request_db.close()
+            # Modify task via the passed session (main session) to avoid SQLite concurrent access issues
+            db.refresh(task)
+            if task.progress_payload is None:
+                task.progress_payload = {}
+            task.progress_payload["pause_requested"] = True
+            db.flush()
 
             if progress_callback is not None:
                 progress_callback(
@@ -605,20 +599,18 @@ class ProjectTaskAppServiceTest(unittest.TestCase):
         task_id = task.id
 
         def fake_cluster(session, *, project_id, max_faces, progress_callback=None):
-            request_db = self._SessionLocal()
-            active = request_db.query(ProjectTask).filter(ProjectTask.id == task_id).first()
-            assert active is not None
-            progress = dict(active.progress_payload or {})
-            progress["cancel_requested"] = True
-            active.progress_payload = progress
-            request_db.commit()
-            request_db.close()
+            # Modify task via the main session to avoid SQLite concurrent access issues
+            db.refresh(task)
+            if task.progress_payload is None:
+                task.progress_payload = {}
+            task.progress_payload["cancel_requested"] = True
+            db.flush()
 
             if progress_callback is not None:
                 progress_callback(
                     {
                         "project_id": project_id,
-                        "task_id": task_id,
+                        "task_id": task.id,
                         "status": "running",
                         "running": True,
                         "max_faces": max_faces,
@@ -755,20 +747,18 @@ class ProjectTaskAppServiceTest(unittest.TestCase):
             end_time=None,
             progress_callback=None,
         ):
-            request_db = self._SessionLocal()
-            active = request_db.query(ProjectTask).filter(ProjectTask.id == task_id).first()
-            assert active is not None
-            progress = dict(active.progress_payload or {})
-            progress["cancel_requested"] = True
-            active.progress_payload = progress
-            request_db.commit()
-            request_db.close()
+            # Modify task via the main session to avoid SQLite concurrent access issues
+            db.refresh(task)
+            if task.progress_payload is None:
+                task.progress_payload = {}
+            task.progress_payload["cancel_requested"] = True
+            db.flush()
 
             if progress_callback is not None:
                 progress_callback(
                     {
                         "project_id": project_id,
-                        "task_id": task_id,
+                        "task_id": task.id,
                         "status": "running",
                         "running": True,
                         "max_faces": max_faces,

@@ -24,12 +24,16 @@ class _FakeDB:
     def __init__(self) -> None:
         self.commits = 0
         self.rollbacks = 0
+        self.flushes = 0
 
     def commit(self) -> None:
         self.commits += 1
 
     def rollback(self) -> None:
         self.rollbacks += 1
+
+    def flush(self) -> None:
+        self.flushes += 1
 
 
 class AIJobAppServiceFaceScanTest(unittest.TestCase):
@@ -42,6 +46,13 @@ class AIJobAppServiceFaceScanTest(unittest.TestCase):
             raw_model_output=None,
             finished_at=None,
             updated_at=None,
+            retry_count=0,
+            last_error_code=None,
+            last_error_at=None,
+            locked_by=None,
+            locked_at=None,
+            heartbeat_at=None,
+            lease_expires_at=None,
         )
         photo = SimpleNamespace(id=101)
 
@@ -83,7 +94,9 @@ class AIJobAppServiceFaceScanTest(unittest.TestCase):
         self.assertEqual(job.status, "success")
         self.assertIn("review_pending=2", job.raw_model_output)
         self.assertIn("cluster_assignments_created=2", job.raw_model_output)
-        self.assertEqual(db.commits, 1)
+        # Transaction management moved to Worker layer; service only flushes
+        self.assertEqual(db.flushes, 1)
+        self.assertEqual(db.commits, 0)
 
 
 if __name__ == "__main__":

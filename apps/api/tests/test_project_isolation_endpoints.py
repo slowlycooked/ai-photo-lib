@@ -235,6 +235,7 @@ CREATE TABLE project_search_settings (
     enable_query_understanding BOOLEAN NOT NULL DEFAULT 1,
     enable_structured_filters BOOLEAN NOT NULL DEFAULT 1,
     enable_semantic_tag_boost BOOLEAN NOT NULL DEFAULT 0,
+    search_result_cache_ttl_seconds INTEGER NOT NULL DEFAULT 600,
     search_quality_settings TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP

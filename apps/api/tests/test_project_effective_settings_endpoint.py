@@ -54,6 +54,7 @@ CREATE TABLE project_search_settings (
   enable_query_understanding BOOLEAN NOT NULL DEFAULT 1,
   enable_structured_filters BOOLEAN NOT NULL DEFAULT 0,
   enable_semantic_tag_boost BOOLEAN NOT NULL DEFAULT 0,
+  search_result_cache_ttl_seconds INTEGER NOT NULL DEFAULT 600,
   search_quality_settings JSON,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -114,13 +115,14 @@ INSERT INTO project_search_settings (
   rrf_k, keyword_weight, vector_weight, vector_min_score,
   keyword_field_weights, vector_field_weights, ocr_query_vector_field_weights,
   enable_query_understanding, enable_structured_filters, enable_semantic_tag_boost,
+  search_result_cache_ttl_seconds,
   search_quality_settings
 )
 VALUES (
   1, 1, 'hybrid', 1500, 321, 50, 200,
   44, 0.4, 0.6, 0.31,
   '{"caption": 2.0}', '{"content_embedding": 1.0}', '{"ocr_embedding": 1.0}',
-  1, 0, 1,
+  1, 0, 1, 600,
   '{"vector_strict_score": 0.5, "query_planner_enabled": false, "query_planner_max_tokens": 333}'
 );
 

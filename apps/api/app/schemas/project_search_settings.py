@@ -27,6 +27,7 @@ class ProjectSearchSettingsResponse(BaseModel):
     enable_query_understanding: bool
     enable_structured_filters: bool
     enable_semantic_tag_boost: bool
+    search_result_cache_ttl_seconds: int
     search_quality_settings: Optional[Dict] = None
     created_at: datetime
     updated_at: datetime
@@ -48,4 +49,5 @@ class ProjectSearchSettingsUpdate(BaseModel):
     enable_query_understanding: Optional[bool] = None
     enable_structured_filters: Optional[bool] = None
     enable_semantic_tag_boost: Optional[bool] = None
+    search_result_cache_ttl_seconds: Optional[int] = Field(None, ge=0, le=86400)
     search_quality_settings: Optional[Dict] = None
