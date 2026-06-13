@@ -2,13 +2,14 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import logging
 import re
 import threading
 import time
 from collections import OrderedDict
-from datetime import date
+from datetime import date, datetime
 from typing import Callable, Optional
 
 from ....config import settings as global_settings
@@ -177,6 +178,14 @@ def _render_prompt(template: str, *, query: str, project_id: Optional[int]) -> s
     return rendered
 
 
+def _hash_cache_fragment(value: object) -> str:
+    if isinstance(value, str):
+        payload = value
+    else:
+        payload = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
 def _sanitize_preview(raw_text: str) -> str:
     compact = re.sub(r"\s+", " ", raw_text).strip()
     return compact[:320]
@@ -187,6 +196,10 @@ def _build_cache_key(
     query: str,
     project_id: Optional[int],
     settings: EffectiveSearchSettings,
+    local_date: str,
+    timezone_name: str,
+    system_prompt: str,
+    user_prompt_template: str,
 ) -> tuple:
     return (
         int(project_id or 0),
@@ -197,6 +210,14 @@ def _build_cache_key(
         settings.query_planner_planner_version,
         settings.query_understanding_base_pack,
         tuple(settings.query_understanding_extension_packs),
+        local_date,
+        timezone_name,
+        float(settings.query_planner_temperature),
+        float(settings.query_planner_top_p),
+        int(settings.query_planner_max_tokens),
+        _hash_cache_fragment(system_prompt),
+        _hash_cache_fragment(user_prompt_template),
+        _hash_cache_fragment(settings.concept_taxonomy),
     )
 
 
@@ -352,6 +373,12 @@ def resolve_query_plan_llm_first(
         planner_debug=planner_debug,
     )
 
+    local_now = datetime.now().astimezone()
+    local_date = local_now.date().isoformat()
+    timezone_name = local_now.tzname() or ""
+    system_prompt = settings.query_planner_system_prompt.strip() or _DEFAULT_SYSTEM_PROMPT
+    user_prompt_template = settings.query_planner_prompt_template.strip() or _DEFAULT_USER_PROMPT_TEMPLATE
+
     cache_key: Optional[tuple] = None
     if not include_raw_output:
         use_rule_fast_path, fast_path_reason = _should_use_rule_fast_path(query, fallback_plan)
@@ -363,7 +390,15 @@ def resolve_query_plan_llm_first(
             fallback_plan.planner_debug = dict(planner_debug)
             return fallback_plan
 
-        cache_key = _build_cache_key(query=query, project_id=project_id, settings=settings)
+        cache_key = _build_cache_key(
+            query=query,
+            project_id=project_id,
+            settings=settings,
+            local_date=local_date,
+            timezone_name=timezone_name,
+            system_prompt=system_prompt,
+            user_prompt_template=user_prompt_template,
+        )
         cached_plan = _cache_get(cache_key)
         if cached_plan is not None:
             cached_debug = dict(cached_plan.planner_debug or {})
@@ -373,6 +408,8 @@ def resolve_query_plan_llm_first(
                     "provider": settings.query_planner_provider,
                     "model": settings.query_planner_model_name,
                     "planner_version": settings.query_planner_planner_version,
+                    "local_date": local_date,
+                    "timezone": timezone_name,
                     "cache_hit": True,
                     "used_fallback": False,
                     "fallback_reason": "",
@@ -388,8 +425,6 @@ def resolve_query_plan_llm_first(
         fallback_plan.planner_debug = dict(planner_debug)
         return fallback_plan
 
-    system_prompt = settings.query_planner_system_prompt.strip() or _DEFAULT_SYSTEM_PROMPT
-    user_prompt_template = settings.query_planner_prompt_template.strip() or _DEFAULT_USER_PROMPT_TEMPLATE
     user_prompt = _render_prompt(
         user_prompt_template,
         query=query,

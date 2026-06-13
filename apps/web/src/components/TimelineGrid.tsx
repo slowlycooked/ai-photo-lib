@@ -65,6 +65,7 @@ export function TimelineGrid({ projectId, folderId, folderScope = "subtree" }: T
     hasNextPage,
     isFetchingNextPage,
     fetchNextPage,
+    requireScrollDown: true,
   });
 
   const allPhotos = useMemo(() => {
@@ -78,6 +79,7 @@ export function TimelineGrid({ projectId, folderId, folderScope = "subtree" }: T
     return Array.from(uniqueById.values());
   }, [data]);
   const total = data?.pages[0]?.total ?? 0;
+  const isInitialLoading = isLoading && allPhotos.length === 0;
 
   useEffect(() => {
     setSelectedPhotoIds([]);
@@ -193,15 +195,6 @@ export function TimelineGrid({ projectId, folderId, folderScope = "subtree" }: T
     }
   };
 
-  if (isLoading) {
-    return (
-      <div className="flex flex-col items-center justify-center py-24 gap-3 text-mute">
-        <Loader2 className="w-8 h-8 animate-spin" />
-        <p className="text-body-sm">加载照片中…</p>
-      </div>
-    );
-  }
-
   if (isError) {
     return (
       <div className="flex flex-col items-center justify-center py-24 gap-3 text-mute">
@@ -211,7 +204,7 @@ export function TimelineGrid({ projectId, folderId, folderScope = "subtree" }: T
     );
   }
 
-  if (allPhotos.length === 0) {
+  if (!isLoading && allPhotos.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-24 gap-4 text-mute">
         <div className="w-20 h-20 rounded-full bg-secondary-bg flex items-center justify-center">
@@ -291,6 +284,13 @@ export function TimelineGrid({ projectId, folderId, folderScope = "subtree" }: T
               </button>
             </div>
             {batchMessage && <p className="mt-2 text-caption-sm text-mute">{batchMessage}</p>}
+          </div>
+        )}
+
+        {isInitialLoading && (
+          <div className="flex items-center justify-center gap-2 py-10 text-mute">
+            <Loader2 className="w-4 h-4 animate-spin" />
+            <span className="text-body-sm">正在加载首批照片…</span>
           </div>
         )}
 

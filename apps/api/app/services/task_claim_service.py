@@ -10,6 +10,13 @@ from sqlalchemy.orm import Session
 
 from ..models.ai import AIJob
 from ..models.project_task import ProjectTask
+from .project_task_service import (
+    TASK_TYPE_FACE_REMATCH_UNKNOWN,
+    TASK_TYPE_FACE_SCAN_PROJECT,
+    TASK_TYPE_LIBRARY_REINDEX,
+    TASK_TYPE_LIBRARY_SCAN,
+    TASK_TYPE_UNKNOWN_FACE_CLUSTERING,
+)
 
 ClaimedTaskKind = Literal["project_task", "ai_job"]
 
@@ -88,16 +95,37 @@ class TaskClaimService:
         for task in running_project_tasks:
             if not _lease_expired(task.lease_expires_at, now):
                 continue
-            task.status = "failed"
-            task.error_message = "Task lease expired while running"
-            task.finished_at = now
-            task.updated_at = now
-            task.locked_by = None
-            task.locked_at = None
-            task.heartbeat_at = None
-            task.lease_expires_at = None
+            recovery_action = _project_task_recovery_action(task)
+            _clear_project_task_lease(task)
+            task.retry_count = int(task.retry_count or 0) + 1
             task.last_error_code = "lease_expired"
             task.last_error_at = now
+            task.updated_at = now
+            progress = dict(task.progress_payload or {})
+            progress["running"] = False
+            progress["lease_expired"] = True
+            progress["recovery_policy"] = recovery_action
+            progress["message"] = (
+                "Task lease expired while running"
+                if recovery_action == "fail"
+                else "Task lease expired; queued for retry"
+                if recovery_action == "retry"
+                else "Task lease expired; resume from checkpoint"
+            )
+            task.progress_payload = progress
+            task.result_payload = None
+            if recovery_action == "fail":
+                task.status = "failed"
+                task.error_message = "Task lease expired while running"
+                task.finished_at = now
+            elif recovery_action == "pause_for_review":
+                task.status = "paused"
+                task.error_message = None
+                task.finished_at = None
+            else:
+                task.status = "queued"
+                task.error_message = None
+                task.finished_at = None
             recovered_project_tasks += 1
 
         running_ai_jobs = (
@@ -210,6 +238,23 @@ class TaskClaimService:
             .with_for_update(skip_locked=True)
             .first()
         )
+
+
+def _project_task_recovery_action(task: ProjectTask) -> str:
+    if task.task_type in (TASK_TYPE_LIBRARY_SCAN, TASK_TYPE_LIBRARY_REINDEX):
+        return "resume_from_checkpoint"
+    if task.task_type in (TASK_TYPE_FACE_SCAN_PROJECT, TASK_TYPE_FACE_REMATCH_UNKNOWN):
+        return "retry"
+    if task.task_type == TASK_TYPE_UNKNOWN_FACE_CLUSTERING:
+        return "fail"
+    return "fail"
+
+
+def _clear_project_task_lease(task: ProjectTask) -> None:
+    task.locked_by = None
+    task.locked_at = None
+    task.heartbeat_at = None
+    task.lease_expires_at = None
 
 
 def _lease_expired(value: object, now: datetime) -> bool:

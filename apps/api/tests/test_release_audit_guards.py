@@ -144,6 +144,22 @@ class ConfigurationGuardTest(unittest.TestCase):
             )
             self.assertEqual(get_unknown_config_keys(env_path, managed_only=True), [])
 
+    def test_startup_managed_config_enforcement_checks_all_resolved_env_files(self) -> None:
+        from app import main as app_main
+
+        with patch.object(app_main, "_resolve_env_files", return_value=("/tmp/.env", "/tmp/.env.prd")):
+            with patch.object(app_main, "warn_unknown_config_keys"):
+                with patch.object(app_main, "validate_startup_schema"):
+                    with patch.object(app_main, "setup_logging"):
+                        with patch.object(app_main.RuntimeSettingsService, "get_debug_config"):
+                            with patch.object(app_main, "enforce_managed_config_keys") as enforce_mock:
+                                app_main.load_runtime_debug_config()
+
+        self.assertEqual(
+            [call.args[0] for call in enforce_mock.call_args_list],
+            [Path("/tmp/.env"), Path("/tmp/.env.prd")],
+        )
+
 
 class WorkerProjectIdGuardTest(unittest.TestCase):
     def test_aijob_rejects_missing_project_id(self) -> None:

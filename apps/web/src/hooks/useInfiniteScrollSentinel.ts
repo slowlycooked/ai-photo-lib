@@ -5,6 +5,7 @@ interface UseInfiniteScrollSentinelOptions {
   isFetchingNextPage: boolean;
   fetchNextPage: (options?: { cancelRefetch?: boolean }) => Promise<unknown>;
   rootMargin?: string;
+  requireScrollDown?: boolean;
 }
 
 export function useInfiniteScrollSentinel<TElement extends Element>({
@@ -12,9 +13,11 @@ export function useInfiniteScrollSentinel<TElement extends Element>({
   isFetchingNextPage,
   fetchNextPage,
   rootMargin = "200px",
+  requireScrollDown = false,
 }: UseInfiniteScrollSentinelOptions) {
   const sentinelRef = useRef<TElement>(null);
   const fetchLockRef = useRef(false);
+  const hasScrolledDownRef = useRef(!requireScrollDown);
 
   useEffect(() => {
     if (!isFetchingNextPage) {
@@ -23,13 +26,37 @@ export function useInfiniteScrollSentinel<TElement extends Element>({
   }, [isFetchingNextPage]);
 
   useEffect(() => {
+    hasScrolledDownRef.current = !requireScrollDown;
+    if (!requireScrollDown) {
+      return;
+    }
+
+    let lastScrollY = window.scrollY;
+    const onScroll = () => {
+      const currentScrollY = window.scrollY;
+      if (currentScrollY > lastScrollY) {
+        hasScrolledDownRef.current = true;
+      }
+      lastScrollY = currentScrollY;
+    };
+
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, [requireScrollDown]);
+
+  useEffect(() => {
     if (!sentinelRef.current || !hasNextPage) {
       return;
     }
 
     const observer = new IntersectionObserver(
       (entries) => {
-        if (!entries[0].isIntersecting || isFetchingNextPage || fetchLockRef.current) {
+        if (
+          !entries[0].isIntersecting ||
+          isFetchingNextPage ||
+          fetchLockRef.current ||
+          (requireScrollDown && !hasScrolledDownRef.current)
+        ) {
           return;
         }
 
@@ -43,7 +70,7 @@ export function useInfiniteScrollSentinel<TElement extends Element>({
 
     observer.observe(sentinelRef.current);
     return () => observer.disconnect();
-  }, [fetchNextPage, hasNextPage, isFetchingNextPage, rootMargin]);
+  }, [fetchNextPage, hasNextPage, isFetchingNextPage, requireScrollDown, rootMargin]);
 
   return sentinelRef;
 }

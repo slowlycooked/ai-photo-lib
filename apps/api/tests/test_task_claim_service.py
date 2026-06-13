@@ -246,6 +246,69 @@ class TaskClaimServiceTest(unittest.TestCase):
         self.assertEqual(claimed.kind, "ai_job")
         self.assertEqual(claimed.item.id, 20)
 
+    def test_recover_stuck_running_tasks_applies_task_type_policy(self) -> None:
+        expired_at = datetime.utcnow() - timedelta(minutes=5)
+        with self._SessionLocal() as db:
+            db.add_all(
+                [
+                    ProjectTask(
+                        project_id=1,
+                        task_type="library_scan",
+                        status="running",
+                        retry_count=0,
+                        progress_payload={
+                            "running": True,
+                            "scanned": 12,
+                            "current_path": "/tmp/a.jpg",
+                        },
+                        lease_expires_at=expired_at,
+                    ),
+                    ProjectTask(
+                        project_id=1,
+                        task_type="unknown_face_clustering",
+                        status="running",
+                        retry_count=0,
+                        progress_payload={"running": True, "clusters_created": 2},
+                        lease_expires_at=expired_at,
+                    ),
+                    AIJob(
+                        id=99,
+                        project_id=1,
+                        photo_id=1,
+                        job_type="analysis",
+                        status="running",
+                        retry_count=0,
+                        lease_expires_at=expired_at,
+                    ),
+                ]
+            )
+            db.commit()
+
+            result = TaskClaimService(db).recover_stuck_running_tasks()
+
+            self.assertEqual(result["project_tasks"], 2)
+            self.assertEqual(result["ai_jobs"], 1)
+
+            scan_task = db.query(ProjectTask).filter(ProjectTask.task_type == "library_scan").first()
+            assert scan_task is not None
+            self.assertEqual(scan_task.status, "queued")
+            self.assertFalse(scan_task.progress_payload["running"])
+            self.assertEqual(scan_task.progress_payload["recovery_policy"], "resume_from_checkpoint")
+            self.assertEqual(scan_task.progress_payload["scanned"], 12)
+
+            cluster_task = db.query(ProjectTask).filter(
+                ProjectTask.task_type == "unknown_face_clustering"
+            ).first()
+            assert cluster_task is not None
+            self.assertEqual(cluster_task.status, "failed")
+            self.assertEqual(cluster_task.progress_payload["recovery_policy"], "fail")
+            self.assertEqual(cluster_task.last_error_code, "lease_expired")
+
+            job = db.query(AIJob).filter(AIJob.id == 99).first()
+            assert job is not None
+            self.assertEqual(job.status, "queued")
+            self.assertEqual(job.last_error_code, "lease_expired")
+
 
 if __name__ == "__main__":
     unittest.main()

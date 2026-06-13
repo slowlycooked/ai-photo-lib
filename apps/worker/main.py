@@ -47,6 +47,7 @@ from app.models.project import Project  # noqa: F401 — registers 'projects' ta
 from app.schemas.debug_config import build_default_debug_config
 from app.services.aijob_app_service import AIJobAppService
 from app.services.project_task_app_service import ProjectTaskAppService
+from app.services.embedding_client import close_all as close_all_embedding_clients
 from app.services.runtime_settings_service import (
     RuntimeSettingsService,
     RuntimeSettingsStorageUnavailableError,
@@ -217,6 +218,7 @@ def run() -> None:
                 break
             time.sleep(1)
 
+    close_all_embedding_clients()
     logger.info("Worker shut down cleanly.")
 
 

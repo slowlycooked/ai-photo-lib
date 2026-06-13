@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import threading
+import time
 import logging
 from typing import Any
 
@@ -8,6 +10,9 @@ import httpx
 from ..config import settings
 
 logger = logging.getLogger(__name__)
+
+_CLIENT_LOCK = threading.Lock()
+_CLIENTS_BY_KEY: dict[tuple[str, float, bool], httpx.Client] = {}
 
 
 class EmbeddingRequestError(RuntimeError):
@@ -55,6 +60,40 @@ def _normalize_endpoint_url(endpoint_url: str | None = None) -> str:
     return _embeddings_url_from_endpoint(base)
 
 
+def _client_key(endpoint_url: str, timeout_seconds: int, api_key: str | None) -> tuple[str, float, bool]:
+    return (
+        endpoint_url.strip().rstrip("/"),
+        float(max(1, timeout_seconds)),
+        bool((api_key or "").strip()),
+    )
+
+
+def _get_http_client(endpoint_url: str, timeout_seconds: int, api_key: str | None) -> httpx.Client:
+    key = _client_key(endpoint_url, timeout_seconds, api_key)
+    with _CLIENT_LOCK:
+        client = _CLIENTS_BY_KEY.get(key)
+        if client is not None:
+            return client
+        client = httpx.Client(
+            timeout=float(max(1, timeout_seconds)),
+            limits=httpx.Limits(
+                max_keepalive_connections=8,
+                max_connections=16,
+                keepalive_expiry=60.0,
+            ),
+        )
+        _CLIENTS_BY_KEY[key] = client
+        return client
+
+
+def close_all() -> None:
+    with _CLIENT_LOCK:
+        clients = list(_CLIENTS_BY_KEY.values())
+        _CLIENTS_BY_KEY.clear()
+    for client in clients:
+        client.close()
+
+
 def embed_texts(
     texts: list[str],
     *,
@@ -84,10 +123,25 @@ def embed_texts(
         "input": clean_texts,
     }
 
+    client = _get_http_client(url, used_timeout, used_api_key)
+    response = None
     try:
-        with httpx.Client(timeout=used_timeout) as client:
-            response = client.post(url, json=payload, headers=headers)
-            response.raise_for_status()
+        for attempt in range(3):
+            try:
+                response = client.post(url, json=payload, headers=headers)
+                response.raise_for_status()
+                break
+            except httpx.HTTPStatusError as exc:
+                status = exc.response.status_code
+                retryable = status >= 500 or status == 429
+                if retryable and attempt < 2:
+                    time.sleep(0.2 * (attempt + 1))
+                    continue
+                raise EmbeddingRequestError(
+                    f"Embedding API returned HTTP {status}: {exc.response.text[:500]}",
+                    retryable=retryable,
+                    code=f"http_{status}",
+                ) from exc
     except httpx.ConnectError as exc:
         raise EmbeddingRequestError(
             f"Cannot connect to embedding API at {url}",
@@ -100,14 +154,12 @@ def embed_texts(
             retryable=True,
             code="timeout",
         ) from exc
-    except httpx.HTTPStatusError as exc:
-        status = exc.response.status_code
-        retryable = status >= 500 or status == 429
+    if response is None:
         raise EmbeddingRequestError(
-            f"Embedding API returned HTTP {status}: {exc.response.text[:500]}",
-            retryable=retryable,
-            code=f"http_{status}",
-        ) from exc
+            "Embedding API returned no response",
+            retryable=False,
+            code="empty_response",
+        )
 
     data: dict[str, Any] = response.json()
     items = data.get("data") or []

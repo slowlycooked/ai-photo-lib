@@ -4,6 +4,7 @@ import logging
 import re
 import uuid
 from contextlib import asynccontextmanager
+from pathlib import Path
 from time import perf_counter
 from typing import AsyncIterator
 
@@ -13,7 +14,12 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.exc import OperationalError
 
 from ._version import APP_VERSION
-from .config import settings, warn_unknown_config_keys, enforce_managed_config_keys
+from .config import (
+    settings,
+    warn_unknown_config_keys,
+    enforce_managed_config_keys,
+    _resolve_env_files,
+)
 from .database import SessionLocal, engine
 from .logging_config import (
     _NOISY_PATH_RE,
@@ -64,6 +70,7 @@ from .services.startup_schema_service import (
     validate_startup_schema,
 )
 from .services.project_app_service import repair_legacy_project_library_paths
+from .services.embedding_client import close_all as close_all_embedding_clients
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +79,8 @@ setup_logging(build_default_debug_config())
 
 def load_runtime_debug_config() -> None:
     warn_unknown_config_keys()
-    enforce_managed_config_keys()
+    for env_file in _resolve_env_files():
+        enforce_managed_config_keys(Path(env_file))
 
     try:
         validate_startup_schema(engine)
@@ -108,7 +116,10 @@ def repair_runtime_project_paths() -> None:
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     load_runtime_debug_config()
     repair_runtime_project_paths()
-    yield
+    try:
+        yield
+    finally:
+        close_all_embedding_clients()
 
 
 app = FastAPI(

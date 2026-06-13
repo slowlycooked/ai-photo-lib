@@ -13,6 +13,7 @@ os.environ.setdefault("OPENAI_MODEL", "test-model")
 os.environ.setdefault("OPENAI_VISION_MODEL", "test-model")
 
 from app.services.search.query_planner.llm_query_planner import (  # noqa: E402
+  _build_cache_key,
     resolve_query_plan_llm_first,
 )
 from app.services.query_understanding_service import understand_query  # noqa: E402
@@ -467,6 +468,49 @@ def test_llm_query_planner_returns_cached_plan_for_complex_query() -> None:
     assert planner_call.call_count == 1
     assert first_plan.planner_debug.get("used_fallback") is False
     assert second_plan.planner_debug.get("cache_hit") is True
+
+
+def test_llm_query_planner_cache_key_includes_runtime_context() -> None:
+    settings = replace(
+        SearchSettingsResolver.defaults(),
+        query_planner_enabled=True,
+        query_planner_endpoint_url="http://127.0.0.1:18084/v1/chat/completions",
+        query_planner_model_name="qwen3-4b-query-planner",
+        query_planner_temperature=0.3,
+        query_planner_top_p=0.9,
+        query_planner_max_tokens=256,
+    )
+
+    base_key = _build_cache_key(
+        query="去年张家口滑雪",
+        project_id=1,
+        settings=settings,
+        local_date="2026-06-13",
+        timezone_name="Asia/Shanghai",
+        system_prompt="system-a",
+        user_prompt_template="template-a",
+    )
+    next_day_key = _build_cache_key(
+        query="去年张家口滑雪",
+        project_id=1,
+        settings=settings,
+        local_date="2026-06-14",
+        timezone_name="Asia/Shanghai",
+        system_prompt="system-a",
+        user_prompt_template="template-a",
+    )
+    prompt_key = _build_cache_key(
+        query="去年张家口滑雪",
+        project_id=1,
+        settings=settings,
+        local_date="2026-06-13",
+        timezone_name="Asia/Shanghai",
+        system_prompt="system-b",
+        user_prompt_template="template-b",
+    )
+
+    assert base_key != next_day_key
+    assert base_key != prompt_key
 
 
 # ---------------------------------------------------------------------------
