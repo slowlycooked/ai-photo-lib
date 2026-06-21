@@ -15,6 +15,14 @@ const LABEL: Record<string, string> = {
   cancelled: "已取消",
 };
 
+const STAGE_LABEL: Record<string, string> = {
+  discovery: "发现文件",
+  prepare: "预处理",
+  persist: "落库",
+  cleanup: "清理与重算",
+  done: "完成",
+};
+
 interface ScanPanelProps {
   projectId: number | null;
   status: ScanStatus | undefined;
@@ -61,6 +69,7 @@ export function ScanPanel({
 
   const recentFiles = status.recent_files ?? [];
   const hasScanErrors = status.errors > 0;
+  const stageLabel = status.current_stage ? STAGE_LABEL[status.current_stage] ?? status.current_stage : null;
   const displayLabel = status.running
     ? status.message === "cancelling"
       ? LABEL.cancelling
@@ -157,6 +166,35 @@ export function ScanPanel({
           {status.current_path.split("/").pop()}
         </p>
       )}
+
+      <section className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">
+        <div className="rounded-md border border-hairline bg-canvas px-3 py-2">
+          <p className="text-caption-sm text-mute">当前阶段</p>
+          <p className="text-body-sm font-semibold text-ink">{stageLabel ?? "-"}</p>
+        </div>
+        <div className="rounded-md border border-hairline bg-canvas px-3 py-2">
+          <p className="text-caption-sm text-mute">已发现</p>
+          <p className="text-body-sm font-semibold text-ink">{status.discovered_count ?? status.scanned}</p>
+        </div>
+        <div className="rounded-md border border-hairline bg-canvas px-3 py-2">
+          <p className="text-caption-sm text-mute">已预处理</p>
+          <p className="text-body-sm font-semibold text-ink">{status.prepared_count ?? 0}</p>
+        </div>
+        <div className="rounded-md border border-hairline bg-canvas px-3 py-2">
+          <p className="text-caption-sm text-mute">已落库</p>
+          <p className="text-body-sm font-semibold text-ink">{status.persisted_count ?? 0}</p>
+        </div>
+        <div className="rounded-md border border-hairline bg-canvas px-3 py-2">
+          <p className="text-caption-sm text-mute">队列积压</p>
+          <p className="text-body-sm font-semibold text-ink">{status.queue_depth ?? 0}</p>
+        </div>
+        <div className="rounded-md border border-hairline bg-canvas px-3 py-2">
+          <p className="text-caption-sm text-mute">最近阶段耗时</p>
+          <p className="text-body-sm font-semibold text-ink">
+            {typeof status.last_stage_latency_ms === "number" ? `${status.last_stage_latency_ms} ms` : "-"}
+          </p>
+        </div>
+      </section>
 
       {recentFiles.length > 0 && (
         <section className="space-y-2 pt-1 border-t border-hairline">

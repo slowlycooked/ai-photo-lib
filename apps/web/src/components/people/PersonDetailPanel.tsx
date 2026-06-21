@@ -503,9 +503,9 @@ export function PersonDetailPanel({
         </div>
       </div>
 
-      <div className="px-6 py-5 space-y-4">
+      <div className={["px-6 py-5 space-y-4", reviewFaceIds.length > 0 ? "pb-28" : ""].join(" ")}>
         {reviewFaceIds.length > 0 && (
-          <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
+          <div className="sticky top-3 z-10 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 shadow-sm">
             <div className="flex items-center justify-between gap-3 flex-wrap">
               <div>
                 <h3 className="text-body-sm font-semibold text-amber-900">待确认批量处理</h3>
@@ -747,6 +747,59 @@ export function PersonDetailPanel({
           </>
         )}
       </div>
+
+      {reviewFaceIds.length > 0 && (
+        <div className="fixed bottom-4 left-1/2 z-30 w-[min(92vw,820px)] -translate-x-1/2 px-1 pointer-events-none">
+          <div className="pointer-events-auto rounded-xl border border-amber-200 bg-amber-50/95 backdrop-blur px-3 py-2 shadow-lg">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <p className="text-caption-sm text-amber-900 font-medium">
+                快速确认栏 · {reviewFaceIds.length} 张待确认
+              </p>
+              <div className="flex items-center gap-2 flex-wrap">
+                <button
+                  type="button"
+                  disabled={actionBusy}
+                  onClick={() => onBatchConfirmReview(reviewFaceIds)}
+                  className="px-2.5 py-1 rounded-md border border-hairline text-caption-sm text-ink hover:bg-canvas disabled:opacity-50"
+                >
+                  快速确认
+                </button>
+                <button
+                  type="button"
+                  disabled={actionBusy}
+                  onClick={() => onBatchRejectReview(reviewFaceIds)}
+                  className="px-2.5 py-1 rounded-md border border-hairline text-caption-sm text-ink hover:bg-canvas disabled:opacity-50"
+                >
+                  快速排除
+                </button>
+                {moveCandidates.length > 0 && batchMoveTargetId != null && (
+                  <>
+                    <select
+                      value={batchMoveTargetId}
+                      onChange={(e) => setBatchMoveTargetId(Number(e.target.value))}
+                      className="px-2 py-1 rounded-md border border-hairline bg-canvas text-caption-sm"
+                    >
+                      {moveCandidates.map((candidate) => (
+                        <option key={candidate.id} value={candidate.id}>
+                          移动到：{candidate.display_name}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      disabled={actionBusy}
+                      onClick={() => onBatchMoveReview(reviewFaceIds, batchMoveTargetId)}
+                      className="px-2.5 py-1 rounded-md border border-hairline text-caption-sm text-ink hover:bg-canvas disabled:opacity-50"
+                    >
+                      快速移动
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {previewTarget && (
         <PersonOriginalPhotoLightbox

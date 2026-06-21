@@ -26,10 +26,16 @@ function buildStatus(overrides: Partial<ScanStatus> = {}): ScanStatus {
     task_id: 21,
     running: false,
     scanned: 10,
+    discovered_count: 10,
+    prepared_count: 10,
+    persisted_count: 10,
     inserted: 1,
     updated: 2,
     errors: 0,
+    current_stage: "done",
     current_path: null,
+    queue_depth: 0,
+    last_stage_latency_ms: 42,
     message: "done",
     recent_errors: [],
     recent_files: [],
@@ -94,5 +100,37 @@ describe("ScanPanel", () => {
     );
 
     expect(screen.getByText("扫描完成（含错误）")).toBeInTheDocument();
+  });
+
+  it("shows stage counters and queue metrics", () => {
+    taskFailuresMock.mockResolvedValue({ total: 0, items: [] });
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ScanPanel
+          projectId={7}
+          status={buildStatus({
+            running: true,
+            message: "scanning",
+            current_stage: "persist",
+            discovered_count: 12,
+            prepared_count: 9,
+            persisted_count: 7,
+            queue_depth: 3,
+            last_stage_latency_ms: 87,
+          })}
+          isLoading={false}
+          onStart={vi.fn()}
+          isPending={false}
+        />
+      </QueryClientProvider>,
+    );
+
+    expect(screen.getByText("落库")).toBeInTheDocument();
+    expect(screen.getByText("12")).toBeInTheDocument();
+    expect(screen.getByText("9")).toBeInTheDocument();
+    expect(screen.getByText("7")).toBeInTheDocument();
+    expect(screen.getByText("3")).toBeInTheDocument();
+    expect(screen.getByText("87 ms")).toBeInTheDocument();
   });
 });

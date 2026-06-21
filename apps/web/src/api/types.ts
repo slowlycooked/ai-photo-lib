@@ -173,10 +173,16 @@ export interface ScanStatus {
   task_id: number | null;
   running: boolean;
   scanned: number;
+  discovered_count: number;
+  prepared_count: number;
+  persisted_count: number;
   inserted: number;
   updated: number;
   errors: number;
+  current_stage: string | null;
   current_path: string | null;
+  queue_depth: number;
+  last_stage_latency_ms: number | null;
   message: string;
   recent_errors: string[];
   recent_files: ScanFileProgressEntry[];

@@ -102,6 +102,10 @@ class Settings(BaseSettings):
     ai_max_retries: int = 3
     # Used by svc.sh/worker to control AI job concurrency; not read by the API.
     ai_worker_concurrency: int = 1
+    scan_thumbnail_concurrency: int = 4
+    scan_queue_max_size: int = 200
+    scan_db_write_batch_size: int = 20
+    scan_task_retry_limit: int = 3
     # Path prefix for model files used in .env variable expansion by svc.sh; not read by the API.
     ai_photo_lib_model_root: str = ""
     # Comma-separated list of allowed CORS origins.

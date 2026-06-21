@@ -5,16 +5,19 @@ import io
 import logging
 import mimetypes
 import tempfile
+from concurrent.futures import ALL_COMPLETED, FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from time import perf_counter
 from typing import Any, Dict, Optional, Tuple
 
 import exifread
 from PIL import Image, UnidentifiedImageError
 from sqlalchemy.orm import Session
 
+from ..config import settings
 from ..models.photo import Photo
 from .thumbnail import SUPPORTED_SUFFIXES, generate_thumbnail
 from .path_utils import build_relative_paths
@@ -24,10 +27,32 @@ from .photo_cleanup import cleanup_missing_project_photos
 
 logger = logging.getLogger(__name__)
 
-# Commit scan writes in batches to reduce transaction overhead on large libraries.
-_SCAN_COMMIT_BATCH_SIZE = 100
-
 ScanProgressCallback = Callable[[dict[str, Any]], None]
+
+
+@dataclass(frozen=True)
+class ExistingPhotoSnapshot:
+    file_hash: Optional[str]
+    thumbnail_path: Optional[str]
+    relative_path: Optional[str]
+    folder_path: Optional[str]
+
+
+@dataclass(frozen=True)
+class PreparedScanFile:
+    path: Path
+    path_str: str
+    relative_path: Optional[str]
+    folder_path: Optional[str]
+    file_hash: str
+    file_size: int
+    mime_type: Optional[str]
+    width: Optional[int]
+    height: Optional[int]
+    exif: StructuredExif
+    thumbnail_path: Optional[str]
+    action: str
+    latency_ms: int
 
 
 # ---------------------------------------------------------------------------
@@ -38,10 +63,16 @@ def _empty_state() -> dict[str, Any]:
     return {
         "running": False,
         "scanned": 0,
+        "discovered_count": 0,
+        "prepared_count": 0,
+        "persisted_count": 0,
         "inserted": 0,
         "updated": 0,
         "errors": 0,
+        "current_stage": None,
         "current_path": None,
+        "queue_depth": 0,
+        "last_stage_latency_ms": None,
         "message": "idle",
         "recent_errors": [],
         "recent_files": [],
@@ -80,14 +111,37 @@ def _snapshot_state(state: dict[str, Any]) -> dict[str, Any]:
     return {
         "running": bool(state.get("running")),
         "scanned": int(state.get("scanned") or 0),
+        "discovered_count": int(state.get("discovered_count") or 0),
+        "prepared_count": int(state.get("prepared_count") or 0),
+        "persisted_count": int(state.get("persisted_count") or 0),
         "inserted": int(state.get("inserted") or 0),
         "updated": int(state.get("updated") or 0),
         "errors": int(state.get("errors") or 0),
+        "current_stage": state.get("current_stage"),
         "current_path": state.get("current_path"),
+        "queue_depth": int(state.get("queue_depth") or 0),
+        "last_stage_latency_ms": state.get("last_stage_latency_ms"),
         "message": str(state.get("message") or "idle"),
         "recent_errors": list(state.get("recent_errors") or []),
         "recent_files": list(state.get("recent_files") or []),
     }
+
+
+def _set_scan_stage(
+    state: dict[str, Any],
+    *,
+    stage: str,
+    current_path: Optional[str] = None,
+    queue_depth: Optional[int] = None,
+    latency_ms: Optional[int] = None,
+) -> None:
+    state["current_stage"] = stage
+    if current_path is not None:
+        state["current_path"] = current_path
+    if queue_depth is not None:
+        state["queue_depth"] = max(0, int(queue_depth))
+    if latency_ms is not None:
+        state["last_stage_latency_ms"] = int(latency_ms)
 
 
 def _emit_progress(
@@ -96,6 +150,15 @@ def _emit_progress(
 ) -> None:
     if progress_callback is not None:
         progress_callback(_snapshot_state(state))
+
+
+def _mark_persisted(state: dict[str, Any], *, path: str, latency_ms: int) -> None:
+    _set_scan_stage(
+        state,
+        stage="persist",
+        current_path=path,
+        latency_ms=latency_ms,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -276,33 +339,183 @@ def _is_writable_directory(path: Path) -> bool:
         return False
 
 
+def _scan_worker_count() -> int:
+    return max(1, int(getattr(settings, "scan_thumbnail_concurrency", 4) or 4))
+
+
+def _scan_queue_limit() -> int:
+    queue_limit = max(1, int(getattr(settings, "scan_queue_max_size", 200) or 200))
+    return max(queue_limit, _scan_worker_count())
+
+
+def _scan_db_batch_size() -> int:
+    return max(1, int(getattr(settings, "scan_db_write_batch_size", 20) or 20))
+
+
+def _scan_retry_limit() -> int:
+    return max(1, int(getattr(settings, "scan_task_retry_limit", 3) or 3))
+
+
+def _load_existing_photo_index(db: Session, project_id: int) -> dict[str, ExistingPhotoSnapshot]:
+    rows = (
+        db.query(
+            Photo.file_path,
+            Photo.file_hash,
+            Photo.thumbnail_path,
+            Photo.relative_path,
+            Photo.folder_path,
+        )
+        .filter(
+            Photo.project_id == project_id,
+            Photo.deleted_at.is_(None),
+        )
+        .all()
+    )
+    return {
+        file_path: ExistingPhotoSnapshot(
+            file_hash=file_hash,
+            thumbnail_path=thumbnail_path,
+            relative_path=relative_path,
+            folder_path=folder_path,
+        )
+        for file_path, file_hash, thumbnail_path, relative_path, folder_path in rows
+    }
+
+
+def _is_permanent_scan_error(exc: Exception) -> bool:
+    return isinstance(exc, (FileNotFoundError, IsADirectoryError, UnidentifiedImageError, ValueError))
+
+
+def _prepare_scan_file(
+    file_path: Path,
+    *,
+    project_id: int,
+    thumbnail_root: str,
+    relative_base_path: Optional[str],
+    existing: Optional[ExistingPhotoSnapshot],
+) -> PreparedScanFile:
+    started_at = perf_counter()
+    path_str = str(file_path)
+    stat = file_path.stat()
+
+    relative_path = None
+    folder_path = None
+    if relative_base_path:
+        relative_path, folder_path = build_relative_paths(relative_base_path, file_path)
+
+    file_hash = _compute_hash(path_str)
+    if existing and existing.file_hash == file_hash:
+        thumbnail_path = existing.thumbnail_path
+        if not thumbnail_path or not Path(thumbnail_path).exists():
+            thumbnail_path = generate_thumbnail(
+                path_str,
+                thumbnail_root=thumbnail_root,
+                project_id=project_id,
+            )
+        return PreparedScanFile(
+            path=file_path,
+            path_str=path_str,
+            relative_path=relative_path,
+            folder_path=folder_path,
+            file_hash=file_hash,
+            file_size=stat.st_size,
+            mime_type=None,
+            width=None,
+            height=None,
+            exif=StructuredExif(),
+            thumbnail_path=thumbnail_path,
+            action="refresh",
+            latency_ms=int((perf_counter() - started_at) * 1000),
+        )
+
+    mime_type, _ = mimetypes.guess_type(path_str)
+    if mime_type is None:
+        suffix = file_path.suffix.lower()
+        if suffix in (".heic", ".heif"):
+            mime_type = "image/heic"
+    width, height = _image_size(path_str)
+    exif = _extract_exif(path_str)
+    thumbnail_path = generate_thumbnail(
+        path_str,
+        force=True,
+        thumbnail_root=thumbnail_root,
+        project_id=project_id,
+    )
+    return PreparedScanFile(
+        path=file_path,
+        path_str=path_str,
+        relative_path=relative_path,
+        folder_path=folder_path,
+        file_hash=file_hash,
+        file_size=stat.st_size,
+        mime_type=mime_type,
+        width=width,
+        height=height,
+        exif=exif,
+        thumbnail_path=thumbnail_path,
+        action="upsert",
+        latency_ms=int((perf_counter() - started_at) * 1000),
+    )
+
+
+def _prepare_scan_file_with_retries(
+    file_path: Path,
+    *,
+    project_id: int,
+    thumbnail_root: str,
+    relative_base_path: Optional[str],
+    existing: Optional[ExistingPhotoSnapshot],
+) -> PreparedScanFile:
+    retry_limit = _scan_retry_limit()
+    last_error: Optional[Exception] = None
+    for attempt in range(1, retry_limit + 1):
+        try:
+            return _prepare_scan_file(
+                file_path,
+                project_id=project_id,
+                thumbnail_root=thumbnail_root,
+                relative_base_path=relative_base_path,
+                existing=existing,
+            )
+        except Exception as exc:  # noqa: BLE001
+            last_error = exc
+            if _is_permanent_scan_error(exc) or attempt >= retry_limit:
+                raise
+            logger.warning(
+                "scan_prepare_retry project_id=%s path=%s attempt=%s/%s error=%s",
+                project_id,
+                file_path,
+                attempt,
+                retry_limit,
+                exc,
+            )
+    assert last_error is not None
+    raise last_error
+
+
 # ---------------------------------------------------------------------------
 # Core processing
 # ---------------------------------------------------------------------------
 
-def _process_file(
+def _persist_prepared_file(
     db: Session,
-    file_path: Path,
+    prepared: PreparedScanFile,
     state: dict[str, Any],
     project_id: int,
-    thumbnail_root: Optional[str] = None,
-    relative_base_path: Optional[str] = None,
 ) -> None:
-    """Process one image file within the scope of a specific project.
+    """Persist one prepared image file within the scope of a specific project.
 
     All reads and writes are strictly scoped to `project_id`.
     The same physical file path in two different projects results in two
     independent Photo rows — no cross-project ownership transfer.
     """
-    path_str = str(file_path)
-    stat = file_path.stat()
+    path_str = prepared.path_str
 
     # Compute project-relative folder info.
-    relative_path = None
-    folder_path = None
+    relative_path = prepared.relative_path
+    folder_path = prepared.folder_path
     folder_id = None
-    if relative_base_path:
-        relative_path, folder_path = build_relative_paths(relative_base_path, file_path)
+    if folder_path is not None:
         folder_cache = state.setdefault("_folder_cache", {})
         folder = ensure_folder_path(db, project_id, folder_path, folder_cache)
         folder_id = folder.id
@@ -318,16 +531,20 @@ def _process_file(
         )
         .first()
     )
-    file_hash = _compute_hash(path_str)
-    if existing and existing.file_hash == file_hash:
+    if prepared.action == "refresh":
+        if existing is None:
+            raise RuntimeError(f"Photo disappeared during scan persistence: {path_str}")
+        _mark_persisted(state, path=path_str, latency_ms=prepared.latency_ms)
         dirty = False
-        if not existing.thumbnail_path or not Path(existing.thumbnail_path).exists():
-            new_thumb = generate_thumbnail(path_str, thumbnail_root=thumbnail_root, project_id=project_id)
-            if new_thumb:
-                existing.thumbnail_path = new_thumb
-                dirty = True
+        if prepared.thumbnail_path and existing.thumbnail_path != prepared.thumbnail_path:
+            existing.thumbnail_path = prepared.thumbnail_path
+            dirty = True
         # Update folder fields if stale (e.g. file was moved within the library).
-        if folder_id and (existing.folder_id != folder_id or existing.relative_path != relative_path or existing.folder_path != folder_path):
+        if folder_id and (
+            existing.folder_id != folder_id
+            or existing.relative_path != relative_path
+            or existing.folder_path != folder_path
+        ):
             existing.folder_id = folder_id
             existing.relative_path = relative_path
             existing.folder_path = folder_path
@@ -338,43 +555,39 @@ def _process_file(
             existing.updated_at = datetime.now()
             state["updated"] += 1
         _push_file_progress(state, path=path_str, status="success")
+        logger.debug(
+            "scan_file_persisted project_id=%s path=%s action=%s latency_ms=%s",
+            project_id,
+            path_str,
+            prepared.action,
+            prepared.latency_ms,
+        )
         return
 
-    mime_type, _ = mimetypes.guess_type(path_str)
-    # mimetypes may not know HEIC/HEIF on all platforms
-    if mime_type is None:
-        suffix = file_path.suffix.lower()
-        if suffix in (".heic", ".heif"):
-            mime_type = "image/heic"
-    width, height = _image_size(path_str)
-    exif = _extract_exif(path_str)
-    # File content has changed (hash differs) — force thumbnail regeneration so
-    # the displayed thumbnail always matches the current file on disk.
-    thumbnail_path = generate_thumbnail(path_str, force=True, thumbnail_root=thumbnail_root, project_id=project_id)
-
     common_fields: dict[str, Any] = {
-        "file_hash": file_hash,
-        "file_size": stat.st_size,
-        "mime_type": mime_type,
-        "width": width,
-        "height": height,
-        "taken_at": exif.taken_at,
-        "exif": exif.raw,
-        "gps_latitude": exif.gps_latitude,
-        "gps_longitude": exif.gps_longitude,
-        "gps_altitude": exif.gps_altitude,
-        "camera_make": exif.camera_make,
-        "camera_model": exif.camera_model,
-        "lens_model": exif.lens_model,
-        "focal_length": exif.focal_length,
-        "aperture": exif.aperture,
-        "exposure_time": exif.exposure_time,
-        "iso": exif.iso,
-        "orientation": exif.orientation,
-        "thumbnail_path": thumbnail_path,
+        "file_hash": prepared.file_hash,
+        "file_size": prepared.file_size,
+        "mime_type": prepared.mime_type,
+        "width": prepared.width,
+        "height": prepared.height,
+        "taken_at": prepared.exif.taken_at,
+        "exif": prepared.exif.raw,
+        "gps_latitude": prepared.exif.gps_latitude,
+        "gps_longitude": prepared.exif.gps_longitude,
+        "gps_altitude": prepared.exif.gps_altitude,
+        "camera_make": prepared.exif.camera_make,
+        "camera_model": prepared.exif.camera_model,
+        "lens_model": prepared.exif.lens_model,
+        "focal_length": prepared.exif.focal_length,
+        "aperture": prepared.exif.aperture,
+        "exposure_time": prepared.exif.exposure_time,
+        "iso": prepared.exif.iso,
+        "orientation": prepared.exif.orientation,
+        "thumbnail_path": prepared.thumbnail_path,
     }
 
     if existing:
+        _mark_persisted(state, path=path_str, latency_ms=prepared.latency_ms)
         for k, v in common_fields.items():
             setattr(existing, k, v)
         if folder_id:
@@ -385,9 +598,10 @@ def _process_file(
         existing.updated_at = datetime.now()
         state["updated"] += 1
     else:
+        _mark_persisted(state, path=path_str, latency_ms=prepared.latency_ms)
         photo = Photo(
             file_path=path_str,
-            file_name=file_path.name,
+            file_name=prepared.path.name,
             status="pending",
             project_id=project_id,
             folder_id=folder_id,
@@ -401,6 +615,13 @@ def _process_file(
         state["inserted"] += 1
 
     _push_file_progress(state, path=path_str, status="success")
+    logger.debug(
+        "scan_file_persisted project_id=%s path=%s action=%s latency_ms=%s",
+        project_id,
+        path_str,
+        prepared.action,
+        prepared.latency_ms,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -435,10 +656,16 @@ def scan_project(
     state.update(
         running=True,
         scanned=0,
+        discovered_count=0,
+        prepared_count=0,
+        persisted_count=0,
         inserted=0,
         updated=0,
         errors=0,
+        current_stage="discovery",
         current_path=None,
+        queue_depth=0,
+        last_stage_latency_ms=None,
         message="scanning",
         recent_errors=[],
         recent_files=[],
@@ -470,10 +697,55 @@ def scan_project(
         _emit_progress(state, progress_callback)
         return _snapshot_state(state)
 
+    existing_index = _load_existing_photo_index(db, project_id)
     pending_writes = 0
     commit_count = 0
     final_message = "done"
+    scan_batch_size = _scan_db_batch_size()
+    executor = ThreadPoolExecutor(max_workers=_scan_worker_count())
+    futures: dict[Future[PreparedScanFile], Path] = {}
+    aborted = False
     try:
+        def drain_completed(*, wait_for_all: bool = False) -> None:
+            nonlocal pending_writes, commit_count
+            if not futures:
+                return
+            done, _ = wait(
+                tuple(futures.keys()),
+                return_when=ALL_COMPLETED if wait_for_all else FIRST_COMPLETED,
+            )
+            for future in done:
+                entry = futures.pop(future)
+                _set_scan_stage(
+                    state,
+                    stage="prepare",
+                    current_path=str(entry),
+                    queue_depth=len(futures),
+                )
+                try:
+                    prepared = future.result()
+                    state["prepared_count"] = int(state.get("prepared_count") or 0) + 1
+                    _persist_prepared_file(db, prepared, state, project_id)
+                    state["persisted_count"] = int(state.get("persisted_count") or 0) + 1
+                    pending_writes += 1
+                    if pending_writes >= scan_batch_size:
+                        db.commit()
+                        commit_count += 1
+                        pending_writes = 0
+                except Exception as exc:
+                    logger.error("Failed to process %s: %s", entry, exc)
+                    db.rollback()
+                    state["errors"] += 1
+                    _push_scan_error(state, f"{entry.name}: {exc}")
+                    _push_file_progress(
+                        state,
+                        path=str(entry),
+                        status="failed",
+                        message=str(exc),
+                    )
+                _set_scan_stage(state, stage="persist", queue_depth=len(futures))
+                _emit_progress(state, progress_callback)
+
         for entry in library.rglob("*"):
             if not entry.is_file():
                 continue
@@ -485,55 +757,59 @@ def scan_project(
             except ValueError:
                 pass
 
-            state["current_path"] = str(entry)
             state["scanned"] += 1
-            if state["scanned"] % 25 == 0:
-                _emit_progress(state, progress_callback)
-
-            try:
-                _process_file(
-                    db,
+            state["discovered_count"] = int(state.get("discovered_count") or 0) + 1
+            _set_scan_stage(
+                state,
+                stage="discovery",
+                current_path=str(entry),
+                queue_depth=len(futures),
+            )
+            futures[
+                executor.submit(
+                    _prepare_scan_file_with_retries,
                     entry,
-                    state,
-                    project_id,
+                    project_id=project_id,
                     thumbnail_root=str(thumb_root),
                     relative_base_path=str(library),
+                    existing=existing_index.get(str(entry)),
                 )
-                pending_writes += 1
-                if pending_writes >= _SCAN_COMMIT_BATCH_SIZE:
-                    db.commit()
-                    commit_count += 1
-                    pending_writes = 0
-                    _emit_progress(state, progress_callback)
-            except Exception as exc:
-                logger.error("Failed to process %s: %s", entry, exc)
-                db.rollback()
-                state["errors"] += 1
-                _push_scan_error(state, f"{entry.name}: {exc}")
-                _push_file_progress(
-                    state,
-                    path=str(entry),
-                    status="failed",
-                    message=str(exc),
-                )
+            ] = entry
+            _set_scan_stage(
+                state,
+                stage="prepare",
+                current_path=str(entry),
+                queue_depth=len(futures),
+            )
+            if len(futures) >= _scan_queue_limit():
+                drain_completed()
+            elif state["scanned"] % 25 == 0:
                 _emit_progress(state, progress_callback)
+
+        drain_completed(wait_for_all=True)
+    except BaseException:
+        aborted = True
+        raise
     finally:
+        executor.shutdown(wait=True, cancel_futures=aborted)
         try:
             if pending_writes > 0:
                 db.commit()
                 commit_count += 1
 
-            cleanup_missing_project_photos(
-                db,
-                project_id=project_id,
-                batch_size=_SCAN_COMMIT_BATCH_SIZE,
-            )
+            if not aborted:
+                _set_scan_stage(state, stage="cleanup", queue_depth=0)
+                cleanup_missing_project_photos(
+                    db,
+                    project_id=project_id,
+                    batch_size=scan_batch_size,
+                )
 
-            # 扫描结束后重算文件夹计数（若失败也不能阻塞状态收尾）
-            from .folder_service import recompute_project_folder_counts
+                # 扫描结束后重算文件夹计数（若失败也不能阻塞状态收尾）
+                from .folder_service import recompute_project_folder_counts
 
-            recompute_project_folder_counts(db, project_id)
-            db.commit()
+                recompute_project_folder_counts(db, project_id)
+                db.commit()
         except Exception as exc:
             logger.exception(
                 "Failed to recompute folder counts after project %d scan: %s",
@@ -545,8 +821,10 @@ def scan_project(
             final_message = "done_with_errors"
         finally:
             state.pop("_folder_cache", None)
-            state.update(running=False, current_path=None, message=final_message)
-            _emit_progress(state, progress_callback)
+            state.update(running=False, current_path=None, queue_depth=0)
+            if not aborted:
+                state.update(current_stage="done", message=final_message)
+                _emit_progress(state, progress_callback)
 
     logger.info(
         "Project %d scan complete — scanned=%d inserted=%d updated=%d errors=%d commits=%d",
