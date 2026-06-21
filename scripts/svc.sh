@@ -553,6 +553,20 @@ stop_api() {
   kill_listener_by_service_port api
 }
 
+ensure_frontend_dependencies() {
+  local app_dir="$1"
+  local label="$2"
+  local vite_cli_path="$app_dir/node_modules/vite/dist/node/cli.js"
+
+  if [ ! -d "$app_dir/node_modules" ] || [ ! -f "$vite_cli_path" ]; then
+    log_info "安装 $label 前端依赖..."
+    (
+      cd "$app_dir"
+      npm install --silent
+    )
+  fi
+}
+
 start_web() {
   if is_running web; then
     log_ok "web 已在运行 (PID $(cat "$(pid_file web)"), port $WEB_PORT)"
@@ -565,10 +579,7 @@ start_web() {
   fi
 
   cd "$ROOT/apps/web"
-  if [ ! -d "node_modules" ]; then
-    log_info "安装前端依赖..."
-    npm install --silent
-  fi
+  ensure_frontend_dependencies "$ROOT/apps/web" "web"
 
   case "$WEB_MODE" in
     dev)
@@ -607,10 +618,7 @@ start_mobile_web() {
   fi
 
   cd "$ROOT/apps/mobile-web"
-  if [ ! -d "node_modules" ]; then
-    log_info "安装 mobile 前端依赖..."
-    npm install --silent
-  fi
+  ensure_frontend_dependencies "$ROOT/apps/mobile-web" "mobile"
 
   case "$MOBILE_WEB_MODE" in
     dev)
