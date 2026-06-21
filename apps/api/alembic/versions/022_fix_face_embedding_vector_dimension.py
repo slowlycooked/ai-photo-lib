@@ -1,7 +1,7 @@
 """fix face embedding vector dimension
 
 Revision ID: 022_fix_face_embedding_vector_dimension
-Revises: 021_add_photo_derivatives
+Revises: 021a_expand_alembic_version_len
 Create Date: 2026-05-25
 """
 from __future__ import annotations
@@ -11,7 +11,7 @@ from typing import Sequence, Union
 from alembic import op
 
 revision: str = "022_fix_face_embedding_vector_dimension"
-down_revision: Union[str, None] = "021_add_photo_derivatives"
+down_revision: Union[str, None] = "021a_expand_alembic_version_len"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
