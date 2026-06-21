@@ -15,7 +15,7 @@ export default defineConfig(({ mode }) => {
       },
     },
     server: {
-      host: env.MOBILE_WEB_HOST ?? "127.0.0.1",
+      host: env.MOBILE_WEB_HOST ?? "0.0.0.0",
       port: mobileWebPort,
       proxy: {
         "/api": {

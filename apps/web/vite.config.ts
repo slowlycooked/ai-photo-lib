@@ -16,6 +16,7 @@ export default defineConfig(({ mode }) => {
       },
     },
     server: {
+      host: env.WEB_HOST ?? "0.0.0.0",
       port: webPort,
       proxy: {
         "/api": {
