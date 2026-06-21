@@ -53,7 +53,7 @@ def get_or_create_project_search_settings(
         vector_field_weights=dict(DEFAULT_VECTOR_FIELD_WEIGHTS),
         ocr_query_vector_field_weights=dict(DEFAULT_OCR_VECTOR_FIELD_WEIGHTS),
         enable_query_understanding=True,
-        enable_structured_filters=False,
+        enable_structured_filters=True,
         enable_semantic_tag_boost=False,
         search_result_cache_ttl_seconds=DEFAULT_SEARCH_RESULT_CACHE_TTL_SECONDS,
     )

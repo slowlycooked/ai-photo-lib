@@ -207,6 +207,94 @@ class SearchPlanBuilderTest(unittest.TestCase):
         self.assertEqual(plan.metadata_filters.get("year"), 2025)
         self.assertTrue(plan.metadata_filters.get("metadata_only"))
 
+    def test_location_metadata_filters_are_forced_when_structured_filters_disabled(self) -> None:
+        settings = replace(
+            SearchSettingsResolver.defaults(),
+            enable_structured_filters=False,
+        )
+        query_plan = SearchQueryPlan(
+            original_query="地址是上海的照片",
+            normalized_query="上海",
+            exact_terms=["上海"],
+            intent="metadata_location_search",
+            metadata_filters={
+                "metadata_only": True,
+                "place_terms": ["上海", "上海市"],
+                "matched_metadata_terms": ["上海"],
+            },
+        )
+        people_resolution = PeopleQueryResolution(
+            query="地址是上海的照片",
+            residual_query="地址是上海的照片",
+            people_filter_mode="none",
+            matched_people=[],
+        )
+
+        resolver = MagicMock()
+        resolver.resolve.return_value = settings
+        resolver.defaults.return_value = settings
+
+        plan = build_search_plan(
+            db=MagicMock(),
+            query="地址是上海的照片",
+            mode="auto",
+            project_id=1,
+            face_filter_active=False,
+            settings_resolver_cls=resolver,
+            query_plan_resolver=MagicMock(return_value=query_plan),
+            people_query_resolver=MagicMock(return_value=people_resolution),
+        )
+
+        self.assertTrue(plan.metadata_filter_active)
+        self.assertEqual(plan.metadata_filter_skipped_reason, "forced_location_metadata")
+        self.assertEqual(plan.metadata_filters.get("place_terms"), ["上海", "上海市"])
+        self.assertTrue(plan.metadata_filters.get("metadata_only"))
+
+    def test_dynamic_location_metadata_applies_on_planner_fallback(self) -> None:
+        settings = replace(
+            SearchSettingsResolver.defaults(),
+            enable_structured_filters=False,
+        )
+        query_plan = SearchQueryPlan(
+            original_query="深圳",
+            normalized_query="深圳",
+            exact_terms=["深圳"],
+            intent="semantic_photo_search",
+            metadata_filters={},
+            planner_debug={
+                "used_fallback": True,
+                "fallback_reason": "planner_timeout_fallback",
+            },
+        )
+        people_resolution = PeopleQueryResolution(
+            query="深圳",
+            residual_query="深圳",
+            people_filter_mode="none",
+            matched_people=[],
+        )
+
+        resolver = MagicMock()
+        resolver.resolve.return_value = settings
+        resolver.defaults.return_value = settings
+
+        plan = build_search_plan(
+            db=MagicMock(),
+            query="深圳",
+            mode="auto",
+            project_id=1,
+            face_filter_active=False,
+            settings_resolver_cls=resolver,
+            query_plan_resolver=MagicMock(return_value=query_plan),
+            people_query_resolver=MagicMock(return_value=people_resolution),
+            dynamic_location_resolver=MagicMock(return_value=["深圳"]),
+        )
+
+        self.assertEqual(plan.search_query_plan.intent, "metadata_location_search")
+        self.assertTrue(plan.metadata_filter_active)
+        self.assertEqual(plan.metadata_filter_skipped_reason, "forced_location_metadata")
+        self.assertEqual(plan.metadata_filters.get("place_terms"), ["深圳"])
+        self.assertTrue(plan.metadata_filters.get("metadata_only"))
+
 
 if __name__ == "__main__":
     unittest.main()

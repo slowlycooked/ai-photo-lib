@@ -171,13 +171,17 @@ class SearchEvaluationServiceTest(unittest.TestCase):
     def test_planner_debug_catalog_covers_compound_query_planning(self) -> None:
         queries = {case.query for case in SEARCH_PLANNER_DEBUG_EVALUATION_SET}
 
-        self.assertEqual(len(SEARCH_PLANNER_DEBUG_EVALUATION_SET), 6)
+        self.assertEqual(len(SEARCH_PLANNER_DEBUG_EVALUATION_SET), 10)
         self.assertIn("去年张家口滑雪", queries)
         self.assertIn("去年1月 iPhone 拍的照片", queries)
         self.assertIn("妈妈和孩子的合照", queries)
         self.assertIn("上海下雨天夜景", queries)
         self.assertIn("有猫但不是狗", queries)
         self.assertIn("2024年12月在日本拍的照片", queries)
+        self.assertIn("地址是上海的照片", queries)
+        self.assertIn("上海拍的照片", queries)
+        self.assertIn("地点在浦东的照片", queries)
+        self.assertIn("上海的猫", queries)
 
     def test_evaluate_default_cases_uses_baseline_catalog(self) -> None:
         seen_queries: list[str] = []

@@ -8,6 +8,7 @@ from .schema import LLMQueryPlannerOutput
 
 _ALLOWED_INTENTS = {
     "semantic_photo_search",
+    "metadata_location_search",
     "animal_search",
     "people_search",
     "group_photo_search",
@@ -24,6 +25,8 @@ _INTENT_ALIASES = {
     "photo_search": "semantic_photo_search",
     "animal": "animal_search",
     "animals": "animal_search",
+    "location-based_photo_search": "metadata_location_search",
+    "location_based_photo_search": "metadata_location_search",
 }
 
 _ANIMAL_GUARDRAIL_TERMS = {
@@ -278,7 +281,10 @@ def planner_output_to_query_plan(
 
     semantic_query_text = (
         ""
-        if metadata_filters.get("metadata_only") is True
+        if (
+            metadata_filters.get("metadata_only") is True
+            or intent == "metadata_location_search"
+        )
         else (
             output.semantic_query_text.strip()
             or output.normalized_query.strip()

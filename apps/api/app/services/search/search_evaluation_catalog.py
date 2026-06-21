@@ -116,4 +116,58 @@ SEARCH_PLANNER_DEBUG_EVALUATION_SET: tuple[SearchEvaluationCase, ...] = (
             "semantic_query": "empty",
         },
     ),
+    SearchEvaluationCase(
+        name="planner pure metadata location address",
+        query="地址是上海的照片",
+        mode="hybrid",
+        expected_plan={
+            "intent": "metadata_location_search",
+            "metadata": {
+                "metadata_only": True,
+                "place_terms_contains": ["上海"],
+            },
+            "semantic_query": "empty",
+        },
+    ),
+    SearchEvaluationCase(
+        name="planner pure metadata location shot-in",
+        query="上海拍的照片",
+        mode="hybrid",
+        expected_plan={
+            "intent": "metadata_location_search",
+            "metadata": {
+                "metadata_only": True,
+                "place_terms_contains": ["上海"],
+            },
+            "semantic_query": "empty",
+        },
+    ),
+    SearchEvaluationCase(
+        name="planner pure metadata district",
+        query="地点在浦东的照片",
+        mode="hybrid",
+        expected_plan={
+            "intent": "metadata_location_search",
+            "metadata": {
+                "metadata_only": True,
+                "place_terms_contains": ["浦东"],
+            },
+            "semantic_query": "empty",
+        },
+    ),
+    SearchEvaluationCase(
+        name="planner composite place plus semantic",
+        query="上海的猫",
+        mode="hybrid",
+        expected_plan={
+            "metadata": {
+                "place_terms_contains": ["上海"],
+                "metadata_only": False,
+            },
+            "semantic_query": "non_empty",
+            "term_groups_contains": {
+                "must": ["猫"],
+            },
+        },
+    ),
 )

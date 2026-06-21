@@ -98,7 +98,7 @@ class ProjectSearchSettings(Base):
         Boolean, server_default="true", nullable=False
     )
     enable_structured_filters: Mapped[bool] = mapped_column(
-        Boolean, server_default="false", nullable=False
+        Boolean, server_default="true", nullable=False
     )
     enable_semantic_tag_boost: Mapped[bool] = mapped_column(
         Boolean, server_default="false", nullable=False

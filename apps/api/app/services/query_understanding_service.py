@@ -87,15 +87,47 @@ _MONTH_RE = re.compile(r"(十[一二]|[一二三四五六七八九十]|1[0-2]|[1
 _YEAR_RE = re.compile(r"(20\d{2}|19\d{2})年")
 # Noise to strip when detecting metadata-only query
 _META_NOISE_RE = re.compile(
-    r"的照片|的相片|的图片|的图|照片|相片|图片|[的了在里中是]|拍的|拍摄|摄影|帮我找|搜索|找|查"
+    r"的照片|的相片|的图片|的图|照片|相片|图片|拍的|拍摄|摄影|帮我找|搜索|找|查|"
+    r"地址|地点|位置|拍摄地|拍摄地点|拍摄位置|位于|在|于|是|为|的|了|里|中"
 )
-_PLACE_SPLIT_RE = re.compile(r"[\s,/，、]+")
+_PLACE_PARSE_NOISE_RE = re.compile(
+    r"的照片|的相片|的图片|的图|照片|相片|图片|拍的|拍摄|摄影|帮我找|搜索|找|查"
+)
+_PLACE_SPLIT_RE = re.compile(r"[\s,/，、的]+")
 _GENERIC_NON_PLACE_TERMS: frozenset[str] = frozenset({
     "夜景", "夜晚", "室内", "室外", "风景", "美食", "食物", "人物", "建筑", "街景",
     "动物", "宠物", "野生动物", "小动物", "猫", "狗", "鸟", "马", "鹿", "兔", "兔子", "鱼",
     "下雨天", "晴天", "雪天", "海边", "日落", "日出", "晚霞", "自拍", "滑雪",
 })
 _CJK_CHAR_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
+_PLACE_PREFIX_NOISE: tuple[str, ...] = (
+    "拍摄地点是",
+    "拍摄地点在",
+    "拍摄位置是",
+    "拍摄位置在",
+    "拍摄地是",
+    "拍摄地在",
+    "地点是",
+    "地点在",
+    "位置是",
+    "位置在",
+    "地址是",
+    "地址在",
+    "拍摄地点",
+    "拍摄位置",
+    "拍摄地",
+    "地址",
+    "地点",
+    "位置",
+    "位于",
+    "在",
+    "于",
+    "是",
+    "为",
+)
+_LOCATION_QUERY_CUE_RE = re.compile(
+    r"地址|地点|位置|拍摄地|拍摄地点|拍摄位置|位于|在.*(照片|图片|相片|拍)|于.*(照片|图片|相片|拍)|拍的|拍摄"
+)
 
 # Strong semantic intents should never be treated as metadata-only requests,
 # even if metadata parser matched some tokens.
@@ -151,10 +183,22 @@ def _strip_non_place_affixes(term: str) -> str:
     cleaned = str(term or "").strip()
     if not cleaned:
         return ""
+
+    for prefix in _PLACE_PREFIX_NOISE:
+        if cleaned.startswith(prefix) and len(cleaned) > len(prefix):
+            cleaned = cleaned[len(prefix):].strip()
+
     non_place_terms = sorted(_GENERIC_NON_PLACE_TERMS, key=len, reverse=True)
     changed = True
     while changed and cleaned:
         changed = False
+        for prefix in _PLACE_PREFIX_NOISE:
+            if cleaned.startswith(prefix) and len(cleaned) > len(prefix):
+                cleaned = cleaned[len(prefix):].strip()
+                changed = True
+                break
+        if changed:
+            continue
         for bad in non_place_terms:
             if len(cleaned) <= len(bad):
                 continue
@@ -167,6 +211,10 @@ def _strip_non_place_affixes(term: str) -> str:
                 changed = True
                 break
     return cleaned
+
+
+def _has_location_query_cue(query: str) -> bool:
+    return bool(_LOCATION_QUERY_CUE_RE.search(str(query or "")))
 
 def _normalise_concept_taxonomy(
     raw: Optional[list[dict]],
@@ -486,15 +534,27 @@ def _parse_metadata_filters(original_query: str) -> dict:
         remaining = re.sub(r"高iso|高感光|高感", "", remaining, flags=re.IGNORECASE)
 
     # ── Structured place terms ─────────────────────────────────────────────
-    cleaned_remaining = _META_NOISE_RE.sub("", remaining).strip()
+    should_extract_place = bool(
+        _has_location_query_cue(q)
+        or year is not None
+        or month is not None
+    )
+    cleaned_remaining = _PLACE_PARSE_NOISE_RE.sub("", remaining).strip()
     place_terms: list[str] = []
-    if cleaned_remaining:
+    if should_extract_place and cleaned_remaining:
         for raw_term in _PLACE_SPLIT_RE.split(cleaned_remaining):
             term = _strip_non_place_affixes(raw_term.strip())
             if not term or term in _GENERIC_NON_PLACE_TERMS:
                 continue
             if term not in place_terms:
                 place_terms.append(term)
+    if not place_terms:
+        composite_match = re.match(r"^([\u4e00-\u9fff]{2,8})的([\u4e00-\u9fffA-Za-z0-9]{1,12})$", q.strip())
+        if composite_match:
+            maybe_place = composite_match.group(1)
+            semantic_tail = composite_match.group(2)
+            if semantic_tail in _GENERIC_NON_PLACE_TERMS:
+                place_terms.append(maybe_place)
     if place_terms:
         result["place_terms"] = place_terms
         matched.extend(place_terms)
@@ -676,6 +736,7 @@ def _recommended_profile(intent: str) -> str:
         "ocr_text_search": "ocr_text",
         "activity_search": "activity_scene",
         "location_search": "location_time",
+        "metadata_location_search": "location_time",
         "people_search": "people_group",
         "group_photo_search": "people_group",
     }.get(intent, "default_semantic")
@@ -1136,6 +1197,7 @@ def understand_query(
         "group_photo_search": ["人物", "多人", "合照"],
         "food_search": ["美食", "生活"],
         "location_search": ["地点", "旅行", "风景"],
+        "metadata_location_search": ["地点", "地址", "位置"],
     }.get(intent, [])
 
     filters = _infer_filters(query, intent, runtime_rules)
@@ -1145,6 +1207,21 @@ def understand_query(
     if intent in _METADATA_ONLY_BLOCKED_INTENTS:
         metadata_filters["metadata_only"] = False
 
+    if (
+        metadata_filters.get("metadata_only")
+        and metadata_filters.get("place_terms")
+        and _has_location_query_cue(original_query)
+    ):
+        intent = "metadata_location_search"
+        exact_terms = _dedupe_terms(list(metadata_filters.get("place_terms") or []))
+        expanded_terms = []
+        support_terms = []
+        broad_terms = []
+        negative_terms = []
+        normalized_query = " ".join(exact_terms) if exact_terms else original_query
+        semantic_query_text = ""
+        profile = _recommended_profile(intent)
+
     # query_constraints: per-query evidence requirements (can be project-overridden later)
     query_constraints: dict = {
         "requires_visual_evidence": True,
@@ -1152,9 +1229,17 @@ def understand_query(
         "min_evidence_level": "C",
         "query_core_facets": core_facets,
     }
+    if intent == "metadata_location_search":
+        query_constraints["requires_visual_evidence"] = False
+        query_constraints["allow_weak_only_match"] = False
+        query_constraints["requires_metadata_evidence"] = True
+        query_constraints["allow_vector_only_match"] = False
+        query_constraints["min_metadata_match"] = "exact_or_contains"
+        query_constraints["min_evidence_level"] = "A"
+
     # Pure metadata/time queries should not be forced to carry keyword visual evidence,
     # otherwise hybrid post-filter can drop all vector-only candidates.
-    if bool(metadata_filters.get("metadata_only")):
+    if bool(metadata_filters.get("metadata_only")) and intent != "metadata_location_search":
         query_constraints["requires_visual_evidence"] = False
         query_constraints["allow_weak_only_match"] = True
 

@@ -249,6 +249,26 @@ def test_query_understanding_behavior_contract_time_and_place_query():
     assert metadata["place_terms"] == ["杭州"]
 
 
+def test_query_understanding_location_metadata_query_uses_metadata_location_intent() -> None:
+    plan = understand_query("地址是上海的照片")
+
+    assert plan.intent == "metadata_location_search"
+    assert plan.semantic_query_text == ""
+    assert plan.exact_terms == ["上海"]
+    assert plan.metadata_filters["metadata_only"] is True
+    assert plan.metadata_filters["place_terms"] == ["上海"]
+    assert plan.query_constraints["requires_visual_evidence"] is False
+    assert plan.query_constraints["requires_metadata_evidence"] is True
+
+
+def test_query_understanding_composite_place_query_keeps_semantic_residual() -> None:
+    plan = understand_query("上海的猫")
+
+    assert plan.metadata_filters["place_terms"] == ["上海"]
+    assert plan.metadata_filters["metadata_only"] is False
+    assert plan.intent in {"animal_search", "semantic_photo_search"}
+
+
 def test_query_understanding_time_only_semantic_query_relaxes_visual_constraints():
     plan = understand_query("去年的照片")
 

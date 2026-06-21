@@ -758,6 +758,42 @@ def test_high_confidence_llm_plan_not_overridden_by_rule_intent() -> None:
     assert plan.filters.get("has_animals") is not True
 
 
+def test_planner_parse_failure_recovers_location_terms_from_raw_output() -> None:
+    settings = replace(
+        SearchSettingsResolver.defaults(),
+        query_planner_enabled=True,
+        query_planner_endpoint_url="http://127.0.0.1:18084/v1/chat/completions",
+        query_planner_model_name="qwen3-4b-query-planner",
+    )
+
+    broken_json = """
+    {
+      "intent": "location-based_photo_search",
+      "terms": {
+        "exact": ["上海"],
+        "expanded": ["上海市", "城市", "街道"]
+      }
+    """
+
+    with patch(
+        "app.services.search.query_planner.llm_query_planner.call_chat_completion",
+        return_value=broken_json,
+    ):
+        plan = resolve_query_plan_llm_first(
+            "地址是上海的照片",
+            project_id=1,
+            settings=settings,
+            understander=understand_query,
+            include_raw_output=True,
+        )
+
+    assert plan.planner_debug.get("used_fallback") is True
+    assert plan.intent == "metadata_location_search"
+    assert "上海" in (plan.metadata_filters.get("place_terms") or [])
+    assert plan.metadata_filters.get("metadata_only") is True
+    assert plan.query_constraints.get("requires_visual_evidence") is False
+
+
 # ---------------------------------------------------------------------------
 # P0-3 regression: mapper must not pollute LLM exact terms with fallback sentence
 # ---------------------------------------------------------------------------

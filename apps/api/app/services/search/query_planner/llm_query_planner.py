@@ -46,6 +46,21 @@ _DEFAULT_SYSTEM_PROMPT = (
     "不能输出解释、Markdown、代码块或 JSON 之外的任何文本。"
 )
 
+_REPAIR_SYSTEM_PROMPT = (
+    "你是 JSON 修复器。"
+    "你的唯一任务是把输入文本修复成一个合法 JSON 对象。"
+    "不要输出解释、Markdown 或代码块。"
+)
+
+_REPAIR_USER_PROMPT_TEMPLATE = (
+    "请将下方文本修复为合法 JSON 对象，字段保持原意，禁止补充业务解释。\n"
+    "原始文本:\n{{raw_output}}"
+)
+
+_LOCATION_INTENT_RE = re.compile(r'"intent"\s*:\s*"([^"]+)"', re.IGNORECASE)
+_JSON_STRING_LIST_RE = r'"{field}"\s*:\s*\[(.*?)\]'
+_LOCATION_CUE_RE = re.compile(r"地址|地点|位置|拍摄地|拍摄地点|拍摄位置|位于|在|于")
+
 _DEFAULT_USER_PROMPT_TEMPLATE = """请为以下照片搜索请求生成 JSON 搜索计划。
 
 用户 query: {{query}}
@@ -87,16 +102,12 @@ query_constraints.allow_weak_only_match: false
 - "有猫但不是狗"：猫为正向 object，狗进入 terms.negative/core_facet_evidence.negative_terms。
 - "2024年12月在日本拍的照片"：识别 year/month/place metadata；无视觉 residual 时 metadata_only=true。
 
-必须输出合法 JSON，包含字段：
+必须输出合法 JSON。优先输出最小必要字段：
 intent, search_mode, normalized_query, semantic_query_text,
-terms(exact, expanded, support, broad, negative),
-facets(object, scene, activity, people, weather, time, location),
-filters(people_count_min, people_count_max, has_people, has_animals, indoor_outdoor, weather, time_of_day),
-metadata_filters(year, month, date_from, date_to, season, has_gps, camera_make, camera_model, iso_min, iso_max, place_terms, metadata_only, matched_metadata_terms),
-concept_terms, semantic_tags, core_facets,
-core_facet_evidence(positive_terms, negative_terms),
-query_constraints(requires_visual_evidence, allow_weak_only_match, min_evidence_level, query_core_facets),
+terms(exact, expanded), metadata_filters(place_terms, metadata_only, matched_metadata_terms),
+query_constraints(requires_visual_evidence, allow_weak_only_match, min_evidence_level),
 confidence, fallback_reason。
+其他字段可省略（缺失字段会由系统默认值补齐）。
 """
 
 _FILTER_SCALAR_FIELDS = {
@@ -176,6 +187,80 @@ def _render_prompt(template: str, *, query: str, project_id: Optional[int]) -> s
     rendered = rendered.replace("{{today}}", str(date.today()))
     rendered = rendered.replace("{{project_id}}", str(project_id or ""))
     return rendered
+
+
+def _extract_quoted_strings(raw: str) -> list[str]:
+    values = re.findall(r'"([^"\\]*(?:\\.[^"\\]*)*)"', raw)
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        term = str(value or "").strip()
+        if len(term) < 2:
+            continue
+        lowered = term.lower()
+        if lowered in seen:
+            continue
+        seen.add(lowered)
+        cleaned.append(term)
+    return cleaned
+
+
+def _extract_string_list_field(raw_text: str, field: str) -> list[str]:
+    pattern = _JSON_STRING_LIST_RE.format(field=re.escape(field))
+    match = re.search(pattern, raw_text, re.IGNORECASE | re.DOTALL)
+    if not match:
+        return []
+    return _extract_quoted_strings(match.group(1))
+
+
+def _repair_planner_json_text(
+    *,
+    raw_text: str,
+    settings: EffectiveSearchSettings,
+) -> str:
+    repair_prompt = _REPAIR_USER_PROMPT_TEMPLATE.replace("{{raw_output}}", raw_text)
+    planner_timeout_seconds = max(1, int(settings.query_planner_timeout_seconds))
+    return call_chat_completion(
+        endpoint_url=settings.query_planner_endpoint_url,
+        api_key=settings.query_planner_api_key or global_settings.openai_api_key,
+        model_name=settings.query_planner_model_name,
+        system_prompt=_REPAIR_SYSTEM_PROMPT,
+        user_prompt=repair_prompt,
+        temperature=0.0,
+        top_p=0.1,
+        max_tokens=min(max(256, int(settings.query_planner_max_tokens)), 512),
+        timeout_seconds=planner_timeout_seconds,
+    )
+
+
+def _recover_location_terms_from_raw_output(raw_text: str) -> list[str]:
+    intent_match = _LOCATION_INTENT_RE.search(raw_text)
+    detected_intent = str(intent_match.group(1) if intent_match else "").lower()
+    looks_location = "location" in detected_intent or "metadata" in detected_intent
+
+    exact_terms = _extract_string_list_field(raw_text, "exact")
+    place_terms = _extract_string_list_field(raw_text, "place_terms")
+    recovered = []
+    seen: set[str] = set()
+    for term in exact_terms + place_terms:
+        value = str(term or "").strip()
+        if len(value) < 2:
+            continue
+        key = value.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        recovered.append(value)
+
+    if not recovered:
+        return []
+    if looks_location:
+        return recovered
+    return [term for term in recovered if _LOCATION_CUE_RE.search(term)]
+
+
+def _query_has_location_cue(query: str) -> bool:
+    return bool(_LOCATION_CUE_RE.search(query or ""))
 
 
 def _hash_cache_fragment(value: object) -> str:
@@ -432,6 +517,7 @@ def resolve_query_plan_llm_first(
     )
 
     started = time.monotonic()
+    raw_text = ""
     try:
         planner_timeout_seconds = max(1, int(settings.query_planner_timeout_seconds))
 
@@ -451,9 +537,17 @@ def resolve_query_plan_llm_first(
         if include_raw_output:
             planner_debug["raw_output"] = raw_text
 
-        raw_json = _extract_json_object(raw_text)
-        raw_json = _normalize_empty_list_scalars(raw_json)
-        parsed = LLMQueryPlannerOutput.model_validate(raw_json)
+        planner_debug["repair_attempted"] = False
+        try:
+            raw_json = _extract_json_object(raw_text)
+            raw_json = _normalize_empty_list_scalars(raw_json)
+            parsed = LLMQueryPlannerOutput.model_validate(raw_json)
+        except Exception:
+            planner_debug["repair_attempted"] = True
+            repaired_text = _repair_planner_json_text(raw_text=raw_text, settings=settings)
+            raw_json = _extract_json_object(repaired_text)
+            raw_json = _normalize_empty_list_scalars(raw_json)
+            parsed = LLMQueryPlannerOutput.model_validate(raw_json)
 
         planner_debug["parsed"] = True
         planner_debug["confidence"] = float(parsed.confidence or 0.0)
@@ -481,6 +575,49 @@ def resolve_query_plan_llm_first(
         )
         planner_debug["planner_route"] = "fallback_after_error"
         planner_debug["error"] = str(exc)
+
+        recovered_terms = _recover_location_terms_from_raw_output(raw_text) if raw_text else []
+        if recovered_terms and (_query_has_location_cue(query) or "location" in raw_text.lower()):
+            metadata_filters = dict(fallback_plan.metadata_filters or {})
+            existing_terms = list(metadata_filters.get("place_terms") or [])
+            merged_terms: list[str] = []
+            seen_terms: set[str] = set()
+            for term in existing_terms + recovered_terms:
+                value = str(term or "").strip()
+                if len(value) < 2:
+                    continue
+                key = value.lower()
+                if key in seen_terms:
+                    continue
+                seen_terms.add(key)
+                merged_terms.append(value)
+
+            if merged_terms:
+                metadata_filters["place_terms"] = merged_terms
+                matched_terms = list(metadata_filters.get("matched_metadata_terms") or [])
+                metadata_filters["matched_metadata_terms"] = list(dict.fromkeys(matched_terms + merged_terms))
+                if _query_has_location_cue(query):
+                    metadata_filters["metadata_only"] = bool(metadata_filters.get("metadata_only", True))
+
+                fallback_plan.metadata_filters = metadata_filters
+                fallback_plan.intent = "metadata_location_search"
+                if bool(metadata_filters.get("metadata_only")):
+                    fallback_plan.semantic_query_text = ""
+                    fallback_plan.exact_terms = list(merged_terms)
+                    fallback_plan.expanded_terms = []
+                    fallback_plan.support_terms = []
+                    fallback_plan.broad_terms = []
+
+                constraints = dict(fallback_plan.query_constraints or {})
+                constraints["requires_visual_evidence"] = False
+                constraints["allow_weak_only_match"] = False
+                constraints["requires_metadata_evidence"] = True
+                constraints["allow_vector_only_match"] = False
+                constraints["min_metadata_match"] = "exact_or_contains"
+                fallback_plan.query_constraints = constraints
+                planner_debug["recovered_location_terms"] = merged_terms
+                planner_debug["recovered_from_raw_output"] = True
+
         fallback_plan.planner_debug = dict(planner_debug)
         logger.warning(
             "LLM query planner failed; fallback to rule planner. project_id=%s error=%s",
