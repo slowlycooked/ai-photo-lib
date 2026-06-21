@@ -74,6 +74,10 @@ MOBILE_WEB_HOST="${MOBILE_WEB_HOST:-$WEB_HOST}"
 MOBILE_PORT="${MOBILE_PORT:-8090}"
 MOBILE_WEB_MODE="${MOBILE_WEB_MODE:-$([ "$DEPLOY_PROFILE" = "prd" ] && echo preview || echo dev)}"
 
+CLI_WEB_MODE=""
+CLI_MOBILE_WEB_MODE=""
+CLI_VITE_ALLOWED_HOSTS=""
+
 LLAMA_SERVER="${LLAMA_SERVER:-$(command -v llama-server 2>/dev/null || true)}"
 LLAMA_MODEL="${LLAMA_MODEL:-}"
 LLAMA_MMPROJ="${LLAMA_MMPROJ:-}"
@@ -130,6 +134,108 @@ find_bin() {
     fi
   done
   return 1
+}
+
+append_allowed_host() {
+  local host="$1"
+  if [ -z "$CLI_VITE_ALLOWED_HOSTS" ]; then
+    CLI_VITE_ALLOWED_HOSTS="$host"
+  else
+    CLI_VITE_ALLOWED_HOSTS="$CLI_VITE_ALLOWED_HOSTS,$host"
+  fi
+}
+
+is_valid_frontend_mode() {
+  case "$1" in
+    dev|preview)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+apply_cli_runtime_options() {
+  if [ -n "$CLI_WEB_MODE" ]; then
+    WEB_MODE="$CLI_WEB_MODE"
+  fi
+
+  if [ -n "$CLI_MOBILE_WEB_MODE" ]; then
+    MOBILE_WEB_MODE="$CLI_MOBILE_WEB_MODE"
+  fi
+
+  if [ -n "$CLI_VITE_ALLOWED_HOSTS" ]; then
+    export VITE_ALLOWED_HOSTS="$CLI_VITE_ALLOWED_HOSTS"
+  fi
+}
+
+parse_cli_runtime_options() {
+  local passthrough=()
+
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --preview)
+        CLI_WEB_MODE="preview"
+        CLI_MOBILE_WEB_MODE="preview"
+        shift
+        ;;
+      --dev)
+        CLI_WEB_MODE="dev"
+        CLI_MOBILE_WEB_MODE="dev"
+        shift
+        ;;
+      --web-mode)
+        if [ "$#" -lt 2 ]; then
+          log_error "--web-mode 需要参数（dev 或 preview）"
+          exit 1
+        fi
+        if ! is_valid_frontend_mode "$2"; then
+          log_error "无效 --web-mode: $2（可选: dev / preview）"
+          exit 1
+        fi
+        CLI_WEB_MODE="$2"
+        shift 2
+        ;;
+      --mobile-web-mode)
+        if [ "$#" -lt 2 ]; then
+          log_error "--mobile-web-mode 需要参数（dev 或 preview）"
+          exit 1
+        fi
+        if ! is_valid_frontend_mode "$2"; then
+          log_error "无效 --mobile-web-mode: $2（可选: dev / preview）"
+          exit 1
+        fi
+        CLI_MOBILE_WEB_MODE="$2"
+        shift 2
+        ;;
+      --allowed-host|--allow-host|--preview-host)
+        if [ "$#" -lt 2 ]; then
+          log_error "$1 需要参数（如: photo.highlandstranger.cn）"
+          exit 1
+        fi
+        append_allowed_host "$2"
+        shift 2
+        ;;
+      --)
+        shift
+        while [ "$#" -gt 0 ]; do
+          passthrough+=("$1")
+          shift
+        done
+        ;;
+      *)
+        passthrough+=("$1")
+        shift
+        ;;
+    esac
+  done
+
+  if [ "${#passthrough[@]}" -gt 0 ]; then
+    CLI_PARSED_ARGS=("${passthrough[@]}")
+  else
+    CLI_PARSED_ARGS=()
+  fi
 }
 
 POSTGRES_BIN_DIR="${POSTGRES_BIN_DIR%/}"
@@ -1152,6 +1258,15 @@ do_restart() {
 COMMAND="${1:-help}"
 shift || true
 
+CLI_PARSED_ARGS=()
+parse_cli_runtime_options "$@"
+if [ "${#CLI_PARSED_ARGS[@]}" -gt 0 ]; then
+  set -- "${CLI_PARSED_ARGS[@]}"
+else
+  set --
+fi
+apply_cli_runtime_options
+
 case "$COMMAND" in
   start)   do_start "$@" ;;
   stop)    do_stop "$@" ;;
@@ -1196,8 +1311,18 @@ case "$COMMAND" in
     echo -e "${BOLD}示例:${RESET}"
     echo "  ./scripts/svc.sh start"
     echo "  ./scripts/svc.sh start postgres planner api web"
+    echo "  ./scripts/svc.sh start --preview web mobile-web"
+    echo "  ./scripts/svc.sh restart --preview --allowed-host photo.highlandstranger.cn web mobile-web"
+    echo "  ./scripts/svc.sh start --web-mode preview --mobile-web-mode dev web mobile-web"
     echo "  DEPLOY_PROFILE=prd ./scripts/svc.sh start"
     echo "  ./scripts/svc.sh logs postgres"
+    echo ""
+    echo -e "${BOLD}运行时选项:${RESET}"
+    echo "  --preview                    web + mobile-web 使用 preview 模式"
+    echo "  --dev                        web + mobile-web 使用 dev 模式"
+    echo "  --web-mode <dev|preview>     仅设置 web 模式"
+    echo "  --mobile-web-mode <dev|preview> 仅设置 mobile-web 模式"
+    echo "  --allowed-host <host>        允许额外 Host（可重复传入）"
     echo ""
     ;;
   *)
