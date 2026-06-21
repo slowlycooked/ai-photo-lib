@@ -998,9 +998,24 @@ show_status() {
 
 normalize_service_name() {
   local raw="$1"
-  case "$raw" in
+  local normalized
+  normalized="$(printf '%s' "$raw" | tr '[:upper:]' '[:lower:]' | tr '_' '-')"
+
+  case "$normalized" in
+    mobileweb)
+      echo "mobile-web"
+      ;;
+    llmplan)
+      echo "planner"
+      ;;
+    llamasrv)
+      echo "ai"
+      ;;
+    llamaemb)
+      echo "embed"
+      ;;
     postgres|planner|ai|embed|api|worker|web|mobile-web|all)
-      echo "$raw"
+      echo "$normalized"
       ;;
     llm-plan)
       echo "planner"
