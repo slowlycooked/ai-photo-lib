@@ -580,7 +580,7 @@ start_web() {
       run_named_process "ai-photo-web" sh -c "cd '$ROOT/apps/web' && npm run build >/dev/null && npm run preview -- --host '$WEB_HOST' --port '$WEB_PORT'" > "$(log_file web)" 2>&1 &
       ;;
     *)
-      log_error "不支持的 WEB_MODE: $WEB_MODE（可选: dev / preview）"
+      log_error "不支持的 WEB_MODE: ${WEB_MODE}（可选: dev / preview）"
       return 1
       ;;
   esac
@@ -622,7 +622,7 @@ start_mobile_web() {
       run_named_process "ai-photo-mobile-web" sh -c "cd '$ROOT/apps/mobile-web' && npm run build >/dev/null && npm run preview -- --host '$MOBILE_WEB_HOST' --port '$MOBILE_PORT'" > "$(log_file mobile-web)" 2>&1 &
       ;;
     *)
-      log_error "不支持的 MOBILE_WEB_MODE: $MOBILE_WEB_MODE（可选: dev / preview）"
+      log_error "不支持的 MOBILE_WEB_MODE: ${MOBILE_WEB_MODE}（可选: dev / preview）"
       return 1
       ;;
   esac
