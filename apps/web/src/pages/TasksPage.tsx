@@ -96,6 +96,22 @@ function AISection({ projectId }: { projectId: number | null }) {
     onError: (err: Error) => setMessage(`重新分析失败：${err.message}`),
   });
 
+  const forceStopMutation = useMutation({
+    mutationFn: () => api.projectAiJobs.forceStop(projectId!, "analyze,reanalyze"),
+    onSuccess: (data) => {
+      setMessage(
+        data.stopped_jobs > 0
+          ? `已强制停止 ${data.stopped_jobs} 个任务（queued=${data.stopped_queued}, running=${data.stopped_running}）`
+          : "当前没有可停止的 AI 任务"
+      );
+      queryClient.invalidateQueries({ queryKey: queryKeys.aiStatus(projectId) });
+      queryClient.invalidateQueries({ queryKey: ["ai-jobs-progress", projectId] });
+      queryClient.invalidateQueries({ queryKey: ["ai-jobs-failed", projectId] });
+      setTimeout(() => setMessage(null), 5000);
+    },
+    onError: (err: Error) => setMessage(`强制停止失败：${err.message}`),
+  });
+
   const canRun = projectId != null;
   const isAnyPending =
     startMutation.isPending ||
@@ -103,6 +119,8 @@ function AISection({ projectId }: { projectId: number | null }) {
     reanalyzeAllMutation.isPending;
 
   const speed = status && status.success > 0 ? status.success : null;
+  const analyzedCount = status?.analyzed_count ?? null;
+  const totalPhotos = status?.total_photos ?? null;
 
   return (
     <section className="space-y-4">
@@ -114,8 +132,13 @@ function AISection({ projectId }: { projectId: number | null }) {
         noun="任务"
       />
 
-      {speed !== null && (
-        <p className="text-caption-sm text-mute">累计已分析 {speed.toLocaleString()} 张照片</p>
+      {analyzedCount !== null && analyzedCount > 0 && (
+        <p className="text-caption-sm text-mute">
+          已分析 {analyzedCount.toLocaleString()}
+          {totalPhotos !== null && totalPhotos > 0
+            ? ` / ${totalPhotos.toLocaleString()} 张照片`
+            : " 张照片"}
+        </p>
       )}
 
       {/* Action buttons */}
@@ -147,6 +170,19 @@ function AISection({ projectId }: { projectId: number | null }) {
           <RefreshCw className="w-3.5 h-3.5" />
           {reanalyzeAllMutation.isPending ? "处理中…" : "重新分析全部"}
         </button>
+        {!!status && (status.queued > 0 || status.running > 0) && (
+          <button
+            onClick={() => {
+              if (!window.confirm("将强制停止当前项目中进行中的 AI 分析任务，确认继续？")) return;
+              forceStopMutation.mutate();
+            }}
+            disabled={forceStopMutation.isPending || !canRun}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-red-200 text-danger text-btn-sm hover:bg-red-50 disabled:opacity-50 transition-colors"
+          >
+            <XCircle className="w-3.5 h-3.5" />
+            {forceStopMutation.isPending ? "停止中…" : "强制停止分析"}
+          </button>
+        )}
       </div>
 
       <div className="text-caption-sm text-mute space-y-0.5">
@@ -377,6 +413,23 @@ function FaceScanSection({ projectId }: { projectId: number | null }) {
     onError: (err: Error) => setError(`取消失败：${err.message}`),
   });
 
+  const forceStopFaceJobsMutation = useMutation({
+    mutationFn: () => api.projectAiJobs.forceStop(projectId!, "face_scan"),
+    onSuccess: (result) => {
+      setError(null);
+      setMessage(
+        result.stopped_jobs > 0
+          ? `已强制停止 ${result.stopped_jobs} 个人脸分析任务（queued=${result.stopped_queued}, running=${result.stopped_running}）`
+          : "当前没有可停止的人脸分析任务"
+      );
+      queryClient.invalidateQueries({ queryKey: ["face-scan-status", projectId] });
+      queryClient.invalidateQueries({ queryKey: ["face-scan-jobs-progress", projectId] });
+      queryClient.invalidateQueries({ queryKey: ["face-scan-failed-jobs", projectId] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.aiStatus(projectId) });
+    },
+    onError: (err: Error) => setError(`强制停止失败：${err.message}`),
+  });
+
   const cancelClusterMutation = useMutation({
     mutationFn: () => api.projectFaces.cancelClusterUnknown(projectId!),
     onSuccess: () => {
@@ -526,6 +579,19 @@ function FaceScanSection({ projectId }: { projectId: number | null }) {
           >
             <XCircle className="w-3.5 h-3.5" />
             {cancelFaceScanMutation.isPending ? "取消中…" : "取消人脸扫描"}
+          </button>
+        )}
+        {!!status && (status.queued > 0 || status.running > 0) && (
+          <button
+            onClick={() => {
+              if (!window.confirm("将强制停止当前项目的人脸分析任务，确认继续？")) return;
+              forceStopFaceJobsMutation.mutate();
+            }}
+            disabled={!canRun || forceStopFaceJobsMutation.isPending}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-red-200 text-danger text-btn-sm hover:bg-red-50 disabled:opacity-50 transition-colors"
+          >
+            <XCircle className="w-3.5 h-3.5" />
+            {forceStopFaceJobsMutation.isPending ? "停止中…" : "强制停止人脸分析"}
           </button>
         )}
         <button

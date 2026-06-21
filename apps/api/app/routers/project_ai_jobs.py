@@ -14,6 +14,7 @@ from ..schemas.ai import (
     AIJobListResponse,
     AIJobResponse,
     AIStatusResponse,
+    ForceStopResponse,
     RetryFailedResponse,
     StartAnalysisResponse,
 )
@@ -123,3 +124,15 @@ def clear_project_failed_jobs(
     """Delete all failed AI jobs for a project."""
     service = ProjectAIJobsAppService(db)
     return service.clear_failed(project.id, job_type=job_type)
+
+
+@router.post("/{project_id}/ai/jobs/force-stop", response_model=ForceStopResponse)
+def force_stop_project_ai_jobs(
+    project_id: int,
+    job_type: Optional[str] = Query(default=None),
+    project: Project = Depends(require_project_manager),
+    db: Session = Depends(get_db),
+):
+    """Force-stop queued/running AI jobs for a project."""
+    service = ProjectAIJobsAppService(db)
+    return service.force_stop_active(project.id, job_type=job_type)

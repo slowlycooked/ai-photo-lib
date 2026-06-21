@@ -13,6 +13,43 @@
 - 初始化脚本：`./scripts/bootstrap-macos.sh`
 - 配置方式：每台机器各自维护一份 `.env`
 
+## Mac mini 部署快速入口
+
+如果你要把当前版本部署到 Mac mini（长期运行机），优先走下面两条路径。
+
+首次部署（新机器）：
+
+```bash
+git clone <your-repo-url>
+cd ai-photo-lib
+cp .env.example .env
+# 按机器实际路径修改 .env，至少确认 PHOTO_LIBRARY_PATH / THUMBNAIL_PATH / POSTGRES_DATA_DIR
+./scripts/bootstrap-macos.sh
+./scripts/svc.sh start postgres
+./scripts/init-db.sh
+DEPLOY_PROFILE=prd ./scripts/svc.sh start
+./scripts/svc.sh status
+```
+
+升级部署（已有机器）：
+
+```bash
+git pull --ff-only
+./scripts/bootstrap-macos.sh
+./scripts/init-db.sh
+./scripts/svc.sh restart api web worker
+./scripts/svc.sh status
+```
+
+部署完成后建议检查：
+
+```bash
+curl http://127.0.0.1:8000/health
+curl http://127.0.0.1:8000/health/system
+```
+
+完整步骤见 `DEPLOY.md`。
+
 ## 文档入口与分层
 
 文档按三层组织，避免“目标态设计”和“当前可运行能力”混读：
@@ -94,7 +131,7 @@ People Recognition 已经从“只读调试阶段”进入“人工纠错闭环�
 当前代码已经匹配 README 的主能力：
 
 - 后端主入口 `apps/api/app/main.py` 已统一挂载项目级路由，覆盖 project / photos / folders / scan / ai jobs / ai settings / prompt templates / embeddings / search / search settings / tags / face settings / faces / people。
-- 前端主入口 `apps/web/src/App.tsx` 已覆盖照片、搜索、标签、任务、设置、AI 设置、People、People Review 与登录；旧 `/scan` 只保留重定向。
+- 前端主入口 `apps/web/src/App.tsx` 已覆盖照片、搜索、标签、任务、设置、项目 AI 状态页、People、People Review 与登录；旧 `/scan` 只保留重定向。
 - Worker 已从单纯处理 `ai_jobs` 演进为同时处理 `ProjectTask` 和 `AIJob`，批量 face scan、embedding rebuild、unknown clustering/rematch 等项目级任务已进入统一任务链路。
 - 启动配置、schema self-check、系统健康检查、debug matrix、项目隔离测试和 release preflight 已形成基本发布护栏。
 
@@ -407,7 +444,9 @@ git push
 ```bash
 git pull
 ./scripts/bootstrap-macos.sh
+./scripts/init-db.sh
 ./scripts/svc.sh restart api web worker
+./scripts/svc.sh status
 ```
 
 如果这次改动涉及数据库 migration：
@@ -419,6 +458,7 @@ git pull
 
 ```bash
 ./scripts/init-db.sh
+./scripts/db-schema.sh check
 ```
 
 如果改动涉及前端依赖：

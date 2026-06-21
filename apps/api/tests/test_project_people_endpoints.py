@@ -78,6 +78,41 @@ CREATE TABLE face_detections (
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE project_face_settings (
+  id INTEGER PRIMARY KEY,
+  project_id INTEGER NOT NULL UNIQUE,
+  face_recognition_enabled BOOLEAN NOT NULL DEFAULT 0,
+  face_provider TEXT NOT NULL DEFAULT 'opencv',
+  face_detector_model TEXT NOT NULL DEFAULT 'yunet',
+  face_embedding_model TEXT NOT NULL DEFAULT 'sface',
+  face_runtime TEXT NOT NULL DEFAULT 'cpu',
+  store_face_crops BOOLEAN NOT NULL DEFAULT 1,
+  face_crop_storage TEXT NOT NULL DEFAULT 'local',
+  auto_accept_threshold REAL NOT NULL DEFAULT 0.62,
+  review_threshold REAL NOT NULL DEFAULT 0.48,
+  cluster_threshold REAL NOT NULL DEFAULT 0.50,
+  min_face_size INTEGER NOT NULL DEFAULT 40,
+  min_detection_confidence REAL NOT NULL DEFAULT 0.75,
+  min_quality_for_prototype REAL NOT NULL DEFAULT 0.70,
+  max_positive_samples_per_person INTEGER NOT NULL DEFAULT 200,
+  allow_auto_assignment BOOLEAN NOT NULL DEFAULT 1,
+  require_human_confirmation_for_new_person BOOLEAN NOT NULL DEFAULT 1,
+  enable_negative_constraints BOOLEAN NOT NULL DEFAULT 1,
+  enable_person_cannot_links BOOLEAN NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE person_cannot_links (
+  id INTEGER PRIMARY KEY,
+  project_id INTEGER NOT NULL,
+  person_id_a INTEGER NOT NULL,
+  person_id_b INTEGER NOT NULL,
+  source TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE (project_id, person_id_a, person_id_b)
+);
+
 CREATE TABLE person_face_assignments (
   id INTEGER PRIMARY KEY,
   project_id INTEGER NOT NULL,
@@ -454,3 +489,75 @@ class ProjectPeopleEndpointsTest(unittest.TestCase):
 
       missing = self.client.get("/projects/1/people/101")
       self.assertEqual(missing.status_code, 404)
+
+    def test_split_writes_cannot_link_and_merge_is_then_blocked(self) -> None:
+        """After split, a PersonCannotLink row must exist and a re-merge attempt must return 409."""
+        split_res = self.client.post(
+            "/projects/1/people/101/split",
+            json={"face_detection_ids": [302], "new_display_name": "拆分人物"},
+        )
+        self.assertEqual(split_res.status_code, 200)
+        new_person_id = split_res.json()["target_person"]["id"]
+
+        with self._engine.connect() as conn:
+            row = conn.execute(
+                sa.text("SELECT COUNT(*) FROM person_cannot_links WHERE project_id = 1")
+            ).scalar()
+        self.assertEqual(row, 1, "Expected exactly one PersonCannotLink after split")
+
+        merge_res = self.client.post(
+            "/projects/1/people/101/merge",
+            json={"target_person_id": new_person_id},
+        )
+        self.assertEqual(
+            merge_res.status_code,
+            409,
+            f"Expected 409 (cannot-link), got {merge_res.status_code}: {merge_res.text}",
+        )
+
+    def test_split_does_not_write_cannot_link_when_flag_disabled(self) -> None:
+        """When enable_person_cannot_links=False, split must NOT write a PersonCannotLink row."""
+        with self._engine.begin() as conn:
+            conn.execute(
+                sa.text(
+                    """
+                    INSERT INTO project_face_settings
+                      (id, project_id, face_recognition_enabled, enable_person_cannot_links)
+                    VALUES (1, 1, 0, 0)
+                    """
+                )
+            )
+
+        split_res = self.client.post(
+            "/projects/1/people/101/split",
+            json={"face_detection_ids": [302], "new_display_name": "拆分无约束"},
+        )
+        self.assertEqual(split_res.status_code, 200)
+
+        with self._engine.connect() as conn:
+            row = conn.execute(
+                sa.text("SELECT COUNT(*) FROM person_cannot_links WHERE project_id = 1")
+            ).scalar()
+        self.assertEqual(row, 0, "PersonCannotLink must NOT be written when flag is disabled")
+
+    def test_reject_does_not_write_negative_constraint_when_flag_disabled(self) -> None:
+        """When enable_negative_constraints=False, rejecting a face must NOT write a constraint."""
+        with self._engine.begin() as conn:
+            conn.execute(
+                sa.text(
+                    """
+                    INSERT INTO project_face_settings
+                      (id, project_id, face_recognition_enabled, enable_negative_constraints)
+                    VALUES (1, 1, 0, 0)
+                    """
+                )
+            )
+
+        res = self.client.post("/projects/1/people/101/faces/302/reject")
+        self.assertEqual(res.status_code, 200)
+
+        with self._engine.connect() as conn:
+            count = conn.execute(
+                sa.text("SELECT COUNT(*) FROM face_negative_constraints WHERE project_id = 1")
+            ).scalar()
+        self.assertEqual(count, 0, "FaceNegativeConstraint must NOT be written when flag is disabled")

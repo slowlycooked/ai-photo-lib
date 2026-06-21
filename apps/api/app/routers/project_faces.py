@@ -27,6 +27,7 @@ from ..schemas.face import (
 )
 from ..services.project_face_cluster_rematch_app_service import (
     FaceClusterTaskNotFoundError,
+    FaceRecognitionDisabledError,
     FaceRematchTaskNotFoundError,
     FaceRematchValidationError,
     ProjectFaceClusterRematchAppService,
@@ -135,10 +136,13 @@ def cluster_project_unknown_faces(
     project: Project = Depends(require_project),
     db: Session = Depends(get_db),
 ) -> FaceClusterUnknownResponse:
-    return ProjectFaceClusterRematchAppService(db).enqueue_cluster(
-        project_id=project_id,
-        max_faces=body.max_faces,
-    )
+    try:
+        return ProjectFaceClusterRematchAppService(db).enqueue_cluster(
+            project_id=project_id,
+            max_faces=body.max_faces,
+        )
+    except FaceRecognitionDisabledError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.get(
@@ -187,6 +191,8 @@ def rematch_project_unknown_faces(
             start_time=body.start_time,
             end_time=body.end_time,
         )
+    except FaceRecognitionDisabledError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except FaceRematchValidationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 

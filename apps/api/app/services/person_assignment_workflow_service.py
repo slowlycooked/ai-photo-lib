@@ -18,6 +18,7 @@ from .people_assignment_store import PeopleAssignmentStore
 from .people_lookup_service import PeopleLookupService
 from .people_negative_constraint_service import PeopleNegativeConstraintService
 from .people_update_finalizer import PeopleUpdateFinalizer
+from .project_face_settings_service import get_or_create_project_face_settings
 
 
 class PersonAssignmentWorkflowService:
@@ -28,6 +29,12 @@ class PersonAssignmentWorkflowService:
         self._finalizer = PeopleUpdateFinalizer(db)
         self._lookup = PeopleLookupService(db)
         self._negative_constraints = PeopleNegativeConstraintService(db)
+
+    def _neg_enabled(self, project_id: int) -> bool:
+        """Return True if negative constraints should be written for this project."""
+        return get_or_create_project_face_settings(
+            self._db, project_id
+        ).enable_negative_constraints
 
     def _reset_feedback_effects(self) -> None:
         self._feedback_effects.reset()
@@ -106,12 +113,13 @@ class PersonAssignmentWorkflowService:
                 now=now,
             )
             touched_person_ids.add(other.person_id)
-            self._negative_constraints.upsert(
-                project_id=project_id,
-                face_id=face_id,
-                not_person_id=other.person_id,
-                source="human_corrected",
-            )
+            if self._neg_enabled(project_id):
+                self._negative_constraints.upsert(
+                    project_id=project_id,
+                    face_id=face_id,
+                    not_person_id=other.person_id,
+                    source="human_corrected",
+                )
 
         self._negative_constraints.remove(
             project_id=project_id,
@@ -156,12 +164,13 @@ class PersonAssignmentWorkflowService:
             source="human_rejected",
             now=datetime.now(timezone.utc),
         )
-        self._negative_constraints.upsert(
-            project_id=project_id,
-            face_id=face_id,
-            not_person_id=person_id,
-            source="human_rejected",
-        )
+        if self._neg_enabled(project_id):
+            self._negative_constraints.upsert(
+                project_id=project_id,
+                face_id=face_id,
+                not_person_id=person_id,
+                source="human_rejected",
+            )
         if person.representative_face_detection_id == face_id:
             person.representative_face_detection_id = None
 
@@ -232,12 +241,13 @@ class PersonAssignmentWorkflowService:
                 similarity_score=similarity_score,
             )
 
-        self._negative_constraints.upsert(
-            project_id=project_id,
-            face_id=face_id,
-            not_person_id=source_person.id,
-            source="human_corrected",
-        )
+        if self._neg_enabled(project_id):
+            self._negative_constraints.upsert(
+                project_id=project_id,
+                face_id=face_id,
+                not_person_id=source_person.id,
+                source="human_corrected",
+            )
         self._negative_constraints.remove(
             project_id=project_id,
             face_id=face_id,
@@ -347,14 +357,15 @@ class PersonAssignmentWorkflowService:
             if person.representative_face_detection_id is None:
                 person.representative_face_detection_id = assignment.face_detection_id
 
-        self._negative_constraints.upsert_many(
-            project_id=project_id,
-            pairs=[
-                (other.face_detection_id, other.person_id)
-                for other in other_assignments
-            ],
-            source="human_corrected",
-        )
+        if self._neg_enabled(project_id):
+            self._negative_constraints.upsert_many(
+                project_id=project_id,
+                pairs=[
+                    (other.face_detection_id, other.person_id)
+                    for other in other_assignments
+                ],
+                source="human_corrected",
+            )
         self._negative_constraints.remove_for_person(
             project_id=project_id,
             face_ids=assigned_face_ids,
@@ -406,11 +417,12 @@ class PersonAssignmentWorkflowService:
             if person.representative_face_detection_id == assignment.face_detection_id:
                 person.representative_face_detection_id = None
 
-        self._negative_constraints.upsert_many(
-            project_id=project_id,
-            pairs=[(face_id, person_id) for face_id in assigned_face_ids],
-            source="human_rejected",
-        )
+        if self._neg_enabled(project_id):
+            self._negative_constraints.upsert_many(
+                project_id=project_id,
+                pairs=[(face_id, person_id) for face_id in assigned_face_ids],
+                source="human_rejected",
+            )
         self._finalizer.finalize(project_id=project_id, person_ids=[person_id])
         self._db.commit()
         self._set_feedback_effects(
@@ -501,11 +513,12 @@ class PersonAssignmentWorkflowService:
                 target_person.representative_face_detection_id = face_detection_id
             updated += 1
 
-        self._negative_constraints.upsert_many(
-            project_id=project_id,
-            pairs=[(face_id, source_person.id) for face_id in assigned_face_ids],
-            source="human_corrected",
-        )
+        if self._neg_enabled(project_id):
+            self._negative_constraints.upsert_many(
+                project_id=project_id,
+                pairs=[(face_id, source_person.id) for face_id in assigned_face_ids],
+                source="human_corrected",
+            )
         self._negative_constraints.remove_for_person(
             project_id=project_id,
             face_ids=assigned_face_ids,

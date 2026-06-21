@@ -8,6 +8,8 @@
 - 支持 `macOS` 与 `Windows x86`（Intel/AMD 64 位）
 - 后续版本升级与回滚建议
 
+如果你的目标是 Mac mini 常驻部署，建议优先阅读第 4 章和第 4.6 章。
+
 > 说明：当前仓库的服务编排脚本（如 `scripts/svc.sh`、`scripts/bootstrap-macos.sh`）主要面向 macOS。Windows 使用“手动启动流程”。
 
 ---
@@ -134,6 +136,58 @@ brew install llama.cpp
 ./scripts/svc.sh restart api
 ./scripts/svc.sh stop
 ```
+
+### 4.6 Mac mini 常驻部署（推荐路径）
+
+该路径适用于 Mac mini M4 作为长期运行机，持续运行 `postgres + api + web + worker (+ ai/embed)`。
+
+建议 `.env` 至少满足：
+
+```env
+DEPLOY_PROFILE=prd
+API_HOST=0.0.0.0
+API_RELOAD=0
+WEB_HOST=0.0.0.0
+WEB_MODE=preview
+WEB_PORT=8088
+PHOTO_LIBRARY_PATH=/Volumes/PhotoLibrary
+THUMBNAIL_PATH=/Users/Shared/ai-photo-lib/thumbs
+POSTGRES_DATA_DIR=/Users/Shared/ai-photo-lib/postgres
+```
+
+首次部署命令（新 Mac mini）：
+
+```bash
+git clone https://github.com/<your-org>/ai-photo-lib.git
+cd ai-photo-lib
+cp .env.example .env
+# 修改 .env 后再继续
+./scripts/bootstrap-macos.sh
+./scripts/svc.sh start postgres
+./scripts/init-db.sh
+DEPLOY_PROFILE=prd ./scripts/svc.sh start
+./scripts/svc.sh status
+```
+
+升级部署命令（已有 Mac mini）：
+
+```bash
+git pull --ff-only
+./scripts/bootstrap-macos.sh
+./scripts/init-db.sh
+./scripts/db-schema.sh check
+./scripts/svc.sh restart api web worker
+./scripts/svc.sh status
+```
+
+升级后验收建议：
+
+```bash
+curl http://127.0.0.1:8000/health
+curl http://127.0.0.1:8000/health/system
+```
+
+如果是局域网访问，额外确认浏览器可打开：`http://<mac-mini-ip>:8088`。
 
 ---
 

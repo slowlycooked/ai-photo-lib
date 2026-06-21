@@ -46,6 +46,17 @@ export const projectAiJobsApi = {
       { method: "DELETE" },
     ),
 
+  forceStop: (projectId: number, jobType?: string) =>
+    request<{
+      stopped_jobs: number;
+      stopped_queued: number;
+      stopped_running: number;
+      message: string;
+    }>(
+      `/projects/${projectId}/ai/jobs/force-stop${qs({ job_type: jobType })}`,
+      { method: "POST" },
+    ),
+
   reanalyze: (projectId: number, body: ProjectReanalyzeRequest) =>
     request<{ created_jobs: number; message: string }>(
       `/projects/${projectId}/ai/analyze/restart`,

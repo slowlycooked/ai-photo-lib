@@ -260,8 +260,8 @@ export function TimelineGrid({ projectId, folderId, folderScope = "subtree" }: T
           )}
         </div>
 
-        {canDeletePhoto && (
-          <div className="rounded-md border border-danger/30 bg-danger/5 p-3">
+        {canDeletePhoto && selectedCount > 0 && (
+          <div className="fixed left-4 top-24 z-30 w-[min(24rem,calc(100vw-2rem))] rounded-md border border-danger/30 bg-danger/10 p-3 shadow-lg backdrop-blur-sm">
             <div className="flex flex-wrap items-center gap-3">
               <span className="text-body-sm text-ink">已勾选 {selectedCount} 张</span>
               <label className="flex items-center gap-2 text-caption-sm text-ink">
@@ -283,9 +283,10 @@ export function TimelineGrid({ projectId, folderId, folderScope = "subtree" }: T
                 批量删除已选
               </button>
             </div>
-            {batchMessage && <p className="mt-2 text-caption-sm text-mute">{batchMessage}</p>}
           </div>
         )}
+
+        {batchMessage && <p className="text-caption-sm text-mute">{batchMessage}</p>}
 
         {isInitialLoading && (
           <div className="flex items-center justify-center gap-2 py-10 text-mute">

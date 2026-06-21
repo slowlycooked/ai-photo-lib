@@ -242,8 +242,6 @@ def match_face_detection_to_person(
         return None
 
     settings = get_or_create_project_face_settings(db, project_id)
-    if not settings.allow_auto_assignment:
-        return None
 
     detection = (
         db.query(FaceDetection)
@@ -295,17 +293,19 @@ def match_face_detection_to_person(
     if not candidate_rows:
         return None
 
-    negatives = {
-        row[0]
-        for row in (
-            db.query(FaceNegativeConstraint.not_person_id)
-            .filter(
-                FaceNegativeConstraint.project_id == project_id,
-                FaceNegativeConstraint.face_detection_id == face_detection_id,
+    negatives: set[int] = set()
+    if settings.enable_negative_constraints:
+        negatives = {
+            row[0]
+            for row in (
+                db.query(FaceNegativeConstraint.not_person_id)
+                .filter(
+                    FaceNegativeConstraint.project_id == project_id,
+                    FaceNegativeConstraint.face_detection_id == face_detection_id,
+                )
+                .all()
             )
-            .all()
-        )
-    }
+        }
 
     best_person_id: Optional[int] = None
     best_similarity = -1.0
@@ -322,7 +322,7 @@ def match_face_detection_to_person(
         return None
 
     assignment_status: Optional[str] = None
-    if best_similarity >= settings.auto_accept_threshold:
+    if best_similarity >= settings.auto_accept_threshold and settings.allow_auto_assignment:
         assignment_status = STATUS_AUTO_ASSIGNED
     elif best_similarity >= settings.review_threshold:
         assignment_status = STATUS_REVIEW_PENDING

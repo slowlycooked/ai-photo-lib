@@ -1410,7 +1410,7 @@ export function SettingsPage() {
             <SettingsCard title="当前项目状态摘要">
               <div className="py-3 flex items-center justify-between gap-3">
                 <p className="text-body-sm text-mute">
-                  项目级 AI、Embedding、Planner 配置已迁移到独立设置分区。
+                  AI 服务由全局基础设施统一提供；项目设置页用于查看运行状态与项目级能力参数（Embedding、Planner、搜索）。
                 </p>
                 <Link
                   to={`/projects/${currentProjectId}/settings/vision-ai`}

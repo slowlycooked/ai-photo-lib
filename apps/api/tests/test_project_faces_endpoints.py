@@ -19,8 +19,10 @@ os.environ.setdefault("OPENAI_BASE_URL", "http://127.0.0.1:9999/v1")
 os.environ.setdefault("OPENAI_MODEL", "test-model")
 os.environ.setdefault("OPENAI_VISION_MODEL", "test-model")
 
+from app.api.deps import require_project, require_project_manager  # noqa: E402
 from app.database import get_db  # noqa: E402
 from app.main import app  # noqa: E402
+from app.models.project import Project  # noqa: E402
 from app.models.project_task import ProjectTask  # noqa: E402
 from app.services.face_scan_service import FaceScanResult  # noqa: E402
 from app.services.project_task_app_service import ProjectTaskAppService  # noqa: E402
@@ -304,7 +306,23 @@ class ProjectFacesEndpointsTest(unittest.TestCase):
       finally:
         db.close()
 
+    def override_require_project_manager(project_id: int) -> Project:
+      db = self._SessionLocal()
+      try:
+        project = (
+          db.query(Project)
+          .filter(Project.id == project_id, Project.deleted_at.is_(None))
+          .first()
+        )
+        if project is None:
+          raise RuntimeError("Project not found")
+        return project
+      finally:
+        db.close()
+
     app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[require_project] = override_require_project_manager
+    app.dependency_overrides[require_project_manager] = override_require_project_manager
     self.client = TestClient(app)
 
   def tearDown(self) -> None:
@@ -782,6 +800,42 @@ class ProjectFacesEndpointsTest(unittest.TestCase):
 
     self.assertEqual(job_row[0], "failed")
     self.assertEqual((task_row[0], task_row[1]), ("face_scan_project", "queued"))
+
+  def test_force_stop_can_filter_job_type(self) -> None:
+    with self._engine.begin() as conn:
+      conn.execute(
+        sa.text(
+          """
+          INSERT INTO ai_jobs (id, photo_id, project_id, job_type, status)
+          VALUES (9501, 101, 1, 'analyze', 'queued'),
+                 (9502, 102, 1, 'face_scan', 'running')
+          """
+        )
+      )
+
+    stop = self.client.post("/projects/1/ai/jobs/force-stop?job_type=face_scan")
+    self.assertEqual(stop.status_code, 200)
+    body = stop.json()
+    self.assertEqual(body["stopped_jobs"], 1)
+    self.assertEqual(body["stopped_running"], 1)
+    self.assertEqual(body["stopped_queued"], 0)
+
+    with self._engine.begin() as conn:
+      rows = conn.execute(
+        sa.text(
+          """
+          SELECT id, status, error_message
+          FROM ai_jobs
+          WHERE id IN (9501, 9502)
+          ORDER BY id ASC
+          """
+        )
+      ).fetchall()
+
+    self.assertEqual([(row[0], row[1], row[2]) for row in rows], [
+      (9501, "queued", None),
+      (9502, "failed", "force_stopped_by_user"),
+    ])
 
   def test_face_scan_project_task_replaces_old_failed_jobs_on_retry_scope(self) -> None:
     retry = self.client.post("/projects/1/ai/jobs/retry-failed?job_type=face_scan")

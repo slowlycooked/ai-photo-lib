@@ -25,6 +25,11 @@ from .project_task_service import (
     get_latest_face_rematch_task,
     request_project_task_cancel,
 )
+from .project_face_settings_service import get_or_create_project_face_settings
+
+
+class FaceRecognitionDisabledError(RuntimeError):
+    pass
 
 
 class FaceRematchValidationError(RuntimeError):
@@ -44,6 +49,12 @@ class ProjectFaceClusterRematchAppService:
     db: Session
 
     def enqueue_cluster(self, *, project_id: int, max_faces: int) -> FaceClusterUnknownResponse:
+        settings = get_or_create_project_face_settings(self.db, project_id)
+        if not settings.face_recognition_enabled:
+            raise FaceRecognitionDisabledError(
+                "Face recognition is disabled for this project. "
+                "Enable it in face settings first."
+            )
         result = enqueue_face_cluster_task(
             self.db,
             project_id=project_id,
@@ -84,6 +95,12 @@ class ProjectFaceClusterRematchAppService:
         start_time: Optional[datetime],
         end_time: Optional[datetime],
     ) -> FaceRematchUnknownResponse:
+        settings = get_or_create_project_face_settings(self.db, project_id)
+        if not settings.face_recognition_enabled:
+            raise FaceRecognitionDisabledError(
+                "Face recognition is disabled for this project. "
+                "Enable it in face settings first."
+            )
         self._validate_rematch_scope(
             scope=scope,
             person_id=person_id,

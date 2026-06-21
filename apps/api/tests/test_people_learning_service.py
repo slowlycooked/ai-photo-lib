@@ -365,3 +365,89 @@ def test_rematch_unknown_faces_supports_time_range_scope() -> None:
         assert result.matched_faces == 1
     finally:
         db.close()
+
+
+    # ---------------------------------------------------------------------------
+    # New tests for the switches that were previously unconnected
+    # ---------------------------------------------------------------------------
+
+    def test_allow_auto_assignment_false_caps_to_review_pending() -> None:
+      """When allow_auto_assignment=False, similarity >= auto_accept_threshold must still
+      create a review_pending assignment rather than returning None."""
+      db = _make_session()
+      try:
+        rebuild_person_centroid_prototype(db, project_id=1, person_id=101)
+        db.execute(
+          sa.text(
+            "UPDATE project_face_settings SET allow_auto_assignment = 0 WHERE project_id = 1"
+          )
+        )
+        db.commit()
+
+        # face 202 has high similarity (≥ auto_accept_threshold=0.75) but auto is OFF
+        decision = match_face_detection_to_person(db, project_id=1, face_detection_id=202)
+        assert decision is not None, "Expected review_pending decision, got None"
+        assert decision.assignment_status == "review_pending", (
+          f"Expected review_pending, got {decision.assignment_status}"
+        )
+      finally:
+        db.close()
+
+
+    def test_enable_negative_constraints_false_ignores_existing_negatives() -> None:
+      """When enable_negative_constraints=False, negative constraints in the DB must
+      not prevent auto-matching."""
+      db = _make_session()
+      try:
+        rebuild_person_centroid_prototype(db, project_id=1, person_id=101)
+        # Write a negative constraint: face 202 is NOT person 101
+        db.execute(
+          sa.text(
+            """
+            INSERT INTO face_negative_constraints
+              (id, project_id, face_detection_id, not_person_id, source)
+            VALUES (901, 1, 202, 101, 'human_rejected')
+            """
+          )
+        )
+        db.execute(
+          sa.text(
+            "UPDATE project_face_settings SET enable_negative_constraints = 0 WHERE project_id = 1"
+          )
+        )
+        db.commit()
+
+        # With the constraint disabled, face 202 should still match person 101
+        decision = match_face_detection_to_person(db, project_id=1, face_detection_id=202)
+        assert decision is not None, "Expected match even though negative constraint exists when flag is OFF"
+        assert decision.person_id == 101
+      finally:
+        db.close()
+
+
+    def test_enable_negative_constraints_true_respects_existing_negatives() -> None:
+      """When enable_negative_constraints=True (default), existing negative constraints
+      must block the matching of the flagged person."""
+      db = _make_session()
+      try:
+        rebuild_person_centroid_prototype(db, project_id=1, person_id=101)
+        # Write a negative constraint: face 202 is NOT person 101
+        db.execute(
+          sa.text(
+            """
+            INSERT INTO face_negative_constraints
+              (id, project_id, face_detection_id, not_person_id, source)
+            VALUES (902, 1, 202, 101, 'human_rejected')
+            """
+          )
+        )
+        db.commit()
+
+        # With the constraint enabled (default), face 202 should NOT match person 101
+        decision = match_face_detection_to_person(db, project_id=1, face_detection_id=202)
+        # person 101 is the only candidate — blocked by negative → no match
+        assert decision is None, (
+          "Expected no match because the only candidate is blocked by a negative constraint"
+        )
+      finally:
+        db.close()

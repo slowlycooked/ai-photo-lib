@@ -258,6 +258,8 @@ export interface AIStatus {
   success: number;
   failed: number;
   total: number;
+  analyzed_count?: number;
+  total_photos?: number;
 }
 
 export interface AIJob {
@@ -849,20 +851,6 @@ export interface ProjectAISettings {
   active_prompt_template_id: number | null;
   created_at: string;
   updated_at: string;
-}
-
-export interface ProjectAISettingsUpdate {
-  ai_service_profile_id?: number | null;
-  provider: string;
-  endpoint_url: string;
-  model_name: string;
-  temperature: number;
-  top_p: number;
-  max_tokens: number;
-  retry_count: number;
-  output_language: string;
-  json_parse_strategy: string;
-  active_prompt_template_id?: number | null;
 }
 
 export interface PromptTemplate {

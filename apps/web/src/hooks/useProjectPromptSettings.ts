@@ -4,7 +4,6 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   api,
   type Photo,
-  type ProjectAISettingsUpdate,
   type PromptTemplate,
   type PromptTemplateTestResponse,
 } from "@/api";
@@ -68,21 +67,6 @@ function parsePromptToBasic(prompt: string): { focus: string; extra: string } {
   return {
     focus: focusLines.length ? focusLines.join("\n") : BASIC_FOCUS_DEFAULT,
     extra,
-  };
-}
-
-function toSettingsBody(form: ModelFormSnapshot, activePromptTemplateId?: number | null): ProjectAISettingsUpdate {
-  return {
-    provider: form.provider,
-    endpoint_url: form.endpoint_url,
-    model_name: form.model_name,
-    temperature: Number(form.temperature),
-    top_p: Number(form.top_p),
-    max_tokens: Number(form.max_tokens),
-    retry_count: Number(form.retry_count),
-    output_language: form.output_language,
-    json_parse_strategy: form.json_parse_strategy,
-    active_prompt_template_id: activePromptTemplateId,
   };
 }
 
@@ -239,8 +223,19 @@ export function useProjectPromptSettings({
   });
 
   const activateTemplateMutation = useMutation({
-    mutationFn: (templateId: number) =>
-      api.projectSettings.updateAi(projectId, toSettingsBody(modelForm, templateId)),
+    mutationFn: (templateId: number) => {
+      const template = templates.find((item) => item.id === templateId);
+      if (!template) {
+        throw new Error("模板不存在或已被删除");
+      }
+      // Activate by creating a new active version from the selected template.
+      return api.projectPrompts.update(projectId, templateId, {
+        name: template.name,
+        user_prompt: template.user_prompt,
+        output_schema: template.output_schema,
+        is_active: true,
+      });
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["project-ai-settings", projectId] });
       queryClient.invalidateQueries({ queryKey: ["project-prompt-templates", projectId] });

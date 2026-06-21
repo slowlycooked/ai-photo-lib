@@ -138,6 +138,19 @@ class PhotoRepository:
             or 0
         )
 
+    def count_total(self, project_id: int) -> int:
+        from sqlalchemy import func
+
+        return (
+            self._db.query(func.count(Photo.id))
+            .filter(
+                Photo.project_id == project_id,
+                Photo.deleted_at.is_(None),
+            )
+            .scalar()
+            or 0
+        )
+
     # ── writes ────────────────────────────────────────────────────────────────
 
     def update_thumbnail(

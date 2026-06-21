@@ -42,7 +42,7 @@ function SettingsSidebar({ projectId }: { projectId: number | null }) {
       </div>
 
       <div>
-        <p className="px-5 py-1 text-[15px] leading-5 text-mute">AI 能力（项目级）</p>
+        <p className="px-5 py-1 text-[15px] leading-5 text-mute">AI 能力（项目状态）</p>
         <nav className="space-y-3 mt-2" aria-label="AI 能力设置">
           {projectNavItems.map((item) => {
             if (projectSettingsBase == null) {

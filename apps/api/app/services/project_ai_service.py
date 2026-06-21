@@ -205,7 +205,9 @@ def get_project_ai_settings_strict(db: Session, project_id: int) -> ProjectAISet
 
 
 def resolve_project_ai_runtime_settings(db: Session, project_id: int) -> dict[str, Any]:
-    row = get_project_ai_settings_strict(db, project_id)
+    # Runtime uses the global AI infrastructure defaults from env and should not
+    # require manual per-project AI initialization.
+    row = get_or_create_project_ai_settings(db, project_id)
     profile: AIServiceProfile | None = None
     if row.ai_service_profile_id is not None:
         profile = (
@@ -225,9 +227,9 @@ def resolve_project_ai_runtime_settings(db: Session, project_id: int) -> dict[st
                 f"AI service profile {profile.id} has capability={profile.capability!r}; expected 'vision'."
             )
 
-    endpoint_url = (profile.endpoint_url if profile is not None else row.endpoint_url) or ""
-    model_name = (profile.model_name if profile is not None else row.model_name) or ""
-    provider = (profile.provider if profile is not None else row.provider) or ""
+    endpoint_url = (profile.endpoint_url if profile is not None else row.endpoint_url) or _default_endpoint_url()
+    model_name = (profile.model_name if profile is not None else row.model_name) or settings.openai_vision_model
+    provider = (profile.provider if profile is not None else row.provider) or "llama-server"
     if not endpoint_url.strip() or not model_name.strip():
         raise RuntimeError(
             f"AI runtime settings for project_id={project_id} are incomplete. "

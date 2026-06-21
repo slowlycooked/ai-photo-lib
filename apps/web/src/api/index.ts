@@ -61,7 +61,6 @@ export type {
   PersonSummary,
   Project,
   ProjectAISettings,
-  ProjectAISettingsUpdate,
   ProjectCreate,
   ProjectEmbeddingSettings,
   ProjectEmbeddingSettingsUpdate,

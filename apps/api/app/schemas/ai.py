@@ -67,6 +67,7 @@ class AIStatusResponse(BaseModel):
     failed: int
     total: int
     analyzed_count: int = 0
+    total_photos: int = 0
     embedding_ready_count: int = 0
     embedding_missing_count: int = 0
     embedding_failed_count: int = 0
@@ -84,3 +85,10 @@ class RetryFailedResponse(BaseModel):
     task_id: Optional[int] = None
     task_created: bool = False
     task_status: Optional[str] = None
+
+
+class ForceStopResponse(BaseModel):
+    stopped_jobs: int
+    stopped_queued: int
+    stopped_running: int
+    message: str

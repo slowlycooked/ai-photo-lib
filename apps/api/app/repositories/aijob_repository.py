@@ -202,6 +202,51 @@ class AIJobRepository:
         self._db.flush()
         return len(rows)
 
+    def force_stop_active_for_project(
+        self,
+        project_id: int,
+        *,
+        job_types: Optional[list[str]] = None,
+    ) -> tuple[int, int, int]:
+        """Force-stop queued/running jobs for a project.
+
+        Returns ``(stopped_total, stopped_queued, stopped_running)``.
+        """
+        now = datetime.now(timezone.utc)
+        rows = (
+            self._db.query(AIJob)
+            .filter(
+                AIJob.project_id == project_id,
+                AIJob.status.in_(["queued", "running"]),
+            )
+        )
+        if job_types:
+            rows = rows.filter(AIJob.job_type.in_(job_types))
+        rows = rows.all()
+
+        stopped_queued = 0
+        stopped_running = 0
+        for job in rows:
+            if job.status == "queued":
+                stopped_queued += 1
+            elif job.status == "running":
+                stopped_running += 1
+
+            job.status = "failed"
+            job.error_message = "force_stopped_by_user"
+            job.parse_error = "force_stopped_by_user"
+            job.last_error_code = "force_stopped_by_user"
+            job.last_error_at = now
+            job.finished_at = now
+            job.updated_at = now
+            job.locked_by = None
+            job.locked_at = None
+            job.heartbeat_at = None
+            job.lease_expires_at = None
+
+        self._db.flush()
+        return len(rows), stopped_queued, stopped_running
+
     def active_photo_ids_subquery(self, project_id: Optional[int] = None):
         q = select(AIJob.photo_id).where(AIJob.status.in_(["queued", "running"]))
         if project_id is not None:

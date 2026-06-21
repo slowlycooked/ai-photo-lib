@@ -7,12 +7,13 @@ import sqlalchemy as sa
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from ..models.face import FaceNegativeConstraint, Person, PersonFaceAssignment
+from ..models.face import FaceNegativeConstraint, Person, PersonCannotLink, PersonFaceAssignment
 from .people_assignment_constants import STATUS_HUMAN_CORRECTED, STATUS_REJECTED
 from .people_assignment_store import PeopleAssignmentStore
 from .people_lookup_service import PeopleLookupService
 from .people_negative_constraint_service import PeopleNegativeConstraintService
 from .people_update_finalizer import PeopleUpdateFinalizer
+from .project_face_settings_service import get_or_create_project_face_settings
 
 
 class PersonLifecycleMutationService:
@@ -129,6 +130,30 @@ class PersonLifecycleMutationService:
         target_person = self._lookup.get_person_or_404(project_id, target_person_id)
         if source_person.id == target_person.id:
             raise HTTPException(status_code=422, detail="target_person_id must be different")
+
+        # Respect cannot-link constraint set by a prior split or rejected merge.
+        face_settings = get_or_create_project_face_settings(self._db, project_id)
+        if face_settings.enable_person_cannot_links:
+            min_id = min(source_person.id, target_person.id)
+            max_id = max(source_person.id, target_person.id)
+            cannot_link = (
+                self._db.query(PersonCannotLink)
+                .filter(
+                    PersonCannotLink.project_id == project_id,
+                    PersonCannotLink.person_id_a == min_id,
+                    PersonCannotLink.person_id_b == max_id,
+                )
+                .first()
+            )
+            if cannot_link is not None:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "Cannot merge: a cannot-link constraint exists between these two people "
+                        "(created by a previous split or rejected merge). "
+                        "Remove the constraint first if you still wish to merge."
+                    ),
+                )
 
         now = datetime.now(timezone.utc)
         source_assignments = (
@@ -276,6 +301,30 @@ class PersonLifecycleMutationService:
 
         source_person.updated_at = now
         target_person.updated_at = now
+
+        # Write cannot-link so these two people cannot be re-merged by the clustering algorithm.
+        face_settings = get_or_create_project_face_settings(self._db, project_id)
+        if face_settings.enable_person_cannot_links:
+            min_id = min(source_person.id, target_person.id)
+            max_id = max(source_person.id, target_person.id)
+            existing_link = (
+                self._db.query(PersonCannotLink)
+                .filter(
+                    PersonCannotLink.project_id == project_id,
+                    PersonCannotLink.person_id_a == min_id,
+                    PersonCannotLink.person_id_b == max_id,
+                )
+                .first()
+            )
+            if existing_link is None:
+                self._db.add(
+                    PersonCannotLink(
+                        project_id=project_id,
+                        person_id_a=min_id,
+                        person_id_b=max_id,
+                        source="human_split",
+                    )
+                )
 
         self._finalizer.finalize(project_id=project_id, person_ids=[source_person.id, target_person.id])
         self._db.commit()

@@ -11,6 +11,7 @@ const taskFailuresMock = vi.fn();
 const aiStatusMock = vi.fn();
 const startAiMock = vi.fn();
 const reanalyzeMock = vi.fn();
+const forceStopAiMock = vi.fn();
 const getFaceSettingsMock = vi.fn();
 const projectFaceScanStatusMock = vi.fn();
 const projectFaceClusterUnknownStatusMock = vi.fn();
@@ -37,6 +38,7 @@ vi.mock("@/api", () => ({
       status: (...args: unknown[]) => aiStatusMock(...args),
       startAnalysis: (...args: unknown[]) => startAiMock(...args),
       reanalyze: (...args: unknown[]) => reanalyzeMock(...args),
+      forceStop: (...args: unknown[]) => forceStopAiMock(...args),
       list: vi.fn().mockResolvedValue({ total: 0, items: [] }),
       retryFailed: vi.fn(),
       clearFailed: vi.fn(),
@@ -102,6 +104,7 @@ describe("TasksPage", () => {
     aiStatusMock.mockReset();
     startAiMock.mockReset();
     reanalyzeMock.mockReset();
+    forceStopAiMock.mockReset();
     getFaceSettingsMock.mockReset();
     projectFaceScanStatusMock.mockReset();
     projectFaceClusterUnknownStatusMock.mockReset();
@@ -147,6 +150,12 @@ describe("TasksPage", () => {
     });
     startAiMock.mockResolvedValue({ created_jobs: 0, message: "ok" });
     reanalyzeMock.mockResolvedValue({ created_jobs: 0, message: "ok" });
+    forceStopAiMock.mockResolvedValue({
+      stopped_jobs: 0,
+      stopped_queued: 0,
+      stopped_running: 0,
+      message: "No active jobs to stop",
+    });
     getFaceSettingsMock.mockResolvedValue({
       face_recognition_enabled: true,
       face_provider: "opencv",
@@ -370,5 +379,30 @@ describe("TasksPage", () => {
     expect(await screen.findByText("未知人脸聚类任务 · failed")).toBeInTheDocument();
     expect(await screen.findByText("聚类失败明细")).toBeInTheDocument();
     expect(screen.getAllByText("cluster exploded").length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("can force-stop ai analyze jobs from tasks page", async () => {
+    const user = userEvent.setup();
+    aiStatusMock.mockResolvedValue({
+      queued: 2,
+      running: 1,
+      success: 0,
+      failed: 0,
+      total: 3,
+    });
+    forceStopAiMock.mockResolvedValue({
+      stopped_jobs: 3,
+      stopped_queued: 2,
+      stopped_running: 1,
+      message: "Active jobs force-stopped",
+    });
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    renderPage("/tasks?tab=ai");
+
+    await user.click(await screen.findByRole("button", { name: "强制停止分析" }));
+
+    expect(forceStopAiMock).toHaveBeenCalledWith(7, "analyze,reanalyze");
+    expect(await screen.findByText("已强制停止 3 个任务（queued=2, running=1）")).toBeInTheDocument();
   });
 });

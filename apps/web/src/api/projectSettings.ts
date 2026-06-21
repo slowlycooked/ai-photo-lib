@@ -4,7 +4,6 @@ import type {
   EmbeddingTestRequest,
   EmbeddingTestResponse,
   ProjectAISettings,
-  ProjectAISettingsUpdate,
   ProjectEmbeddingSettings,
   ProjectEmbeddingSettingsUpdate,
   ProjectEffectiveSettings,
@@ -22,18 +21,6 @@ import type {
 export const projectSettingsApi = {
   getAi: (projectId: number) =>
     request<ProjectAISettings>(`/projects/${projectId}/ai-settings`),
-
-  initAi: (projectId: number) =>
-    request<ProjectAISettings>(`/projects/${projectId}/ai-settings/init`, {
-      method: "POST",
-    }),
-
-  updateAi: (projectId: number, body: ProjectAISettingsUpdate) =>
-    request<ProjectAISettings>(`/projects/${projectId}/ai-settings`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    }),
 
   getFace: (projectId: number) =>
     request<ProjectFaceSettings>(`/projects/${projectId}/face-settings`),

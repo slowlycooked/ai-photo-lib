@@ -18,8 +18,10 @@ os.environ.setdefault("OPENAI_BASE_URL", "http://127.0.0.1:9999/v1")
 os.environ.setdefault("OPENAI_MODEL", "test-model")
 os.environ.setdefault("OPENAI_VISION_MODEL", "test-model")
 
+from app.api.deps import require_project, require_project_manager  # noqa: E402
 from app.database import get_db  # noqa: E402
 from app.main import app  # noqa: E402
+from app.models.project import Project  # noqa: E402
 
 
 SCHEMA_SQL = """
@@ -332,7 +334,23 @@ class ProjectIsolationEndpointsTest(unittest.TestCase):
             finally:
                 db.close()
 
+        def override_require_project_manager(project_id: int) -> Project:
+            db = self._SessionLocal()
+            try:
+                project = (
+                    db.query(Project)
+                    .filter(Project.id == project_id, Project.deleted_at.is_(None))
+                    .first()
+                )
+                if project is None:
+                    raise RuntimeError("Project not found")
+                return project
+            finally:
+                db.close()
+
         app.dependency_overrides[get_db] = override_get_db
+        app.dependency_overrides[require_project] = override_require_project_manager
+        app.dependency_overrides[require_project_manager] = override_require_project_manager
         self.client = TestClient(app)
 
     def tearDown(self) -> None:
@@ -369,31 +387,26 @@ class ProjectIsolationEndpointsTest(unittest.TestCase):
         )
         self.assertEqual(res.status_code, 404)
 
-    def test_project_prompt_test_fails_when_project_ai_settings_missing(self) -> None:
+    def test_project_prompt_test_no_longer_requires_ai_settings_init(self) -> None:
         res = self.client.post(
             "/projects/1/prompt-templates/test",
             json={"image_id": 101},
         )
-        self.assertEqual(res.status_code, 422)
-        self.assertIn("AI settings are not configured", res.json().get("detail", ""))
+        # No strict "ai-settings first" gate. Runtime now auto-provisions
+        # settings from global env defaults.
+        self.assertEqual(res.status_code, 200)
 
-    def test_project_ai_settings_get_is_strict_when_missing(self) -> None:
+    def test_project_ai_settings_get_auto_provisions_when_missing(self) -> None:
         res = self.client.get("/projects/1/ai-settings")
-        self.assertEqual(res.status_code, 422)
-        self.assertIn("AI settings are not configured", res.json().get("detail", ""))
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.json().get("project_id"), 1)
 
-    def test_project_ai_settings_can_be_explicitly_initialized(self) -> None:
+    def test_project_ai_settings_init_endpoint_is_deprecated(self) -> None:
         init_res = self.client.post("/projects/1/ai-settings/init")
-        self.assertEqual(init_res.status_code, 200)
-        init_body = init_res.json()
-        self.assertEqual(init_body["project_id"], 1)
+        self.assertEqual(init_res.status_code, 409)
+        self.assertIn("deprecated", init_res.json().get("detail", "").lower())
 
-        get_res = self.client.get("/projects/1/ai-settings")
-        self.assertEqual(get_res.status_code, 200)
-        get_body = get_res.json()
-        self.assertEqual(get_body["project_id"], 1)
-
-    def test_project_readiness_reports_missing_ai_and_embedding_config(self) -> None:
+    def test_project_readiness_reports_embedding_missing_only(self) -> None:
         res = self.client.get("/projects/1/readiness")
         self.assertEqual(res.status_code, 200)
         body = res.json()
@@ -404,13 +417,11 @@ class ProjectIsolationEndpointsTest(unittest.TestCase):
         self.assertIn("scan_runtime", checks)
         self.assertIn("ai_runtime", checks)
         self.assertIn("embedding_runtime", checks)
-        self.assertFalse(checks["ai_runtime"]["ready"])
-        self.assertIn("AI settings are not configured", checks["ai_runtime"]["message"])
+        self.assertTrue(checks["ai_runtime"]["ready"])
         self.assertFalse(checks["embedding_runtime"]["ready"])
         self.assertIn("Embedding is not configured", checks["embedding_runtime"]["message"])
 
     def test_project_readiness_ai_and_embedding_become_ready_after_init(self) -> None:
-        self.client.post("/projects/1/ai-settings/init")
         self.client.put(
             "/projects/1/embedding-settings",
             json={
@@ -446,7 +457,7 @@ class ProjectIsolationEndpointsTest(unittest.TestCase):
         self.assertEqual(body["items"][0]["id"], 1001)
         self.assertEqual(body["items"][0]["project_id"], 1)
 
-    def test_project_ai_settings_rejects_cross_project_active_template(self) -> None:
+    def test_project_ai_settings_update_endpoint_is_deprecated(self) -> None:
         res = self.client.put(
             "/projects/1/ai-settings",
             json={
@@ -462,8 +473,8 @@ class ProjectIsolationEndpointsTest(unittest.TestCase):
                 "active_prompt_template_id": 2002,
             },
         )
-        self.assertEqual(res.status_code, 404)
-        self.assertEqual(res.json().get("detail"), "Prompt template not found")
+        self.assertEqual(res.status_code, 409)
+        self.assertIn("deprecated", res.json().get("detail", "").lower())
 
     def test_project_ai_start_only_queues_own_photos(self) -> None:
         res = self.client.post("/projects/1/ai/analyze/start")
@@ -528,6 +539,47 @@ class ProjectIsolationEndpointsTest(unittest.TestCase):
         self.assertEqual(res.status_code, 200)
         body = res.json()
         self.assertEqual(body["analyzed_count"], 1)
+
+    def test_project_ai_force_stop_is_scoped(self) -> None:
+        with self._engine.begin() as conn:
+            conn.execute(
+                sa.text(
+                    """
+                    INSERT INTO ai_jobs (id, photo_id, project_id, job_type, status)
+                    VALUES (4101, 101, 1, 'analyze', 'queued'),
+                           (4102, 102, 1, 'reanalyze', 'running'),
+                           (4103, 202, 2, 'analyze', 'running')
+                    """
+                )
+            )
+
+        stop = self.client.post("/projects/1/ai/jobs/force-stop?job_type=analyze,reanalyze")
+        self.assertEqual(stop.status_code, 200)
+        payload = stop.json()
+        self.assertEqual(payload["stopped_jobs"], 2)
+        self.assertEqual(payload["stopped_queued"], 1)
+        self.assertEqual(payload["stopped_running"], 1)
+
+        with self._engine.begin() as conn:
+            rows = conn.execute(
+                sa.text(
+                    """
+                    SELECT id, project_id, status, error_message
+                    FROM ai_jobs
+                    WHERE id IN (4101, 4102, 4103)
+                    ORDER BY id ASC
+                    """
+                )
+            ).fetchall()
+
+        self.assertEqual(
+            [(row[0], row[1], row[2], row[3]) for row in rows],
+            [
+                (4101, 1, "failed", "force_stopped_by_user"),
+                (4102, 1, "failed", "force_stopped_by_user"),
+                (4103, 2, "running", None),
+            ],
+        )
 
     def test_active_prompt_fk_blocks_cross_project_template(self) -> None:
         with self._engine.begin() as conn:

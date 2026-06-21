@@ -11,7 +11,6 @@ const photosMock = vi.fn();
 const aiJobsMock = vi.fn();
 const createPromptTemplateMock = vi.fn();
 const testPromptTemplateMock = vi.fn();
-const updateAiSettingsMock = vi.fn();
 
 vi.mock("@/api", async () => {
   const actual = await vi.importActual<typeof import("@/api")>("@/api");
@@ -32,10 +31,6 @@ vi.mock("@/api", async () => {
         list: (...args: unknown[]) => promptTemplatesMock(...args),
         create: (...args: unknown[]) => createPromptTemplateMock(...args),
         test: (...args: unknown[]) => testPromptTemplateMock(...args),
-      },
-      projectSettings: {
-        ...actual.api.projectSettings,
-        updateAi: (...args: unknown[]) => updateAiSettingsMock(...args),
       },
     },
   };
@@ -93,7 +88,6 @@ describe("PromptSettingsSection", () => {
     aiJobsMock.mockReset();
     createPromptTemplateMock.mockReset();
     testPromptTemplateMock.mockReset();
-    updateAiSettingsMock.mockReset();
 
     photosMock.mockResolvedValue({ items: [], total: 0 });
     aiJobsMock.mockResolvedValue({ items: [], total: 0 });

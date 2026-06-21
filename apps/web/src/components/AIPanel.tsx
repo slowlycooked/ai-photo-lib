@@ -54,6 +54,22 @@ export function AIPanel({ projectId }: { projectId: number }) {
     onError: (err: Error) => setMessage(`重试失败：${err.message}`),
   });
 
+  const forceStopMutation = useMutation({
+    mutationFn: () => api.projectAiJobs.forceStop(projectId, "analyze,reanalyze"),
+    onSuccess: (data) => {
+      if (data.stopped_jobs > 0) {
+        setMessage(
+          `已强制停止 ${data.stopped_jobs} 个任务（queued=${data.stopped_queued}, running=${data.stopped_running}）`
+        );
+      } else {
+        setMessage("当前没有可停止的 AI 任务");
+      }
+      queryClient.invalidateQueries({ queryKey: queryKeys.aiStatus(projectId) });
+      setTimeout(() => setMessage(null), 4000);
+    },
+    onError: (err: Error) => setMessage(`强制停止失败：${err.message}`),
+  });
+
   const isRunning = status && status.running > 0;
 
   return (
@@ -83,6 +99,20 @@ export function AIPanel({ projectId }: { projectId: number }) {
             >
               <RefreshCw className="w-3.5 h-3.5" />
               {retryMutation.isPending ? "重试中…" : "重试失败"}
+            </button>
+          )}
+          {status && (status.queued > 0 || status.running > 0) && (
+            <button
+              type="button"
+              onClick={() => {
+                if (!window.confirm("将强制停止当前项目中进行中的 AI 分析任务，确认继续？")) return;
+                forceStopMutation.mutate();
+              }}
+              disabled={forceStopMutation.isPending}
+              className="flex items-center gap-1 text-btn-sm font-bold text-danger hover:text-red-700 disabled:text-stone transition-colors"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              {forceStopMutation.isPending ? "停止中…" : "强制停止"}
             </button>
           )}
           <button

@@ -12,6 +12,7 @@ from ..schemas.ai import (
     AIJobListResponse,
     AIJobResponse,
     AIStatusResponse,
+    ForceStopResponse,
     RetryFailedResponse,
     StartAnalysisResponse,
 )
@@ -103,6 +104,7 @@ class ProjectAIJobsAppService:
         total = sum(counts.values())
 
         analyzed_count = self._uow.photos.count_analyzed(project_id)
+        total_photos = self._uow.photos.count_total(project_id)
         embedding_ready_count, embedding_failed_count, embedding_stale_count = (
             _get_project_embedding_counts(self._db, project_id)
         )
@@ -119,6 +121,7 @@ class ProjectAIJobsAppService:
             failed=counts.get("failed", 0),
             total=total,
             analyzed_count=analyzed_count,
+            total_photos=total_photos,
             embedding_ready_count=embedding_ready_count,
             embedding_missing_count=embedding_missing_count,
             embedding_failed_count=embedding_failed_count,
@@ -234,6 +237,24 @@ class ProjectAIJobsAppService:
 
         self._uow.commit()
         return {"deleted_jobs": count, "message": "Failed jobs cleared"}
+
+    def force_stop_active(self, project_id: int, *, job_type: Optional[str]) -> ForceStopResponse:
+        job_types = _parse_job_types(job_type)
+        stopped_jobs, stopped_queued, stopped_running = self._uow.ai_jobs.force_stop_active_for_project(
+            project_id,
+            job_types=job_types,
+        )
+        self._uow.commit()
+        if stopped_jobs <= 0:
+            message = "No active jobs to stop"
+        else:
+            message = "Active jobs force-stopped"
+        return ForceStopResponse(
+            stopped_jobs=stopped_jobs,
+            stopped_queued=stopped_queued,
+            stopped_running=stopped_running,
+            message=message,
+        )
 
 
 def _get_project_embedding_counts(
