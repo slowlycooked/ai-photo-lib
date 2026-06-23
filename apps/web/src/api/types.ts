@@ -478,6 +478,7 @@ export interface AppSettings {
   openai_model: string;
   openai_vision_model: string;
   ai_max_retries: number;
+  ai_worker_concurrency: number;
 }
 
 export interface SystemHealthCheck {

@@ -101,7 +101,7 @@ class Settings(BaseSettings):
     ai_vision_temperature: float = 0.1
     ai_max_retries: int = 3
     # Used by svc.sh/worker to control AI job concurrency; not read by the API.
-    ai_worker_concurrency: int = 1
+    ai_worker_concurrency: int = 2
     scan_thumbnail_concurrency: int = 4
     scan_queue_max_size: int = 200
     scan_db_write_batch_size: int = 20

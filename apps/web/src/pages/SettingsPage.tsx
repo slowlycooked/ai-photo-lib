@@ -1451,6 +1451,7 @@ export function SettingsPage() {
 
               <SettingsCard title="Worker 配置">
                 <SettingRow label="最大重试次数" value={data.ai_max_retries} />
+                <SettingRow label="并发任务数" value={data.ai_worker_concurrency} />
               </SettingsCard>
             </div>
           )}

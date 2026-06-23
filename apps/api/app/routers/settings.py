@@ -32,6 +32,7 @@ class SettingsResponse(BaseModel):
     openai_model: str
     openai_vision_model: str
     ai_max_retries: int
+    ai_worker_concurrency: int
 
 
 @router.get("", response_model=SettingsResponse)
@@ -51,6 +52,7 @@ def get_settings(_: object = Depends(require_admin)):
         openai_model=settings.openai_model,
         openai_vision_model=settings.openai_vision_model,
         ai_max_retries=settings.ai_max_retries,
+        ai_worker_concurrency=settings.ai_worker_concurrency,
     )
 
 
