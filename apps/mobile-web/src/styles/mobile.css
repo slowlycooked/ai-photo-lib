@@ -7,6 +7,14 @@
     box-sizing: border-box;
   }
 
+  html,
+  body,
+  #root {
+    min-height: 100%;
+    width: 100%;
+    overflow-x: hidden;
+  }
+
   body {
     @apply bg-mobileBg text-mobileInk font-sans antialiased;
   }
@@ -15,6 +23,9 @@
 @layer components {
   .mobile-page {
     min-height: 100vh;
+    min-height: 100dvh;
+    width: 100%;
+    overflow-x: hidden;
     background:
       radial-gradient(1200px 450px at 20% -20%, #d8efe5 0%, transparent 60%),
       radial-gradient(700px 380px at 100% 0%, #f3ead7 0%, transparent 55%),
@@ -41,6 +52,20 @@
     border-radius: 14px;
     border: 1px solid #d9dbd2;
     background: #ffffff;
+  }
+
+  .mobile-photo-viewer {
+    height: min(68vh, calc(100vh - 9rem));
+    min-height: min(260px, calc(100vh - 9rem));
+    max-height: calc(100vh - 9rem);
+  }
+
+  @supports (height: 100dvh) {
+    .mobile-photo-viewer {
+      height: min(68dvh, calc(100dvh - 9rem));
+      min-height: min(260px, calc(100dvh - 9rem));
+      max-height: calc(100dvh - 9rem);
+    }
   }
 
 }

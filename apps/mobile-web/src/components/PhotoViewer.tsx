@@ -23,11 +23,11 @@ export function PhotoViewer({
 }) {
   return (
     <div
-      className="relative overflow-hidden rounded-2xl border border-mobileHairline bg-black"
+      className="mobile-photo-viewer relative flex w-full items-center justify-center overflow-hidden rounded-2xl border border-mobileHairline bg-black"
       onTouchStart={swipeHandlers.onTouchStart}
       onTouchEnd={swipeHandlers.onTouchEnd}
     >
-      <img src={src} alt={alt} className="max-h-[62vh] w-full object-contain" />
+      <img src={src} alt={alt} className="block h-full w-full object-contain" />
 
       <button
         type="button"
