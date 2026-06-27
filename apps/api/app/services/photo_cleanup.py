@@ -9,6 +9,7 @@ from typing import List, Optional, Sequence
 
 from sqlalchemy.orm import Session
 
+from ..config import settings
 from ..models.photo import Photo
 from ..models.project import Project
 
@@ -70,6 +71,10 @@ def _relative_library_path(photo: Photo, project: Project) -> str:
         return photo.file_name
 
 
+def _ai_photo_data_root() -> Path:
+    return Path(settings.thumbnail_path).expanduser().resolve().parent
+
+
 def _queue_original_trash_request(db: Session, *, project_id: int, photo: Photo) -> bool:
     project = (
         db.query(Project)
@@ -78,12 +83,10 @@ def _queue_original_trash_request(db: Session, *, project_id: int, photo: Photo)
     )
     if project is None:
         raise ValueError("Project not found")
-    if not project.thumbnail_path:
-        raise ValueError("Project thumbnail path is not configured")
 
-    thumbnail_root = Path(project.thumbnail_path)
-    thumbnail_root.mkdir(parents=True, exist_ok=True)
-    manifest_path = thumbnail_root / ORIGINAL_TRASH_MANIFEST
+    data_root = _ai_photo_data_root()
+    data_root.mkdir(parents=True, exist_ok=True)
+    manifest_path = data_root / ORIGINAL_TRASH_MANIFEST
 
     payload = {
         "version": 1,

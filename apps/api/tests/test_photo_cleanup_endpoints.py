@@ -23,6 +23,7 @@ os.environ.setdefault("OPENAI_MODEL", "test-model")
 os.environ.setdefault("OPENAI_VISION_MODEL", "test-model")
 
 from app.api.deps import require_project, require_project_manager  # noqa: E402
+from app.config import settings  # noqa: E402
 from app.database import get_db  # noqa: E402
 from app.main import app  # noqa: E402
 from app.models.project import Project  # noqa: E402
@@ -148,7 +149,10 @@ class PhotoDeleteEndpointTest(unittest.TestCase):
         self._tmp_dir = tempfile.TemporaryDirectory()
         self._db_path = Path(self._tmp_dir.name) / "test.db"
         self._lib = Path(self._tmp_dir.name) / "library"
-        self._thumbs = Path(self._tmp_dir.name) / "thumbs"
+        self._ai_photo_data = Path(self._tmp_dir.name) / "ai-photo-data"
+        self._thumbs = self._ai_photo_data / "thumbs"
+        self._old_thumbnail_path = settings.thumbnail_path
+        settings.thumbnail_path = str(self._thumbs)
         self._lib.mkdir(parents=True, exist_ok=True)
         self._thumbs.mkdir(parents=True, exist_ok=True)
 
@@ -291,6 +295,7 @@ class PhotoDeleteEndpointTest(unittest.TestCase):
         self.client = TestClient(app)
 
     def tearDown(self) -> None:
+        settings.thumbnail_path = self._old_thumbnail_path
         app.dependency_overrides.clear()
         self._engine.dispose()
         self._tmp_dir.cleanup()
@@ -305,7 +310,7 @@ class PhotoDeleteEndpointTest(unittest.TestCase):
             )
 
     def _trash_manifest_entries(self) -> list[dict]:
-        manifest = self._thumbs / ORIGINAL_TRASH_MANIFEST
+        manifest = self._ai_photo_data / ORIGINAL_TRASH_MANIFEST
         if not manifest.exists():
             return []
         return [
@@ -346,6 +351,7 @@ class PhotoDeleteEndpointTest(unittest.TestCase):
         self.assertEqual(entries[0]["relative_path"], "manual-delete.jpg")
         self.assertEqual(entries[0]["absolute_path"], str(self._original))
         self.assertEqual(entries[0]["action"], "move_original_to_trash")
+        self.assertFalse((self._thumbs / ORIGINAL_TRASH_MANIFEST).exists())
 
     def test_delete_photo_record_post_compat_endpoint(self) -> None:
         res = self.client.post("/projects/1/photos/101/delete")
