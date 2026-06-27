@@ -100,7 +100,7 @@ export function TimelineGrid({ projectId, folderId, folderScope = "subtree" }: T
     onSuccess: (result) => {
       setSelectedPhotoIds([]);
       setBatchMessage(
-        `批量删除完成：删除 ${result.deleted_count} 张，未命中 ${result.not_found_photo_ids.length} 张。`,
+        `批量删除完成：删除 ${result.deleted_count} 张，写入 NAS 清单 ${result.queued_original_for_trash_count} 张，未命中 ${result.not_found_photo_ids.length} 张。`,
       );
       queryClient.invalidateQueries({ queryKey: queryKeys.photosBase(projectId ?? null) });
       queryClient.invalidateQueries({ queryKey: queryKeys.timeline(projectId ?? null) });
@@ -175,7 +175,7 @@ export function TimelineGrid({ projectId, folderId, folderScope = "subtree" }: T
       return;
     }
     const actionText = deleteOriginalInBatch
-      ? `删除 ${selectedCount} 张照片的库记录、缩略图和本地原图`
+      ? `删除 ${selectedCount} 张照片的库记录和缩略图，并把原图写入 NAS 垃圾箱清单`
       : `删除 ${selectedCount} 张照片的库记录和缩略图`;
     if (!window.confirm(`确认${actionText}吗？此操作不可恢复。`)) {
       return;
@@ -272,7 +272,7 @@ export function TimelineGrid({ projectId, folderId, folderScope = "subtree" }: T
                   onChange={(e) => setDeleteOriginalInBatch(e.target.checked)}
                   className="h-4 w-4"
                 />
-                同时删除本地原图
+                写入 NAS 垃圾箱清单
               </label>
               <button
                 type="button"

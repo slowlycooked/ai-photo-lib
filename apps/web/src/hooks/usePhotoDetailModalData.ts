@@ -70,8 +70,12 @@ export function usePhotoDetailModalData({
 
   const deletePhotoMutation = useMutation({
     mutationFn: () => api.projectPhotos.deleteRecord(projectId, photo.id, deleteOriginal),
-    onSuccess: () => {
-      setDeleteMessage(deleteOriginal ? "已删除库记录、缩略图和本地原图" : "已删除库记录和缩略图");
+    onSuccess: (result) => {
+      setDeleteMessage(
+        result.queued_original_for_trash
+          ? "已删除库记录和缩略图，原图已写入 NAS 垃圾箱清单"
+          : "已删除库记录和缩略图",
+      );
       queryClient.invalidateQueries({ queryKey: queryKeys.photosBase(projectId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.timeline(projectId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.tags(projectId) });
@@ -87,7 +91,9 @@ export function usePhotoDetailModalData({
   });
 
   function handleDeleteRecord() {
-    const actionText = deleteOriginal ? "删除库记录、缩略图并尝试删除本地原图" : "仅删除库记录和缩略图";
+    const actionText = deleteOriginal
+      ? "删除库记录和缩略图，并把原图写入 NAS 垃圾箱清单"
+      : "仅删除库记录和缩略图";
     if (!window.confirm(`确认${actionText}吗？`)) {
       return;
     }

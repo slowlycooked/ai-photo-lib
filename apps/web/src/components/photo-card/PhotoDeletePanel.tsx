@@ -23,7 +23,7 @@ export function PhotoDeletePanel({
         <div>
           <p className="text-body-sm font-semibold text-danger">手动清理</p>
           <p className="text-caption-sm text-mute mt-1">
-            默认仅删除库记录与缩略图，不会删除本地原图。
+            默认仅删除库记录与缩略图，不会直接操作本地原图。
           </p>
         </div>
         <button
@@ -47,7 +47,7 @@ export function PhotoDeletePanel({
           onChange={(e) => setDeleteOriginal(e.target.checked)}
           className="h-4 w-4"
         />
-        同时删除本地原图（hard copy 删除，谨慎操作）
+        将原图写入 NAS 垃圾箱清单（应用不直接删除原图）
       </label>
       {deleteMessage && <p className="mt-2 text-caption-sm text-mute">{deleteMessage}</p>}
     </div>

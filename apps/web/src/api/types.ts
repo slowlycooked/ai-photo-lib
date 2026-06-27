@@ -108,6 +108,7 @@ export interface PhotoDeleteResponse {
   photo_id: number;
   deleted_thumbnail: boolean;
   deleted_original: boolean;
+  queued_original_for_trash: boolean;
   message: string;
 }
 
@@ -124,6 +125,7 @@ export interface PhotoBatchDeleteResponse {
   not_found_photo_ids: number[];
   deleted_thumbnail_count: number;
   deleted_original_count: number;
+  queued_original_for_trash_count: number;
   message: string;
 }
 

@@ -56,8 +56,12 @@ export function SearchPhotoLightbox({
 
   const deletePhotoMutation = useMutation({
     mutationFn: () => api.projectPhotos.deleteRecord(projectId!, item.photo_id, deleteOriginal),
-    onSuccess: () => {
-      setDeleteMessage(deleteOriginal ? "已删除库记录、缩略图和本地原图" : "已删除库记录和缩略图");
+    onSuccess: (result) => {
+      setDeleteMessage(
+        result.queued_original_for_trash
+          ? "已删除库记录和缩略图，原图已写入 NAS 垃圾箱清单"
+          : "已删除库记录和缩略图",
+      );
       if (projectId != null) {
         queryClient.invalidateQueries({ queryKey: queryKeys.photosBase(projectId) });
         queryClient.invalidateQueries({ queryKey: queryKeys.timeline(projectId) });
@@ -72,7 +76,9 @@ export function SearchPhotoLightbox({
 
   function handleDeleteRecord() {
     if (projectId == null) return;
-    const actionText = deleteOriginal ? "删除库记录、缩略图并尝试删除本地原图" : "仅删除库记录和缩略图";
+    const actionText = deleteOriginal
+      ? "删除库记录和缩略图，并把原图写入 NAS 垃圾箱清单"
+      : "仅删除库记录和缩略图";
     if (!window.confirm(`确认${actionText}吗？`)) {
       return;
     }
@@ -164,9 +170,9 @@ export function SearchPhotoLightbox({
                     onChange={(e) => setDeleteOriginal(e.target.checked)}
                     className="h-3.5 w-3.5"
                   />
-                  同时删除本地原图（hard copy 删除）
+                  将原图写入 NAS 垃圾箱清单
                 </label>
-                <p className="text-[11px] text-white/65">默认只清理库记录与缩略图。</p>
+                <p className="text-[11px] text-white/65">默认只清理库记录与缩略图，不直接操作原图。</p>
                 {deleteMessage && <p className="text-[11px] text-white/70">{deleteMessage}</p>}
               </div>
             )}

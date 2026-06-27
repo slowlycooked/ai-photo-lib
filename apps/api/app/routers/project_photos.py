@@ -182,7 +182,9 @@ def delete_project_photo(
 ):
     """Delete a project photo record and cleanup thumbnail.
 
-    Original file deletion is opt-in through ``delete_original=true``.
+    Original file deletion is opt-in through ``delete_original=true``. When
+    requested, the app writes a NAS-side trash manifest instead of deleting the
+    original directly.
     """
     service = PhotoCleanupAppService(db)
     try:
@@ -194,9 +196,9 @@ def delete_project_photo(
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Original file not found on disk")
     except PermissionError:
-        raise HTTPException(status_code=403, detail="No permission to delete original file")
+        raise HTTPException(status_code=403, detail="No permission to write original trash manifest")
     except OSError as exc:
-        raise HTTPException(status_code=500, detail=f"Failed to delete original file: {exc}")
+        raise HTTPException(status_code=500, detail=f"Failed to record original trash request: {exc}")
     except ValueError:
         raise HTTPException(status_code=400, detail="Photo project mismatch")
 
@@ -205,6 +207,7 @@ def delete_project_photo(
         photo_id=result.photo_id,
         deleted_thumbnail=result.deleted_thumbnail,
         deleted_original=result.deleted_original,
+        queued_original_for_trash=result.queued_original_for_trash,
         message="Photo record deleted",
     )
 
@@ -216,7 +219,7 @@ def batch_delete_project_photos(
     _project: Project = Depends(require_project_manager),
     db: Session = Depends(get_db),
 ):
-    """Delete selected project photo records and optionally delete originals."""
+    """Delete selected project photo records and optionally queue originals for NAS trash."""
     service = PhotoCleanupAppService(db)
     try:
         result = service.delete_photo_records_batch(
@@ -227,9 +230,9 @@ def batch_delete_project_photos(
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Original file not found on disk")
     except PermissionError:
-        raise HTTPException(status_code=403, detail="No permission to delete original file")
+        raise HTTPException(status_code=403, detail="No permission to write original trash manifest")
     except OSError as exc:
-        raise HTTPException(status_code=500, detail=f"Failed to delete original file: {exc}")
+        raise HTTPException(status_code=500, detail=f"Failed to record original trash request: {exc}")
     except ValueError:
         raise HTTPException(status_code=400, detail="Photo project mismatch")
 
@@ -241,6 +244,7 @@ def batch_delete_project_photos(
         not_found_photo_ids=result.not_found_photo_ids,
         deleted_thumbnail_count=result.deleted_thumbnail_count,
         deleted_original_count=result.deleted_original_count,
+        queued_original_for_trash_count=result.queued_original_for_trash_count,
         message="Batch photo deletion completed",
     )
 

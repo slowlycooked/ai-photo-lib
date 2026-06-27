@@ -67,6 +67,7 @@ class PhotoDeleteResponse(BaseModel):
     photo_id: int
     deleted_thumbnail: bool
     deleted_original: bool
+    queued_original_for_trash: bool = False
     message: str
 
 
@@ -83,4 +84,5 @@ class PhotoBatchDeleteResponse(BaseModel):
     not_found_photo_ids: List[int]
     deleted_thumbnail_count: int
     deleted_original_count: int
+    queued_original_for_trash_count: int = 0
     message: str

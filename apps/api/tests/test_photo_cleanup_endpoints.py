@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import tempfile
 import unittest
@@ -29,6 +30,8 @@ from app.models.project_task import ProjectTask  # noqa: E402
 from app.services.project_task_app_service import ProjectTaskAppService  # noqa: E402
 from app.services.project_task_service import TASK_TYPE_LIBRARY_SCAN  # noqa: E402
 from app.services.scanner import scan_project  # noqa: E402
+
+ORIGINAL_TRASH_MANIFEST = "pending-original-trash.jsonl"
 
 
 SCHEMA_SQL = """
@@ -301,40 +304,62 @@ class PhotoDeleteEndpointTest(unittest.TestCase):
                 ).scalar_one()
             )
 
+    def _trash_manifest_entries(self) -> list[dict]:
+        manifest = self._thumbs / ORIGINAL_TRASH_MANIFEST
+        if not manifest.exists():
+            return []
+        return [
+            json.loads(line)
+            for line in manifest.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+
     def test_delete_photo_record_keeps_original_by_default(self) -> None:
         res = self.client.delete("/projects/1/photos/101")
         self.assertEqual(res.status_code, 200)
         body = res.json()
         self.assertFalse(body["deleted_original"])
+        self.assertFalse(body["queued_original_for_trash"])
         self.assertTrue(body["deleted_thumbnail"])
 
         self.assertEqual(self._count_photo(101), 0)
         self.assertTrue(self._original.exists())
         self.assertFalse(self._thumb.exists())
+        self.assertEqual(self._trash_manifest_entries(), [])
 
-    def test_delete_photo_record_can_delete_original_when_requested(self) -> None:
+    def test_delete_photo_record_queues_original_trash_request_when_requested(self) -> None:
         res = self.client.delete("/projects/1/photos/101?delete_original=true")
         self.assertEqual(res.status_code, 200)
         body = res.json()
-        self.assertTrue(body["deleted_original"])
+        self.assertFalse(body["deleted_original"])
+        self.assertTrue(body["queued_original_for_trash"])
         self.assertTrue(body["deleted_thumbnail"])
 
         self.assertEqual(self._count_photo(101), 0)
-        self.assertFalse(self._original.exists())
+        self.assertTrue(self._original.exists())
         self.assertFalse(self._thumb.exists())
+        entries = self._trash_manifest_entries()
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0]["project_id"], 1)
+        self.assertEqual(entries[0]["photo_id"], 101)
+        self.assertEqual(entries[0]["file_name"], "manual-delete.jpg")
+        self.assertEqual(entries[0]["relative_path"], "manual-delete.jpg")
+        self.assertEqual(entries[0]["absolute_path"], str(self._original))
+        self.assertEqual(entries[0]["action"], "move_original_to_trash")
 
     def test_delete_photo_record_post_compat_endpoint(self) -> None:
         res = self.client.post("/projects/1/photos/101/delete")
         self.assertEqual(res.status_code, 200)
         body = res.json()
         self.assertFalse(body["deleted_original"])
+        self.assertFalse(body["queued_original_for_trash"])
         self.assertTrue(body["deleted_thumbnail"])
 
         self.assertEqual(self._count_photo(101), 0)
         self.assertTrue(self._original.exists())
         self.assertFalse(self._thumb.exists())
 
-    def test_batch_delete_photo_records_and_originals(self) -> None:
+    def test_batch_delete_photo_records_and_queues_originals(self) -> None:
         res = self.client.post(
             "/projects/1/photos/batch-delete",
             json={"photo_ids": [101, 102], "delete_original": True},
@@ -343,16 +368,23 @@ class PhotoDeleteEndpointTest(unittest.TestCase):
         body = res.json()
         self.assertEqual(body["requested_count"], 2)
         self.assertEqual(body["deleted_count"], 2)
-        self.assertEqual(body["deleted_original_count"], 2)
+        self.assertEqual(body["deleted_original_count"], 0)
+        self.assertEqual(body["queued_original_for_trash_count"], 2)
         self.assertEqual(body["deleted_thumbnail_count"], 2)
         self.assertEqual(body["not_found_photo_ids"], [])
 
         self.assertEqual(self._count_photo(101), 0)
         self.assertEqual(self._count_photo(102), 0)
-        self.assertFalse(self._original.exists())
+        self.assertTrue(self._original.exists())
         self.assertFalse(self._thumb.exists())
-        self.assertFalse(self._batch_original.exists())
+        self.assertTrue(self._batch_original.exists())
         self.assertFalse(self._batch_thumb.exists())
+        entries = self._trash_manifest_entries()
+        self.assertEqual([entry["photo_id"] for entry in entries], [101, 102])
+        self.assertEqual(
+            [entry["relative_path"] for entry in entries],
+            ["manual-delete.jpg", "manual-delete-batch.jpg"],
+        )
 
     def test_batch_delete_keeps_project_isolation(self) -> None:
         res = self.client.post(
@@ -365,11 +397,15 @@ class PhotoDeleteEndpointTest(unittest.TestCase):
         self.assertEqual(body["deleted_count"], 1)
         self.assertEqual(body["deleted_photo_ids"], [101])
         self.assertEqual(body["not_found_photo_ids"], [201])
+        self.assertEqual(body["queued_original_for_trash_count"], 1)
 
         self.assertEqual(self._count_photo(101), 0)
         self.assertEqual(self._count_photo(201), 1)
+        self.assertTrue(self._original.exists())
         self.assertTrue(self._project2_original.exists())
         self.assertTrue(self._project2_thumb.exists())
+        entries = self._trash_manifest_entries()
+        self.assertEqual([entry["photo_id"] for entry in entries], [101])
 
     def test_scan_start_and_status_expose_fail_fast_config_error(self) -> None:
         with self._engine.begin() as conn:
