@@ -22,12 +22,19 @@
   }
 
   .mobile-grid {
-    columns: 2;
-    column-gap: 8px;
+    display: grid;
+    grid-template-columns: repeat(var(--mobile-grid-columns, 2), minmax(0, 1fr));
+    gap: 8px;
+    align-items: start;
+  }
+
+  .mobile-grid-column {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
   }
 
   .mobile-grid-item {
-    break-inside: avoid;
     margin-bottom: 8px;
     display: block;
     overflow: hidden;
@@ -36,9 +43,4 @@
     background: #ffffff;
   }
 
-  @media (min-width: 640px) {
-    .mobile-grid {
-      columns: 3;
-    }
-  }
 }
