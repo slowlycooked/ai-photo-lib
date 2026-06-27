@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from datetime import date
+import logging
+from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from ..api.deps import require_project, require_project_manager, require_project_photo
@@ -22,6 +24,7 @@ from ..schemas.photo import (
 from ..services.photo_cleanup_app_service import PhotoCleanupAppService
 from ..services.project_photo_asset_service import (
     PhotoBytesAsset,
+    PhotoFileAsset,
     PhotoPathOwnershipError,
     PhotoPreviewConversionError,
     ProjectPhotoAssetService,
@@ -29,6 +32,20 @@ from ..services.project_photo_asset_service import (
 from ..services.project_photos_query_service import ProjectPhotosQueryService
 
 router = APIRouter(prefix="/projects", tags=["projects-photos"])
+logger = logging.getLogger(__name__)
+
+
+def _photo_file_response(asset: PhotoFileAsset, *, label: str) -> Response:
+    path = Path(asset.path)
+    try:
+        content = path.read_bytes()
+    except PermissionError as exc:
+        logger.warning("%s_not_readable path=%s error=%s", label, path, exc)
+        raise HTTPException(status_code=403, detail=f"{label} file is not readable") from exc
+    except OSError as exc:
+        logger.warning("%s_read_failed path=%s error=%s", label, path, exc)
+        raise HTTPException(status_code=404, detail=f"{label} file not found") from exc
+    return Response(content=content, media_type=asset.media_type, headers=asset.headers)
 
 
 @router.get("/{project_id}/photos", response_model=PhotoListResponse)
@@ -95,11 +112,7 @@ def get_project_photo_thumbnail(
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    return FileResponse(
-        asset.path,
-        media_type=asset.media_type,
-        headers=asset.headers,
-    )
+    return _photo_file_response(asset, label="Thumbnail")
 
 
 @router.get("/{project_id}/photos/{photo_id}/original")
@@ -114,12 +127,7 @@ def get_project_photo_original(
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    return FileResponse(
-        asset.path,
-        media_type=asset.media_type,
-        filename=asset.filename,
-        headers=asset.headers,
-    )
+    return _photo_file_response(asset, label="Original")
 
 
 @router.get("/{project_id}/photos/{photo_id}/preview")
@@ -148,11 +156,7 @@ def get_project_photo_preview(
             headers=asset.headers,
         )
 
-    return FileResponse(
-        asset.path,
-        media_type=asset.media_type,
-        headers=asset.headers,
-    )
+    return _photo_file_response(asset, label="Preview")
 
 
 @router.get("/{project_id}/photos/{photo_id}/ai", response_model=AIAnalysisResponse)
