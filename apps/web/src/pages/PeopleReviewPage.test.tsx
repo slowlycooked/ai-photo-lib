@@ -285,7 +285,7 @@ describe("PeopleReviewPage", () => {
     renderPage();
 
     expect(await screen.findByText("人物 #101 · 爸爸")).toBeInTheDocument();
-    expect(screen.getByText("当前页待确认 2 张")).toBeInTheDocument();
+    expect(screen.getByText(/当前页待确认 2 张/)).toBeInTheDocument();
     expect(screen.getByText("face #501")).toBeInTheDocument();
     expect(screen.getByText("face #502")).toBeInTheDocument();
   });
