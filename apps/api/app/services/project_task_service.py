@@ -196,6 +196,8 @@ def enqueue_face_rematch_unknown_task(
     person_id: Optional[int] = None,
     start_time: Optional[str] = None,
     end_time: Optional[str] = None,
+    trigger: Optional[str] = None,
+    schedule: Optional[str] = None,
 ) -> EnqueueProjectTaskResult:
     request_params: dict[str, object] = {"max_faces": max_faces, "scope": scope}
     if person_id is not None:
@@ -204,6 +206,10 @@ def enqueue_face_rematch_unknown_task(
         request_params["start_time"] = start_time
     if end_time:
         request_params["end_time"] = end_time
+    if trigger:
+        request_params["trigger"] = trigger
+    if schedule:
+        request_params["schedule"] = schedule
     return enqueue_unique_project_task(
         db,
         project_id=project_id,

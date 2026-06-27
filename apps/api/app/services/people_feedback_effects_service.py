@@ -12,6 +12,7 @@ _DEFAULT_MANUAL_REMATCH_MAX_FACES = 1000
 
 @dataclass
 class PeopleFeedbackEffects:
+    project_id: Optional[int] = None
     prototype_rebuilt: bool = False
     rebuilt_person_ids: list[int] = field(default_factory=list)
     unknown_rematch_requested: bool = False
@@ -42,6 +43,7 @@ class PeopleFeedbackEffectsService:
     ) -> None:
         unique_person_ids = sorted({int(person_id) for person_id in rebuilt_person_ids})
         effects = PeopleFeedbackEffects(
+            project_id=project_id,
             prototype_rebuilt=bool(unique_person_ids),
             rebuilt_person_ids=unique_person_ids,
         )

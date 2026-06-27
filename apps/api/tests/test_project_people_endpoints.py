@@ -17,8 +17,11 @@ os.environ.setdefault("OPENAI_BASE_URL", "http://127.0.0.1:9999/v1")
 os.environ.setdefault("OPENAI_MODEL", "test-model")
 os.environ.setdefault("OPENAI_VISION_MODEL", "test-model")
 
+from app.api.deps import get_current_user  # noqa: E402
+from app.config import settings  # noqa: E402
 from app.database import get_db  # noqa: E402
 from app.main import app  # noqa: E402
+from app.schemas.user import CurrentUser  # noqa: E402
 
 
 SCHEMA_SQL = """
@@ -127,6 +130,28 @@ CREATE TABLE person_face_assignments (
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE project_tasks (
+  id INTEGER PRIMARY KEY,
+  project_id INTEGER NOT NULL,
+  task_type TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'queued',
+  retry_count INTEGER NOT NULL DEFAULT 0,
+  request_params JSON,
+  progress_payload JSON,
+  result_payload JSON,
+  error_message TEXT,
+  locked_by TEXT,
+  locked_at TEXT,
+  heartbeat_at TEXT,
+  lease_expires_at TEXT,
+  last_error_code TEXT,
+  last_error_at TEXT,
+  started_at TEXT,
+  finished_at TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 """
 
 SEED_SQL = """
@@ -162,6 +187,8 @@ INSERT INTO person_face_assignments (
 
 class ProjectPeopleEndpointsTest(unittest.TestCase):
     def setUp(self) -> None:
+        self._auth_enabled_before = settings.auth_enabled
+        settings.auth_enabled = False
         self._tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
         self._tmp.close()
         self._engine = sa.create_engine(
@@ -188,10 +215,21 @@ class ProjectPeopleEndpointsTest(unittest.TestCase):
             finally:
                 db.close()
 
+        def override_get_current_user() -> CurrentUser:
+            return CurrentUser(
+                id=None,
+                username="test-admin",
+                display_name="Test Admin",
+                role="admin",
+                bootstrap=True,
+            )
+
         app.dependency_overrides[get_db] = override_get_db
+        app.dependency_overrides[get_current_user] = override_get_current_user
         self.client = TestClient(app)
 
     def tearDown(self) -> None:
+        settings.auth_enabled = self._auth_enabled_before
         app.dependency_overrides.clear()
         self._engine.dispose()
         if os.path.exists(self._tmp.name):
@@ -226,6 +264,66 @@ class ProjectPeopleEndpointsTest(unittest.TestCase):
       body = res.json()
       self.assertEqual(body["person"]["display_name"], "妈妈")
       self.assertTrue(body["person"]["is_named"])
+
+    def test_renaming_unnamed_cluster_promotes_active_faces_to_positive_samples(self) -> None:
+      with self._engine.begin() as conn:
+        conn.execute(
+          sa.text(
+            """
+            INSERT INTO face_detections (
+              id, project_id, photo_id, bbox_x, bbox_y, bbox_w, bbox_h, status
+            )
+            VALUES (303, 1, 13, 18, 18, 20, 20, 'embedded')
+            """
+          )
+        )
+        conn.execute(
+          sa.text(
+            """
+            INSERT INTO person_face_assignments (
+              id, project_id, person_id, face_detection_id, assignment_status,
+              assignment_source, confidence, similarity_score, is_positive_sample, is_training_candidate
+            )
+            VALUES (503, 1, 102, 303, 'review_pending', 'unknown_cluster', 0.73, 0.64, 0, 1)
+            """
+          )
+        )
+
+      res = self.client.patch(
+        "/projects/1/people/102",
+        json={"display_name": "妈妈"},
+      )
+
+      self.assertEqual(res.status_code, 200)
+      body = res.json()
+      self.assertEqual(body["person"]["sample_count"], 1)
+      self.assertEqual(body["person"]["confirmed_sample_count"], 1)
+      self.assertEqual(body["person"]["review_pending_count"], 0)
+      self.assertTrue(body["feedback_effects"]["prototype_rebuilt"])
+      self.assertEqual(body["feedback_effects"]["rebuilt_person_ids"], [102])
+      self.assertEqual(body["feedback_effects"]["unknown_rematch_scope"], "person")
+      self.assertEqual(body["feedback_effects"]["unknown_rematch_person_id"], 102)
+      self.assertTrue(body["feedback_effects"]["unknown_rematch_task_created"])
+
+      detail = self.client.get("/projects/1/people/102").json()
+      target = [a for a in detail["assignments"] if a["face_detection_id"] == 303][0]
+      self.assertEqual(target["assignment_status"], "human_confirmed")
+      self.assertEqual(target["assignment_source"], "human_label")
+      self.assertTrue(target["is_positive_sample"])
+
+      with self._engine.connect() as conn:
+        task = conn.execute(
+          sa.text(
+            """
+            SELECT task_type, status, request_params
+            FROM project_tasks
+            WHERE project_id = 1
+            """
+          )
+        ).first()
+      self.assertIsNotNone(task)
+      self.assertEqual(task[0], "face_rematch_unknown")
+      self.assertEqual(task[1], "queued")
 
     def test_confirm_face_assignment_promotes_to_positive(self) -> None:
       res = self.client.post("/projects/1/people/101/faces/302/confirm")

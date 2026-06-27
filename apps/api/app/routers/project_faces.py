@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from pathlib import Path
+import logging
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import FileResponse
+from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from ..api.deps import get_db, require_project, require_project_photo
@@ -53,6 +53,7 @@ from ..services.face_scan_service import FaceScanService
 from ..services.unknown_face_clustering_service import cluster_unknown_faces
 
 router = APIRouter(prefix="/projects", tags=["project-faces"])
+logger = logging.getLogger(__name__)
 
 
 @router.post("/{project_id}/photos/{photo_id}/face-scan", response_model=FaceScanResponse)
@@ -287,8 +288,29 @@ def get_project_face_crop(
     except FaceCropNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
-    return FileResponse(
-        str(crop_path),
+    try:
+        crop_bytes = crop_path.read_bytes()
+    except PermissionError as exc:
+        logger.warning(
+            "face_crop_not_readable project_id=%s face_id=%s path=%s error=%s",
+            project_id,
+            face_id,
+            crop_path,
+            exc,
+        )
+        raise HTTPException(status_code=403, detail="Face crop file is not readable") from exc
+    except OSError as exc:
+        logger.warning(
+            "face_crop_read_failed project_id=%s face_id=%s path=%s error=%s",
+            project_id,
+            face_id,
+            crop_path,
+            exc,
+        )
+        raise HTTPException(status_code=404, detail="Face crop file not found") from exc
+
+    return Response(
+        content=crop_bytes,
         media_type="image/jpeg",
         headers={"Cache-Control": "no-cache, must-revalidate"},
     )

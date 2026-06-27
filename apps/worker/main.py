@@ -50,6 +50,7 @@ from app.schemas.debug_config import build_default_debug_config
 from app.services.aijob_app_service import AIJobAppService
 from app.services.project_task_app_service import ProjectTaskAppService
 from app.services.embedding_client import close_all as close_all_embedding_clients
+from app.services.face_auto_rematch_scheduler import FaceAutoRematchScheduler
 from app.services.runtime_settings_service import (
     RuntimeSettingsService,
     RuntimeSettingsStorageUnavailableError,
@@ -75,6 +76,7 @@ _last_debug_config_refresh: float = 0.0
 _last_debug_matrix: Optional[dict] = None
 _RECOVERY_SCAN_INTERVAL = 30
 _last_recovery_scan: float = 0.0
+_last_auto_rematch_scan: float = 0.0
 
 
 def _handle_signal(signum, frame):
@@ -186,6 +188,24 @@ def _collect_completed_futures(inflight: Set[Future]) -> None:
             logger.exception("worker_task_future_failed")
 
 
+def _maybe_schedule_auto_face_rematch(db) -> None:
+    global _last_auto_rematch_scan
+    interval = max(60, int(settings.face_auto_rematch_check_interval_seconds or 3600))
+    now = time.monotonic()
+    if now - _last_auto_rematch_scan < interval:
+        return
+    _last_auto_rematch_scan = now
+    result = FaceAutoRematchScheduler(db).run_once()
+    if result.projects_checked or result.tasks_created or result.tasks_reused:
+        logger.info(
+            "face_auto_rematch_checked projects=%d created=%d reused=%d skipped_recent=%d",
+            result.projects_checked,
+            result.tasks_created,
+            result.tasks_reused,
+            result.skipped_recent,
+        )
+
+
 def run() -> None:
     global _last_recovery_scan
 
@@ -230,6 +250,7 @@ def run() -> None:
                                     recovered["project_tasks"],
                                     recovered["ai_jobs"],
                                 )
+                        _maybe_schedule_auto_face_rematch(db)
 
                         for _ in range(available_slots):
                             claimed = claim_service.claim_next()

@@ -8,7 +8,11 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from ..models.face import FaceNegativeConstraint, Person, PersonCannotLink, PersonFaceAssignment
-from .people_assignment_constants import STATUS_HUMAN_CORRECTED, STATUS_REJECTED
+from .people_assignment_constants import (
+    STATUS_HUMAN_CONFIRMED,
+    STATUS_HUMAN_CORRECTED,
+    STATUS_REJECTED,
+)
 from .people_assignment_store import PeopleAssignmentStore
 from .people_lookup_service import PeopleLookupService
 from .people_negative_constraint_service import PeopleNegativeConstraintService
@@ -61,18 +65,46 @@ class PersonLifecycleMutationService:
         project_id: int,
         person_id: int,
         display_name: str,
-    ) -> Person:
+    ) -> tuple[Person, bool]:
         person = self._lookup.get_person_or_404(project_id, person_id)
         resolved_display_name = display_name.strip()
         if not resolved_display_name:
             raise HTTPException(status_code=422, detail="display_name cannot be empty")
+        was_named = bool(person.is_named)
+        now = datetime.now(timezone.utc)
         person.display_name = resolved_display_name
         person.normalized_name = resolved_display_name.lower()
         person.is_named = True
-        person.updated_at = datetime.now(timezone.utc)
+        person.updated_at = now
+
+        promoted_to_label = False
+        if not was_named:
+            active_assignments = (
+                self._db.query(PersonFaceAssignment)
+                .filter(
+                    PersonFaceAssignment.project_id == project_id,
+                    PersonFaceAssignment.person_id == person_id,
+                    PersonFaceAssignment.assignment_status != STATUS_REJECTED,
+                )
+                .order_by(PersonFaceAssignment.id.asc())
+                .all()
+            )
+            for assignment in active_assignments:
+                assignment.assignment_status = STATUS_HUMAN_CONFIRMED
+                assignment.assignment_source = "human_label"
+                assignment.is_positive_sample = True
+                assignment.is_training_candidate = True
+                assignment.updated_at = now
+                promoted_to_label = True
+
+            if person.representative_face_detection_id is None and active_assignments:
+                person.representative_face_detection_id = active_assignments[0].face_detection_id
+
+            self._finalizer.finalize(project_id=project_id, person_ids=[person_id])
+
         self._db.commit()
         self._db.refresh(person)
-        return person
+        return person, promoted_to_label
 
     def delete_person(
         self,

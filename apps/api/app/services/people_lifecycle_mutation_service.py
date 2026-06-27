@@ -59,12 +59,17 @@ class PeopleLifecycleMutationService:
         display_name: str,
     ) -> Person:
         self._reset_feedback_effects()
-        person = self._lifecycle.rename_person(
+        person, promoted_to_label = self._lifecycle.rename_person(
             project_id=project_id,
             person_id=person_id,
             display_name=display_name,
         )
-        self._set_feedback_effects(project_id=project_id, rebuilt_person_ids=[])
+        self._set_feedback_effects(
+            project_id=project_id,
+            rebuilt_person_ids=[person_id] if promoted_to_label else [],
+            rematch_scope="person" if promoted_to_label else None,
+            rematch_person_id=person_id if promoted_to_label else None,
+        )
         return person
 
     def delete_person(

@@ -178,6 +178,10 @@ class Settings(BaseSettings):
     face_require_human_confirmation_for_new_person: bool = True
     face_enable_negative_constraints: bool = True
     face_enable_person_cannot_links: bool = True
+    face_auto_rematch_enabled: bool = True
+    face_auto_rematch_schedule: str = "daily"
+    face_auto_rematch_max_faces: int = 5000
+    face_auto_rematch_check_interval_seconds: int = 3600
 
     @model_validator(mode="after")
     def _set_host_path_default(self) -> "Settings":
