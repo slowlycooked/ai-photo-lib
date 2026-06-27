@@ -1,9 +1,11 @@
 import { AlertCircle, Loader2, ScanFace } from "lucide-react";
+import { useState } from "react";
 import { Link, Navigate } from "react-router-dom";
 import { api } from "@/api";
 import { usePeopleReviewPage } from "@/hooks/usePeopleReviewPage";
 
 export function PeopleReviewPage() {
+  const [movePickerPersonId, setMovePickerPersonId] = useState<number | null>(null);
   const {
     routeProjectId,
     currentProject,
@@ -18,6 +20,7 @@ export function PeopleReviewPage() {
     peopleById,
     reviewData,
     isLoading,
+    isFetching,
     error,
     maxPage,
     moveTargets,
@@ -75,10 +78,10 @@ export function PeopleReviewPage() {
         <button
           type="button"
           className="px-3 py-1.5 rounded-md border border-hairline text-body-sm disabled:opacity-50"
-          disabled={page >= maxPage}
+          disabled={page >= maxPage || isFetching}
           onClick={() => setPage((prev) => Math.min(maxPage, prev + 1))}
         >
-          下一页
+          {isFetching ? "加载中..." : "下一页"}
         </button>
       </div>
 
@@ -102,6 +105,7 @@ export function PeopleReviewPage() {
             const faceIds = items.map((item) => item.face_detection_id);
             const targetCandidates = (peopleData?.items ?? []).filter((item) => item.id !== personId);
             const currentMoveTarget = moveTargets[personId] ?? targetCandidates[0]?.id ?? null;
+            const movePickerOpen = movePickerPersonId === personId;
 
             return (
               <section key={personId} className="bg-canvas rounded-xl border border-hairline p-4 space-y-3">
@@ -129,7 +133,17 @@ export function PeopleReviewPage() {
                     >
                       批量排除
                     </button>
-                    {targetCandidates.length > 0 && currentMoveTarget != null && (
+                    {targetCandidates.length > 0 && currentMoveTarget != null && !movePickerOpen && (
+                      <button
+                        type="button"
+                        disabled={actionBusy}
+                        onClick={() => setMovePickerPersonId(personId)}
+                        className="px-2.5 py-1 rounded-md border border-hairline text-caption-sm hover:bg-surface-card disabled:opacity-50"
+                      >
+                        移动到...
+                      </button>
+                    )}
+                    {targetCandidates.length > 0 && currentMoveTarget != null && movePickerOpen && (
                       <>
                         <select
                           className="px-2 py-1 rounded-md border border-hairline bg-canvas text-caption-sm"
@@ -152,6 +166,13 @@ export function PeopleReviewPage() {
                         >
                           批量移动
                         </button>
+                        <button
+                          type="button"
+                          onClick={() => setMovePickerPersonId(null)}
+                          className="px-2.5 py-1 rounded-md border border-hairline text-caption-sm hover:bg-surface-card"
+                        >
+                          收起
+                        </button>
                       </>
                     )}
                   </div>
@@ -169,6 +190,8 @@ export function PeopleReviewPage() {
                               assignment.face_detection.updated_at,
                             )}
                             alt={`face-${assignment.face_detection.id}`}
+                            loading="lazy"
+                            decoding="async"
                             className="w-full h-full object-cover"
                           />
                         ) : (
@@ -215,6 +238,8 @@ export function PeopleReviewPage() {
                                   assignment.face_detection.updated_at,
                                 )}
                                 alt={`face-${assignment.face_detection.id}`}
+                                loading="lazy"
+                                decoding="async"
                                 className="w-full h-full object-cover"
                               />
                             ) : (

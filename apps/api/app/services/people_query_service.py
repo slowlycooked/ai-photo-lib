@@ -53,7 +53,13 @@ class PeopleQueryService:
             self._get_person_or_404(project_id, person_id)
             query = query.filter(PersonFaceAssignment.person_id == person_id)
 
-        total = query.count()
+        total_query = self._db.query(PersonFaceAssignment.id).filter(
+            PersonFaceAssignment.project_id == project_id,
+            PersonFaceAssignment.assignment_status == STATUS_REVIEW_PENDING,
+        )
+        if person_id is not None:
+            total_query = total_query.filter(PersonFaceAssignment.person_id == person_id)
+        total = total_query.count()
         rows = (
             query.order_by(
                 PersonFaceAssignment.updated_at.desc(),

@@ -7,7 +7,7 @@ import { useProjectContext } from "@/contexts/ProjectContext";
 import { formatBatchFeedbackToast } from "@/lib/peopleFeedback";
 import { isArchivedPerson } from "@/lib/personArchive";
 
-const PAGE_SIZE = 80;
+const PAGE_SIZE = 40;
 
 function buildRequestId(): string {
   try {
@@ -40,11 +40,12 @@ export function usePeopleReviewPage() {
     enabled: selectedProjectId > 0,
   });
 
-  const { data: reviewData, isLoading, error } = useQuery({
+  const { data: reviewData, isLoading, isFetching, error } = useQuery({
     queryKey: ["project-review-page", selectedProjectId, page],
     queryFn: () =>
       api.projectPeople.reviewPending(selectedProjectId, null, PAGE_SIZE, (page - 1) * PAGE_SIZE),
     enabled: selectedProjectId > 0,
+    placeholderData: (previousData) => previousData,
   });
 
   const peopleById = useMemo(() => {
@@ -190,6 +191,7 @@ export function usePeopleReviewPage() {
     peopleById,
     reviewData,
     isLoading,
+    isFetching,
     error,
     maxPage,
     moveTargets,

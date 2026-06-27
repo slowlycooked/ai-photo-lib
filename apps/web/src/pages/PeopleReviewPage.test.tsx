@@ -90,7 +90,7 @@ const peopleResponse: PersonListResponse = {
 function buildReviewResponse(page: number): PersonReviewListResponse {
   if (page === 2) {
     return {
-      total: 81,
+      total: 41,
       items: [
         {
           id: 903,
@@ -129,7 +129,7 @@ function buildReviewResponse(page: number): PersonReviewListResponse {
   }
 
   return {
-    total: 81,
+    total: 41,
     items: [
       {
         id: 901,
@@ -238,7 +238,7 @@ describe("PeopleReviewPage", () => {
 
     peopleMock.mockResolvedValue(peopleResponse);
     reviewPendingMock.mockImplementation((projectId: number, personId: number | null, limit: number, offset: number) => {
-      const page = offset >= 80 ? 2 : 1;
+      const page = offset >= 40 ? 2 : 1;
       return Promise.resolve(buildReviewResponse(page));
     });
 
@@ -302,7 +302,7 @@ describe("PeopleReviewPage", () => {
     });
     expect(await screen.findByText(/人物\s*#\s*103/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "批量确认" })).toBeInTheDocument();
-    expect(reviewPendingMock).toHaveBeenLastCalledWith(1, null, 80, 80);
+    expect(reviewPendingMock).toHaveBeenLastCalledWith(1, null, 40, 40);
   });
 
   it("triggers batch confirm for the grouped faces", async () => {
@@ -333,6 +333,7 @@ describe("PeopleReviewPage", () => {
     renderPage();
 
     await screen.findByText("人物 #101 · 爸爸");
+    await user.click(screen.getByRole("button", { name: "移动到..." }));
     await user.selectOptions(screen.getByRole("combobox"), "102");
     await user.click(screen.getByRole("button", { name: "批量移动" }));
 
