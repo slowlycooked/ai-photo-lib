@@ -41,6 +41,7 @@ export function PeoplePage() {
     setSelectedPersonId,
     setMergeTargetId,
     toggleSelectPerson,
+    archivePerson,
     archiveSelectedPerson,
     archiveSelectedPeople,
     unarchivePerson,
@@ -50,6 +51,7 @@ export function PeoplePage() {
     loadMoreAssignments,
     createPerson,
     mergeSelectedPerson,
+    deletePerson,
     deleteSelectedPerson,
     renameSelectedPerson,
     confirmFace,
@@ -111,7 +113,7 @@ export function PeoplePage() {
         }}
       />
 
-      <div className="grid grid-cols-1 xl:grid-cols-[360px_minmax(0,1fr)] gap-5">
+      <div className="grid grid-cols-1 gap-5 lg:h-[calc(100vh-260px)] lg:min-h-[560px] lg:grid-cols-[360px_minmax(0,1fr)] lg:overflow-hidden">
         <PeopleSidebar
           projectId={selectedProjectId}
           faceCropEnabled={faceCropEnabled}
@@ -122,12 +124,15 @@ export function PeoplePage() {
           peopleLoading={peopleLoading}
           peopleError={peopleError as Error | null}
           selectedPersonId={resolvedSelectedPersonId}
+          actionBusy={actionBusy}
           onSelectPerson={setSelectedPersonId}
           onToggleSelectPerson={toggleSelectPerson}
+          onArchivePerson={archivePerson}
+          onDeletePerson={deletePerson}
           onUnarchivePerson={unarchivePerson}
         />
 
-        <section>
+        <section className="min-h-0 lg:overflow-y-auto lg:overscroll-contain lg:pr-1">
           <PersonDetailPanel
             projectId={selectedProjectId}
             faceCropEnabled={faceCropEnabled}

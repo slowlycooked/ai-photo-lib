@@ -12,8 +12,11 @@ export function PeopleSidebar({
   peopleLoading,
   peopleError,
   selectedPersonId,
+  actionBusy,
   onSelectPerson,
   onToggleSelectPerson,
+  onArchivePerson,
+  onDeletePerson,
   onUnarchivePerson,
 }: {
   projectId: number;
@@ -25,12 +28,15 @@ export function PeopleSidebar({
   peopleLoading: boolean;
   peopleError: Error | null;
   selectedPersonId: number | null;
+  actionBusy: boolean;
   onSelectPerson: (personId: number) => void;
   onToggleSelectPerson: (personId: number, checked: boolean) => void;
+  onArchivePerson: (personId: number) => void;
+  onDeletePerson: (personId: number) => void;
   onUnarchivePerson: (personId: number) => void;
 }) {
   return (
-    <section className="space-y-3">
+    <section className="min-h-0 space-y-3 lg:h-full lg:overflow-y-auto lg:overscroll-contain lg:pr-1">
       <div className="bg-canvas rounded-xl border border-hairline p-4">
         <div className="flex items-center gap-2 mb-2">
           <Users className="w-4 h-4 text-primary" />
@@ -67,8 +73,14 @@ export function PeopleSidebar({
               selected={selectedPersonId === person.id}
               checked={selectedPersonIds.includes(person.id)}
               showCheckbox
+              actionBusy={actionBusy}
               onSelect={() => onSelectPerson(person.id)}
               onToggleChecked={(checked) => onToggleSelectPerson(person.id, checked)}
+              onArchive={() => onArchivePerson(person.id)}
+              onDelete={() => {
+                if (!window.confirm("删除人物前，请确保没有 active assignment。确认继续？")) return;
+                onDeletePerson(person.id);
+              }}
             />
           ))}
 

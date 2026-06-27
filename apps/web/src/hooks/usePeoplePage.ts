@@ -384,18 +384,25 @@ export function usePeoplePage() {
     onError: handleError,
   });
 
+  const selectNextManagedPerson = (removedPersonIds: Set<number>) => {
+    const nextCandidate = managedPeople.find((person) => !removedPersonIds.has(person.id));
+    const next = new URLSearchParams(searchParams);
+    if (nextCandidate) {
+      next.set("person_id", String(nextCandidate.id));
+    } else {
+      next.delete("person_id");
+    }
+    setSearchParams(next, { replace: true });
+  };
+
   const deletePersonMutation = useMutation({
-    mutationFn: () => api.projectPeople.delete(selectedProjectId!, resolvedSelectedPersonId!),
-    onSuccess: () => {
+    mutationFn: (personId: number) => api.projectPeople.delete(selectedProjectId!, personId),
+    onSuccess: (_result, deletedPersonId) => {
       handleSuccess("人物已删除");
-      const nextCandidate = people.find((person) => person.id !== resolvedSelectedPersonId);
-      const next = new URLSearchParams(searchParams);
-      if (nextCandidate) {
-        next.set("person_id", String(nextCandidate.id));
-      } else {
-        next.delete("person_id");
+      setSelectedPersonIds((prev) => prev.filter((id) => id !== deletedPersonId));
+      if (resolvedSelectedPersonId === deletedPersonId) {
+        selectNextManagedPerson(new Set([deletedPersonId]));
       }
-      setSearchParams(next, { replace: true });
     },
     onError: handleError,
   });
@@ -471,10 +478,27 @@ export function usePeoplePage() {
 
   const archiveSelectedPerson = () => {
     if (selectedProjectId == null || resolvedSelectedPersonId == null) return;
-    const updated = archivePersonManually(selectedProjectId, resolvedSelectedPersonId);
-    const managedUpdated = unforceManagePersonManually(selectedProjectId, resolvedSelectedPersonId);
+    const archivedPersonId = resolvedSelectedPersonId;
+    const updated = archivePersonManually(selectedProjectId, archivedPersonId);
+    const managedUpdated = unforceManagePersonManually(selectedProjectId, archivedPersonId);
     setManualArchivedPersonIds(updated);
     setManualManagedPersonIds(managedUpdated);
+    setSelectedPersonIds((prev) => prev.filter((id) => id !== archivedPersonId));
+    selectNextManagedPerson(new Set([archivedPersonId]));
+    setStatusMessage("已加入 archive，后续不再出现在管理列表");
+    setErrorMessage(null);
+  };
+
+  const archivePerson = (personId: number) => {
+    if (selectedProjectId == null) return;
+    const updated = archivePersonManually(selectedProjectId, personId);
+    const managedUpdated = unforceManagePersonManually(selectedProjectId, personId);
+    setManualArchivedPersonIds(updated);
+    setManualManagedPersonIds(managedUpdated);
+    setSelectedPersonIds((prev) => prev.filter((id) => id !== personId));
+    if (resolvedSelectedPersonId === personId) {
+      selectNextManagedPerson(new Set([personId]));
+    }
     setStatusMessage("已加入 archive，后续不再出现在管理列表");
     setErrorMessage(null);
   };
@@ -483,6 +507,7 @@ export function usePeoplePage() {
     if (selectedProjectId == null || selectedPersonIds.length === 0) return;
     let updated = getManualArchivedPersonIds(selectedProjectId);
     let managedUpdated = getManualManagedPersonIds(selectedProjectId);
+    const archivedIds = new Set(selectedPersonIds);
     for (const personId of selectedPersonIds) {
       updated = archivePersonManually(selectedProjectId, personId);
       managedUpdated = unforceManagePersonManually(selectedProjectId, personId);
@@ -490,6 +515,9 @@ export function usePeoplePage() {
     setManualArchivedPersonIds(updated);
     setManualManagedPersonIds(managedUpdated);
     setSelectedPersonIds([]);
+    if (resolvedSelectedPersonId != null && archivedIds.has(resolvedSelectedPersonId)) {
+      selectNextManagedPerson(archivedIds);
+    }
     setStatusMessage(`已将 ${selectedPersonIds.length} 个人物加入 archive`);
     setErrorMessage(null);
   };
@@ -539,6 +567,7 @@ export function usePeoplePage() {
     setSelectedPersonId,
     setMergeTargetId,
     toggleSelectPerson,
+    archivePerson,
     archiveSelectedPerson,
     archiveSelectedPeople,
     unarchivePerson,
@@ -565,7 +594,11 @@ export function usePeoplePage() {
       if (!moveCandidates.some((person) => person.id === mergeTargetId)) return;
       mergePersonMutation.mutate(mergeTargetId);
     },
-    deleteSelectedPerson: () => deletePersonMutation.mutate(),
+    deletePerson: (personId: number) => deletePersonMutation.mutate(personId),
+    deleteSelectedPerson: () => {
+      if (resolvedSelectedPersonId == null) return;
+      deletePersonMutation.mutate(resolvedSelectedPersonId);
+    },
     renameSelectedPerson: (displayName: string) => renameMutation.mutate(displayName.trim()),
     confirmFace: (faceId: number) => confirmMutation.mutate(faceId),
     rejectFace: (faceId: number) => rejectMutation.mutate(faceId),

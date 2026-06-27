@@ -1,11 +1,15 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
 import type { PersonFaceAssignment } from "@/api";
 import { api } from "@/api";
 import { useProjectContext } from "@/contexts/ProjectContext";
 import { formatBatchFeedbackToast } from "@/lib/peopleFeedback";
-import { isArchivedPerson } from "@/lib/personArchive";
+import {
+  archivePersonManually,
+  getManualArchivedPersonIds,
+  isArchivedPerson,
+} from "@/lib/personArchive";
 
 const PAGE_SIZE = 40;
 
@@ -29,10 +33,19 @@ export function usePeopleReviewPage() {
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [moveTargets, setMoveTargets] = useState<Record<number, number>>({});
+  const [manualArchivedPersonIds, setManualArchivedPersonIds] = useState<Set<number>>(new Set());
 
   const selectedProjectId = Number.isFinite(routeProjectId)
     ? routeProjectId
     : (currentProject?.id ?? 0);
+
+  useEffect(() => {
+    if (selectedProjectId <= 0) {
+      setManualArchivedPersonIds(new Set());
+      return;
+    }
+    setManualArchivedPersonIds(getManualArchivedPersonIds(selectedProjectId));
+  }, [selectedProjectId]);
 
   const { data: peopleData } = useQuery({
     queryKey: ["project-people", selectedProjectId],
@@ -57,14 +70,14 @@ export function usePeopleReviewPage() {
   }, [peopleData?.items]);
 
   const archivedPersonIds = useMemo(() => {
-    const ids = new Set<number>();
+    const ids = new Set<number>(manualArchivedPersonIds);
     for (const person of peopleData?.items ?? []) {
       if (isArchivedPerson(person)) {
         ids.add(person.id);
       }
     }
     return ids;
-  }, [peopleData?.items]);
+  }, [manualArchivedPersonIds, peopleData?.items]);
 
   const grouped = useMemo(() => {
     const map = new Map<number, PersonFaceAssignment[]>();
@@ -172,10 +185,32 @@ export function usePeopleReviewPage() {
     },
   });
 
+  const deletePersonMutation = useMutation({
+    mutationFn: (personId: number) => api.projectPeople.delete(selectedProjectId, personId),
+    onSuccess: () => {
+      setStatusMessage("人物已删除");
+      setErrorMessage(null);
+      invalidateReviewQueries();
+    },
+    onError: (err) => {
+      setStatusMessage(null);
+      setErrorMessage((err as Error).message);
+    },
+  });
+
   const actionBusy =
     batchConfirmMutation.isPending ||
     batchRejectMutation.isPending ||
-    batchMoveMutation.isPending;
+    batchMoveMutation.isPending ||
+    deletePersonMutation.isPending;
+
+  const archivePerson = (personId: number) => {
+    if (selectedProjectId <= 0) return;
+    const updated = archivePersonManually(selectedProjectId, personId);
+    setManualArchivedPersonIds(updated);
+    setStatusMessage("已加入 archive，后续不再出现在待处理列表");
+    setErrorMessage(null);
+  };
 
   return {
     routeProjectId,
@@ -197,6 +232,8 @@ export function usePeopleReviewPage() {
     moveTargets,
     setMoveTargets,
     actionBusy,
+    archivePerson,
+    deletePerson: (personId: number) => deletePersonMutation.mutate(personId),
     batchConfirmReview: (personId: number, faceIds: number[]) =>
       batchConfirmMutation.mutate({ personId, faceIds }),
     batchRejectReview: (personId: number, faceIds: number[]) =>

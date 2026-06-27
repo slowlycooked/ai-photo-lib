@@ -221,6 +221,10 @@ function renderPage(initialEntry = "/projects/1/people/review") {
 
 describe("PeopleReviewPage", () => {
   beforeEach(() => {
+    if (typeof window.localStorage?.removeItem === "function") {
+      window.localStorage.removeItem("people-manual-archive-v1:1");
+    }
+
     peopleMock.mockReset();
     reviewPendingMock.mockReset();
     batchConfirmReviewMock.mockReset();
@@ -284,10 +288,12 @@ describe("PeopleReviewPage", () => {
   it("renders grouped review-pending faces by person", async () => {
     renderPage();
 
-    expect(await screen.findByText("人物 #101 · 爸爸")).toBeInTheDocument();
+    expect((await screen.findAllByText("人物 #101 · 爸爸")).length).toBeGreaterThan(0);
     expect(screen.getByText(/当前页待确认 2 张/)).toBeInTheDocument();
     expect(screen.getByText("face #501")).toBeInTheDocument();
     expect(screen.getByText("face #502")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "archive" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "delete" })).toBeInTheDocument();
   });
 
   it("moves to the next page and requests the next offset", async () => {
@@ -300,7 +306,7 @@ describe("PeopleReviewPage", () => {
     await waitFor(() => {
       expect(screen.getByText("第 2 / 2 页")).toBeInTheDocument();
     });
-    expect(await screen.findByText(/人物\s*#\s*103/)).toBeInTheDocument();
+    expect((await screen.findAllByText(/人物\s*#\s*103/)).length).toBeGreaterThan(0);
     expect(screen.getByRole("button", { name: "批量确认" })).toBeInTheDocument();
     expect(reviewPendingMock).toHaveBeenLastCalledWith(1, null, 40, 40);
   });
@@ -309,7 +315,7 @@ describe("PeopleReviewPage", () => {
     const user = userEvent.setup();
     renderPage();
 
-    await screen.findByText("人物 #101 · 爸爸");
+    await screen.findAllByText("人物 #101 · 爸爸");
     await user.click(screen.getByRole("button", { name: "批量确认" }));
 
     await waitFor(() => {
@@ -332,7 +338,7 @@ describe("PeopleReviewPage", () => {
     const user = userEvent.setup();
     renderPage();
 
-    await screen.findByText("人物 #101 · 爸爸");
+    await screen.findAllByText("人物 #101 · 爸爸");
     await user.click(screen.getByRole("button", { name: "移动到..." }));
     await user.selectOptions(screen.getByRole("combobox"), "102");
     await user.click(screen.getByRole("button", { name: "批量移动" }));
