@@ -35,16 +35,17 @@ def _unique_destination(path: Path) -> Path:
         index += 1
 
 
-def _source_path(entry: dict, source_root: Path | None) -> Path:
+def _source_path(entry: dict, source_root: Path) -> Path:
     relative_path = entry.get("relative_path")
-    if source_root is not None and isinstance(relative_path, str) and relative_path:
-        return source_root / relative_path
+    if not isinstance(relative_path, str) or not relative_path:
+        raise ValueError("entry has no relative_path")
 
-    absolute_path = entry.get("absolute_path")
-    if isinstance(absolute_path, str) and absolute_path:
-        return Path(absolute_path)
-
-    raise ValueError("entry has neither relative_path nor absolute_path")
+    source = (source_root / relative_path).resolve()
+    try:
+        source.relative_to(source_root)
+    except ValueError as exc:
+        raise ValueError(f"source escapes source root: {relative_path}") from exc
+    return source
 
 
 def _safe_destination(trash_root: Path, relative_path: str | Path) -> Path:
@@ -59,16 +60,28 @@ def _safe_destination(trash_root: Path, relative_path: str | Path) -> Path:
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "Move originals listed by ai-photo-lib deletion manifest into a NAS trash folder. "
+            "Move originals listed by ai-photo-lib deletion manifest into NAS trash folders. "
             "Runs as dry-run unless --apply is passed."
         )
     )
-    parser.add_argument("manifest", type=Path, help="Path to pending-original-trash.jsonl")
-    parser.add_argument("--trash-root", type=Path, required=True, help="NAS trash folder")
+    parser.add_argument(
+        "manifest",
+        type=Path,
+        help="Path to ai-photo-data/pending-original-trash.jsonl",
+    )
     parser.add_argument(
         "--source-root",
         type=Path,
-        help="NAS photo library root. When set, relative_path is resolved under this root.",
+        required=True,
+        help="NAS photo library root. Manifest relative_path values are resolved under this root.",
+    )
+    parser.add_argument(
+        "--trash-root",
+        type=Path,
+        help=(
+            "Optional central NAS trash folder. When omitted, each photo is moved to "
+            "a trash/ folder beside the original file."
+        ),
     )
     parser.add_argument(
         "--apply",
@@ -78,8 +91,8 @@ def main() -> int:
     args = parser.parse_args()
 
     manifest = args.manifest.expanduser().resolve()
-    trash_root = args.trash_root.expanduser().resolve()
-    source_root = args.source_root.expanduser().resolve() if args.source_root else None
+    source_root = args.source_root.expanduser().resolve()
+    trash_root = args.trash_root.expanduser().resolve() if args.trash_root else None
 
     moved = 0
     missing = 0
@@ -93,13 +106,16 @@ def main() -> int:
             print(f"skip photo_id={entry.get('photo_id')}: {exc}")
             continue
 
-        relative_path = entry.get("relative_path") or source.name
-        try:
-            destination = _unique_destination(_safe_destination(trash_root, relative_path))
-        except ValueError as exc:
-            skipped += 1
-            print(f"skip photo_id={entry.get('photo_id')}: {exc}")
-            continue
+        if trash_root is None:
+            destination = _unique_destination(source.parent / "trash" / source.name)
+        else:
+            relative_path = entry.get("relative_path") or source.name
+            try:
+                destination = _unique_destination(_safe_destination(trash_root, relative_path))
+            except ValueError as exc:
+                skipped += 1
+                print(f"skip photo_id={entry.get('photo_id')}: {exc}")
+                continue
 
         if not source.exists():
             missing += 1

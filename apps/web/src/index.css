@@ -12,23 +12,19 @@
   }
 }
 
-/* Masonry grid — CSS columns approach preserves natural photo aspect ratios */
+/* Masonry grid uses explicit columns so appending photos does not rebalance loaded items. */
 @layer components {
   .masonry-grid {
-    columns: 2;
-    column-gap: 8px;
+    display: grid;
+    grid-template-columns: repeat(var(--masonry-columns, 2), minmax(0, 1fr));
+    gap: 8px;
+    align-items: start;
   }
 
-  @media (min-width: 640px) {
-    .masonry-grid { columns: 3; }
-  }
-
-  @media (min-width: 1024px) {
-    .masonry-grid { columns: 4; }
-  }
-
-  @media (min-width: 1280px) {
-    .masonry-grid { columns: 5; }
+  .masonry-column {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
   }
 
   .masonry-item {

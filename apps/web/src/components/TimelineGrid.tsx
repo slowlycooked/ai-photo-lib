@@ -3,6 +3,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Loader2, ImageOff } from "lucide-react";
 import { usePhotos } from "@/hooks/usePhotos";
 import { useInfiniteScrollSentinel } from "@/hooks/useInfiniteScrollSentinel";
+import { MasonryGrid } from "./MasonryGrid";
 import { PhotoCard } from "./PhotoCard";
 import { TimelineRail } from "./TimelineRail";
 import { api } from "@/api";
@@ -331,10 +332,12 @@ export function TimelineGrid({ projectId, folderId, folderScope = "subtree" }: T
                 </div>
               );
             })()}
-            <div className="masonry-grid">
-              {photos.map((photo) => (
+            <MasonryGrid
+              items={photos}
+              getKey={(photo) => photo.id}
+              getItemHeight={(photo) => (photo.width && photo.height ? photo.height / photo.width : 3 / 4)}
+              renderItem={(photo) => (
                 <PhotoCard
-                  key={photo.id}
                   photo={photo}
                   selectMode={canDeletePhoto}
                   selected={selectedPhotoIds.includes(photo.id)}
@@ -343,8 +346,8 @@ export function TimelineGrid({ projectId, folderId, folderScope = "subtree" }: T
                     setSelectedPhotoIds((prev) => prev.filter((id) => id !== photoId));
                   }}
                 />
-              ))}
-            </div>
+              )}
+            />
           </section>
         ))}
 

@@ -349,7 +349,9 @@ class PhotoDeleteEndpointTest(unittest.TestCase):
         self.assertEqual(entries[0]["photo_id"], 101)
         self.assertEqual(entries[0]["file_name"], "manual-delete.jpg")
         self.assertEqual(entries[0]["relative_path"], "manual-delete.jpg")
-        self.assertEqual(entries[0]["absolute_path"], str(self._original))
+        self.assertNotIn("absolute_path", entries[0])
+        self.assertNotIn("photo_library_path", entries[0])
+        self.assertNotIn("thumbnail_path", entries[0])
         self.assertEqual(entries[0]["action"], "move_original_to_trash")
         self.assertFalse((self._thumbs / ORIGINAL_TRASH_MANIFEST).exists())
 

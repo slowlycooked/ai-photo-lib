@@ -1,4 +1,5 @@
 import type { SearchResultItem } from "@/api/types";
+import { MasonryGrid } from "@/components/MasonryGrid";
 import { SearchCard } from "@/components/search/SearchCard";
 
 interface SearchResultMasonryProps {
@@ -9,15 +10,17 @@ interface SearchResultMasonryProps {
 
 export function SearchResultMasonry({ items, debug, onPreview }: SearchResultMasonryProps) {
   return (
-    <div className="masonry-grid">
-      {items.map((item) => (
+    <MasonryGrid
+      items={items}
+      getKey={(item) => item.photo_id}
+      getItemHeight={(item) => (item.width && item.height ? item.height / item.width + 0.6 : 1.35)}
+      renderItem={(item) => (
         <SearchCard
-          key={item.photo_id}
           item={item}
           debug={debug}
           onPreview={onPreview}
         />
-      ))}
-    </div>
+      )}
+    />
   );
 }

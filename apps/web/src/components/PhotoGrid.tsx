@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { Loader2, ImageOff } from "lucide-react";
 import { usePhotos } from "@/hooks/usePhotos";
 import { useInfiniteScrollSentinel } from "@/hooks/useInfiniteScrollSentinel";
+import { MasonryGrid } from "./MasonryGrid";
 import { PhotoCard } from "./PhotoCard";
 
 export function PhotoGrid() {
@@ -64,12 +65,12 @@ export function PhotoGrid() {
         共 <span className="font-semibold text-ink">{total.toLocaleString()}</span> 张照片
       </p>
 
-      {/* Masonry grid */}
-      <div className="masonry-grid">
-        {allPhotos.map((photo) => (
-          <PhotoCard key={photo.id} photo={photo} />
-        ))}
-      </div>
+      <MasonryGrid
+        items={allPhotos}
+        getKey={(photo) => photo.id}
+        getItemHeight={(photo) => (photo.width && photo.height ? photo.height / photo.width : 3 / 4)}
+        renderItem={(photo) => <PhotoCard photo={photo} />}
+      />
 
       {/* Infinite scroll sentinel */}
       <div ref={sentinelRef} className="h-4" />

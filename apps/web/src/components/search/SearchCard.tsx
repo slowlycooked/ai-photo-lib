@@ -26,6 +26,7 @@ export function SearchCard({ item, debug, onPreview }: SearchCardProps) {
       <div className="bg-canvas rounded-md overflow-hidden border border-hairline hover:shadow-md transition-shadow">
         <div
           className="relative bg-surface-card cursor-zoom-in group"
+          style={{ aspectRatio: item.width && item.height ? `${item.width}/${item.height}` : "4/3" }}
           onClick={() => onPreview?.(item)}
           role="button"
           aria-label={`预览 ${item.file_name}`}
@@ -33,14 +34,14 @@ export function SearchCard({ item, debug, onPreview }: SearchCardProps) {
           onKeyDown={(e) => e.key === "Enter" && onPreview?.(item)}
         >
           {!loaded && (
-            <div className="flex items-center justify-center h-32">
+            <div className="absolute inset-0 flex items-center justify-center">
               <ImageIcon className="w-8 h-8 text-stone" />
             </div>
           )}
           <img
             src={item.thumbnail_url}
             alt={item.file_name}
-            className="w-full object-cover"
+            className="block w-full h-full object-cover"
             style={{ opacity: loaded ? 1 : 0, transition: "opacity 0.2s" }}
             onLoad={() => setLoaded(true)}
           />

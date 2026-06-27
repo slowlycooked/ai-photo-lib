@@ -66,7 +66,7 @@ export function PhotoCard({ photo, selectMode = false, selected = false, onToggl
             <img
               src={api.projectPhotos.thumbnailUrl(photo.project_id, photo.id, photo.updated_at)}
               alt={photo.file_name}
-              className="w-full block"
+              className="block w-full h-full object-cover"
               style={{ opacity: loaded ? 1 : 0, transition: "opacity 0.2s" }}
               loading="lazy"
               onLoad={() => setLoaded(true)}
