@@ -148,7 +148,7 @@ class PeopleQueryService:
         assignment_limit: int,
     ) -> PersonDetailResponse:
         person = self._get_person_or_404(project_id, person_id)
-        rows = (
+        base_query = (
             self._db.query(PersonFaceAssignment, FaceDetection)
             .join(
                 FaceDetection,
@@ -159,6 +159,17 @@ class PeopleQueryService:
                 PersonFaceAssignment.person_id == person_id,
                 FaceDetection.project_id == project_id,
             )
+        )
+        total = (
+            self._db.query(PersonFaceAssignment.id)
+            .filter(
+                PersonFaceAssignment.project_id == project_id,
+                PersonFaceAssignment.person_id == person_id,
+            )
+            .count()
+        )
+        rows = (
+            base_query
             .order_by(
                 PersonFaceAssignment.is_positive_sample.desc(),
                 PersonFaceAssignment.updated_at.desc(),
@@ -182,6 +193,9 @@ class PeopleQueryService:
             )
             for assignment, face_detection in rows
         ]
+        payload.assignments_total = total
+        payload.assignments_limit = assignment_limit
+        payload.assignments_has_more = len(rows) < total
         return payload
 
     def _load_negative_constraints(

@@ -353,7 +353,7 @@ describe("PeoplePage", () => {
 
     await screen.findByText("爸爸");
     await waitFor(() => {
-      expect(personMock).toHaveBeenCalledWith(1, 101);
+      expect(personMock).toHaveBeenCalledWith(1, 101, 40);
     });
   });
 
@@ -393,7 +393,7 @@ describe("PeoplePage", () => {
       );
     });
     await waitFor(() => {
-      expect(personMock).toHaveBeenCalledWith(1, 103);
+      expect(personMock).toHaveBeenCalledWith(1, 103, 40);
     });
   });
 
@@ -405,6 +405,31 @@ describe("PeoplePage", () => {
 
     await waitFor(() => {
       expect(confirmPersonFaceMock).toHaveBeenCalledWith(1, 101, 301);
+    });
+  });
+
+  it("loads person detail assignments in expandable batches", async () => {
+    const user = userEvent.setup();
+    personMock.mockImplementation((projectId: number, personId: number, assignmentLimit: number) =>
+      Promise.resolve({
+        ...buildDetail(personId),
+        assignments_limit: assignmentLimit,
+        assignments_total: 81,
+        assignments_has_more: assignmentLimit < 81,
+      }),
+    );
+
+    renderPage("/projects/1/people");
+
+    await screen.findByText("爸爸");
+    await waitFor(() => {
+      expect(personMock).toHaveBeenCalledWith(1, 101, 40);
+    });
+
+    await user.click(screen.getByRole("button", { name: "加载更多人脸" }));
+
+    await waitFor(() => {
+      expect(personMock).toHaveBeenCalledWith(1, 101, 80);
     });
   });
 
@@ -587,7 +612,7 @@ describe("PeoplePage", () => {
     expect(screen.getByText("#102 · 妈妈")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "#102 · 妈妈" }));
     await waitFor(() => {
-      expect(personMock).toHaveBeenCalledWith(1, 102);
+      expect(personMock).toHaveBeenCalledWith(1, 102, 40);
     });
   });
 });

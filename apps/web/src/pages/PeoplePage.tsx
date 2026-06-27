@@ -28,6 +28,7 @@ export function PeoplePage() {
     selectedPersonIsManageable,
     personDetail,
     personLoading,
+    personFetching,
     personError,
     actionBusy,
     moveCandidates,
@@ -43,6 +44,10 @@ export function PeoplePage() {
     archiveSelectedPerson,
     archiveSelectedPeople,
     unarchivePerson,
+    loadedAssignmentCount,
+    totalAssignmentCount,
+    canLoadMoreAssignments,
+    loadMoreAssignments,
     createPerson,
     mergeSelectedPerson,
     deleteSelectedPerson,
@@ -128,12 +133,17 @@ export function PeoplePage() {
             faceCropEnabled={faceCropEnabled}
             detail={personDetail}
             isLoading={personLoading}
+            isFetching={personFetching}
             error={personError as Error | null}
             moveCandidates={moveCandidates}
             reviewFaceIds={reviewFaceIds}
             statusMessage={statusMessage}
             errorMessage={errorMessage}
             actionBusy={actionBusy || selectedPersonIsArchived}
+            loadedAssignmentCount={loadedAssignmentCount}
+            totalAssignmentCount={totalAssignmentCount}
+            canLoadMoreAssignments={canLoadMoreAssignments}
+            onLoadMoreAssignments={loadMoreAssignments}
             onRename={(displayName) => {
               if (!resolvedSelectedPersonId || !selectedPersonIsManageable) return;
               renameSelectedPerson(displayName);

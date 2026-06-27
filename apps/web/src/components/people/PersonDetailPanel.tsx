@@ -57,6 +57,7 @@ function PersonOriginalPhotoLightbox({
         <img
           src={api.projectPhotos.previewUrl(projectId, photoId)}
           alt={`face-${faceId}-photo-${photoId}`}
+          decoding="async"
           className="rounded-md object-contain shadow-2xl"
           style={{
             maxWidth: "92vw",
@@ -96,12 +97,16 @@ export function PersonDetailPanel({
   faceCropEnabled,
   detail,
   isLoading,
+  isFetching,
   error,
   moveCandidates,
   reviewFaceIds,
   statusMessage,
   errorMessage,
   actionBusy,
+  loadedAssignmentCount,
+  totalAssignmentCount,
+  canLoadMoreAssignments,
   onRename,
   onConfirmFace,
   onRejectFace,
@@ -111,17 +116,22 @@ export function PersonDetailPanel({
   onBatchMoveReview,
   onSplitFaces,
   onSetRepresentative,
+  onLoadMoreAssignments,
 }: {
   projectId: number;
   faceCropEnabled: boolean;
   detail: PersonDetail | undefined;
   isLoading: boolean;
+  isFetching: boolean;
   error: Error | null;
   moveCandidates: PersonSummary[];
   reviewFaceIds: number[];
   statusMessage: string | null;
   errorMessage: string | null;
   actionBusy: boolean;
+  loadedAssignmentCount: number;
+  totalAssignmentCount: number;
+  canLoadMoreAssignments: boolean;
   onRename: (displayName: string) => void;
   onConfirmFace: (faceId: number) => void;
   onRejectFace: (faceId: number) => void;
@@ -131,6 +141,7 @@ export function PersonDetailPanel({
   onBatchMoveReview: (faceIds: number[], targetPersonId: number) => void;
   onSplitFaces: (faceIds: number[], newDisplayName?: string) => void;
   onSetRepresentative: (faceId: number) => void;
+  onLoadMoreAssignments: () => void;
 }) {
   const [renameValue, setRenameValue] = useState("");
   const [moveTargets, setMoveTargets] = useState<Record<number, number>>({});
@@ -267,6 +278,8 @@ export function PersonDetailPanel({
             <img
               src={api.projectFaces.cropUrl(projectId, face.id, face.updated_at)}
               alt={`face-${face.id}`}
+              loading="lazy"
+              decoding="async"
               className="w-full h-full object-cover"
             />
           ) : (
@@ -434,6 +447,8 @@ export function PersonDetailPanel({
                     detail.updated_at,
                   )}
                   alt={detail.display_name}
+                  loading="lazy"
+                  decoding="async"
                   className="w-full h-full object-cover"
                   onError={(e) => {
                     e.currentTarget.style.display = "none";
@@ -565,7 +580,9 @@ export function PersonDetailPanel({
               当前支持人物命名、确认、排除、移动和代表头像设置。
             </p>
           </div>
-          <span className="text-caption-sm text-mute">{detail.assignments.length} 条</span>
+          <span className="text-caption-sm text-mute">
+            已加载 {loadedAssignmentCount} / {totalAssignmentCount} 条
+          </span>
         </div>
 
         {detail.assignments.length === 0 ? (
@@ -744,6 +761,19 @@ export function PersonDetailPanel({
                 </div>
               )}
             </section>
+
+            {canLoadMoreAssignments && (
+              <div className="flex justify-center pt-2">
+                <button
+                  type="button"
+                  disabled={isFetching}
+                  onClick={onLoadMoreAssignments}
+                  className="px-3 py-1.5 rounded-md border border-hairline text-caption-sm text-ink hover:bg-surface-card disabled:opacity-50"
+                >
+                  {isFetching ? "正在加载更多..." : "加载更多人脸"}
+                </button>
+              </div>
+            )}
           </>
         )}
       </div>

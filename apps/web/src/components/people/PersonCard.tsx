@@ -56,6 +56,8 @@ export function PersonCard({
                 person.updated_at,
               )}
               alt={person.display_name}
+              loading="lazy"
+              decoding="async"
               className="w-full h-full object-cover"
               onError={(e) => {
                 e.currentTarget.style.display = "none";

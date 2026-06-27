@@ -267,6 +267,9 @@ class PersonMatchExplanationResponse(BaseModel):
 
 class PersonDetailResponse(PersonSummaryResponse):
     assignments: list[PersonFaceAssignmentResponse] = Field(default_factory=list)
+    assignments_total: int = 0
+    assignments_limit: int = 0
+    assignments_has_more: bool = False
 
 
 class PersonRenameRequest(BaseModel):

@@ -7,13 +7,15 @@ import { useProjectContext } from "@/contexts/ProjectContext";
 import { formatBatchFeedbackToast } from "@/lib/peopleFeedback";
 import {
   archivePersonManually,
+  forceManagePersonManually,
   getManualArchivedPersonIds,
   getManualManagedPersonIds,
-  forceManagePersonManually,
   isArchivedPerson,
-  unforceManagePersonManually,
   unarchivePersonManually,
+  unforceManagePersonManually,
 } from "@/lib/personArchive";
+
+const PERSON_DETAIL_ASSIGNMENT_PAGE_SIZE = 40;
 
 export type PeopleFilterMode =
   | "all"
@@ -41,6 +43,10 @@ export function usePeoplePage() {
   const [manualArchivedPersonIds, setManualArchivedPersonIds] = useState<Set<number>>(new Set());
   const [manualManagedPersonIds, setManualManagedPersonIds] = useState<Set<number>>(new Set());
   const [selectedPersonIds, setSelectedPersonIds] = useState<number[]>([]);
+  const [personDetailAssignmentWindow, setPersonDetailAssignmentWindow] = useState<{
+    personId: number | null;
+    limit: number;
+  }>({ personId: null, limit: PERSON_DETAIL_ASSIGNMENT_PAGE_SIZE });
 
   const routeProjectId = projectId ? Number(projectId) : NaN;
   const normalizedRouteProjectId = Number.isFinite(routeProjectId) ? routeProjectId : null;
@@ -145,6 +151,10 @@ export function usePeoplePage() {
     resolvedSelectedPersonId != null && archivedPersonIds.has(resolvedSelectedPersonId);
   const selectedPersonIsManageable =
     resolvedSelectedPersonId != null && managedPersonIds.has(resolvedSelectedPersonId);
+  const personDetailAssignmentLimit =
+    personDetailAssignmentWindow.personId === resolvedSelectedPersonId
+      ? personDetailAssignmentWindow.limit
+      : PERSON_DETAIL_ASSIGNMENT_PAGE_SIZE;
 
   useEffect(() => {
     const managedIds = new Set(managedPeople.map((person) => person.id));
@@ -162,12 +172,22 @@ export function usePeoplePage() {
   const {
     data: personDetail,
     isLoading: personLoading,
+    isFetching: personFetching,
     error: personError,
   } = useQuery({
-    queryKey: queryKeys.projectPerson(selectedProjectId, resolvedSelectedPersonId),
-    queryFn: () => api.projectPeople.get(selectedProjectId!, resolvedSelectedPersonId!),
+    queryKey: [
+      ...queryKeys.projectPerson(selectedProjectId, resolvedSelectedPersonId),
+      personDetailAssignmentLimit,
+    ],
+    queryFn: () =>
+      api.projectPeople.get(
+        selectedProjectId!,
+        resolvedSelectedPersonId!,
+        personDetailAssignmentLimit,
+      ),
     enabled: resolvedSelectedPersonId != null,
     staleTime: 15_000,
+    placeholderData: (previousData) => previousData,
   });
 
   const { data: reviewData } = useQuery({
@@ -398,6 +418,11 @@ export function usePeoplePage() {
     ? managedPeople.filter((person) => person.id !== resolvedSelectedPersonId)
     : [];
   const reviewFaceIds = (reviewData?.items ?? []).map((item) => item.face_detection_id);
+  const loadedAssignmentCount = personDetail?.assignments.length ?? 0;
+  const totalAssignmentCount =
+    personDetail?.assignments_total ?? personDetail?.sample_count ?? loadedAssignmentCount;
+  const canLoadMoreAssignments =
+    !!personDetail?.assignments_has_more && personDetailAssignmentLimit < 500;
   const namedCount = managedPeople.filter((item) => item.is_named).length;
   const unnamedCount = Math.max(0, managedPeople.length - namedCount);
 
@@ -501,6 +526,7 @@ export function usePeoplePage() {
     selectedPersonIsArchived,
     selectedPersonIsManageable,
     personLoading,
+    personFetching,
     personError,
     actionBusy,
     moveCandidates,
@@ -516,6 +542,22 @@ export function usePeoplePage() {
     archiveSelectedPerson,
     archiveSelectedPeople,
     unarchivePerson,
+    loadedAssignmentCount,
+    totalAssignmentCount,
+    canLoadMoreAssignments,
+    loadMoreAssignments: () => {
+      if (resolvedSelectedPersonId == null) return;
+      setPersonDetailAssignmentWindow((current) => {
+        const currentLimit =
+          current.personId === resolvedSelectedPersonId
+            ? current.limit
+            : PERSON_DETAIL_ASSIGNMENT_PAGE_SIZE;
+        return {
+          personId: resolvedSelectedPersonId,
+          limit: Math.min(500, currentLimit + PERSON_DETAIL_ASSIGNMENT_PAGE_SIZE),
+        };
+      });
+    },
     createPerson: () =>
       createPersonMutation.mutate({ display_name: createDisplayName.trim() || undefined }),
     mergeSelectedPerson: () => {

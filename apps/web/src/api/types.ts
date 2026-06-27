@@ -759,6 +759,9 @@ export interface PersonFeedbackEffects {
 
 export interface PersonDetail extends PersonSummary {
   assignments: PersonFaceAssignment[];
+  assignments_total?: number;
+  assignments_limit?: number;
+  assignments_has_more?: boolean;
 }
 
 export interface PersonListResponse {
