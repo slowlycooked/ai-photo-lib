@@ -9,6 +9,7 @@ import { api } from "@/api";
 import { queryKeys } from "@/api/queryKeys";
 import type { Photo, FolderScope } from "@/api";
 import { useAuth } from "@/contexts/AuthContext";
+import { canManageProjects } from "@/lib/permissions";
 
 interface TimelineGridProps {
   projectId?: number | null;
@@ -49,7 +50,7 @@ function groupPhotosByMonth(photos: Photo[]): Map<string, Photo[]> {
 
 export function TimelineGrid({ projectId, folderId, folderScope = "subtree" }: TimelineGridProps) {
   const auth = useAuth();
-  const canDeletePhoto = auth.session?.role !== "viewer";
+  const canDeletePhoto = canManageProjects(auth.session);
   const [dateFrom, setDateFrom] = useState<string | null>(null);
   const [dateTo, setDateTo] = useState<string | null>(null);
   const [activeKey, setActiveKey] = useState<string | null>(null);

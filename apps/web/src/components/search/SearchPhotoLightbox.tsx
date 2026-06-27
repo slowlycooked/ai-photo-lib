@@ -5,6 +5,7 @@ import { api } from "@/api";
 import type { SearchResultItem } from "@/api/types";
 import { queryKeys } from "@/api/queryKeys";
 import { useAuth } from "@/contexts/AuthContext";
+import { canManageProjects } from "@/lib/permissions";
 import { formatLocationSummary } from "@/lib/utils";
 
 interface SearchPhotoLightboxProps {
@@ -21,7 +22,7 @@ export function SearchPhotoLightbox({
   onDeleted,
 }: SearchPhotoLightboxProps) {
   const auth = useAuth();
-  const canDeletePhoto = auth.session?.role !== "viewer";
+  const canDeletePhoto = canManageProjects(auth.session);
   const [imgLoaded, setImgLoaded] = useState(false);
   const [deleteOriginal, setDeleteOriginal] = useState(false);
   const [deleteMessage, setDeleteMessage] = useState<string | null>(null);

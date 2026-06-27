@@ -6,6 +6,7 @@ import { PhotoDeletePanel } from "./PhotoDeletePanel";
 import { PhotoDetailHeader } from "./PhotoDetailHeader";
 import { PhotoFacesSection } from "./PhotoFacesSection";
 import { PhotoMetadataSection } from "./PhotoMetadataSection";
+import { canManageProjects } from "@/lib/permissions";
 
 interface PhotoDetailModalProps {
   photo: Photo;
@@ -15,7 +16,7 @@ interface PhotoDetailModalProps {
 
 export function PhotoDetailModal({ photo, onClose, onDeleted }: PhotoDetailModalProps) {
   const auth = useAuth();
-  const canDeletePhoto = auth.session?.role !== "viewer";
+  const canDeletePhoto = canManageProjects(auth.session);
   const {
     aiData,
     aiLoading,
