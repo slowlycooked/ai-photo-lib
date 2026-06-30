@@ -71,7 +71,7 @@ export function PeopleToolbar({
         <input
           value={createDisplayName}
           onChange={(e) => setCreateDisplayName(e.target.value)}
-          placeholder="新人物名称（可为空）"
+          placeholder="新人物名称，可追加 #标签"
           className="px-3 py-1.5 rounded-md border border-hairline bg-canvas text-caption-sm"
         />
         <button

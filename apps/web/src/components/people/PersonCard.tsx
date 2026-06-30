@@ -90,6 +90,18 @@ export function PersonCard({
                 {person.is_named ? "已命名" : "未命名"}
               </span>
             </div>
+            {person.name_tags && person.name_tags.length > 0 && (
+              <div className="mt-1 flex flex-wrap gap-1">
+                {person.name_tags.map((tag) => (
+                  <span
+                    key={tag}
+                    className="rounded-full bg-primary/10 px-1.5 py-0.5 text-[11px] font-medium text-primary"
+                  >
+                    #{tag}
+                  </span>
+                ))}
+              </div>
+            )}
             <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-caption-sm text-mute">
               <span>样本 {person.sample_count}</span>
               <span>已确认 {person.confirmed_sample_count}</span>

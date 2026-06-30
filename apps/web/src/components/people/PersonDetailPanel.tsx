@@ -499,6 +499,18 @@ export function PersonDetailPanel({
                 {detail.is_named ? "已命名人物" : "系统人物"}
               </span>
             </div>
+            {detail.name_tags && detail.name_tags.length > 0 && (
+              <div className="mt-2 flex flex-wrap gap-1">
+                {detail.name_tags.map((tag) => (
+                  <span
+                    key={tag}
+                    className="rounded-full bg-primary/10 px-2 py-0.5 text-caption-sm font-medium text-primary"
+                  >
+                    #{tag}
+                  </span>
+                ))}
+              </div>
+            )}
             <p className="mt-1 text-caption-sm text-mute">
               created by {detail.created_by} · 最近更新 {formatDateTime(detail.updated_at)}
             </p>
@@ -514,7 +526,7 @@ export function PersonDetailPanel({
                 value={renameValue}
                 onChange={(e) => setRenameValue(e.target.value)}
                 className="w-full max-w-xs px-3 py-1.5 rounded-md border border-hairline bg-canvas text-body-sm"
-                placeholder="输入人物名称"
+                placeholder="输入人物名称，可追加 #标签"
               />
               <button
                 type="submit"

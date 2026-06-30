@@ -710,6 +710,7 @@ export interface PersonSummary {
   project_id: number;
   display_name: string;
   normalized_name: string | null;
+  name_tags?: string[];
   is_named: boolean;
   representative_face_detection_id: number | null;
   sample_count: number;
