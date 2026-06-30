@@ -5,17 +5,23 @@ from typing import Optional
 import logging
 from pathlib import Path
 
-import pillow_heif
 from PIL import Image
 
 from ..config import settings
-
-# Register HEIF/HEIC opener so PIL.Image.open() handles these formats transparently
-pillow_heif.register_heif_opener()
+from .image_decode_service import read_image_pil
 
 logger = logging.getLogger(__name__)
 
 SUPPORTED_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif"}
+
+
+class ThumbnailGenerationError(RuntimeError):
+    """Raised when thumbnail generation fails and the caller needs the cause."""
+
+    def __init__(self, file_path: str, cause: Exception) -> None:
+        super().__init__(f"Thumbnail generation failed for {file_path}: {cause}")
+        self.file_path = file_path
+        self.cause = cause
 
 
 def _thumb_path(
@@ -46,6 +52,7 @@ def generate_thumbnail(
     force: bool = False,
     project_id: Optional[int] = None,
     thumbnail_root: Optional[str] = None,
+    raise_on_error: bool = False,
 ) -> Optional[str]:
     """
     Generate a JPEG thumbnail with the long edge capped at THUMBNAIL_SIZE.
@@ -63,14 +70,18 @@ def generate_thumbnail(
         return str(thumb_path)
 
     try:
-        with Image.open(file_path) as img:
-            img = img.convert("RGB")
+        img = read_image_pil(file_path)
+        try:
             max_size = settings.thumbnail_size
             img.thumbnail((max_size, max_size), Image.LANCZOS)
             img.save(thumb_path, "JPEG", quality=85, optimize=True)
+        finally:
+            img.close()
         return str(thumb_path)
     except Exception as exc:
         suffix = Path(file_path).suffix.lower()
         level = logging.ERROR if suffix in (".heic", ".heif") else logging.WARNING
-        logger.log(level, "Thumbnail failed for %s: %s", file_path, exc)
+        logger.log(level, "Thumbnail failed for %s: %s", file_path, exc, exc_info=True)
+        if raise_on_error:
+            raise ThumbnailGenerationError(file_path, exc) from exc
         return None

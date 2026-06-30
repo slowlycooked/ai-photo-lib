@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import tempfile
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -15,9 +16,11 @@ os.environ.setdefault("OPENAI_VISION_MODEL", "test-model")
 
 from app.services.aijob_app_service import AIJobAppService  # noqa: E402
 from app.services.face_scan_service import FaceScanResult  # noqa: E402
+from app.services.thumbnail import ThumbnailGenerationError  # noqa: E402
 from app.services.unknown_face_clustering_service import (  # noqa: E402
     UnknownFaceClusteringResult,
 )
+from app.services.vlm_client import VLMRequestError  # noqa: E402
 
 
 class _FakeDB:
@@ -97,6 +100,50 @@ class AIJobAppServiceFaceScanTest(unittest.TestCase):
         # Transaction management moved to Worker layer; service only flushes
         self.assertEqual(db.flushes, 1)
         self.assertEqual(db.commits, 0)
+
+
+class AIJobAppServicePickImagePathTest(unittest.TestCase):
+    def test_heic_thumbnail_failure_includes_underlying_error(self) -> None:
+        db = _FakeDB()
+        photo = SimpleNamespace(
+            id=31940,
+            file_path="/tmp/corrupt.HEIC",
+            thumbnail_path=None,
+        )
+        cause = OSError("bad heif magic")
+
+        with patch("app.services.aijob_app_service.generate_thumbnail") as mock_thumb:
+            mock_thumb.side_effect = ThumbnailGenerationError(photo.file_path, cause)
+            with self.assertRaises(VLMRequestError) as raised:
+                AIJobAppService(db)._pick_image_path(photo)
+
+        err = raised.exception
+        self.assertEqual(err.code, "heic_thumbnail_failed")
+        self.assertFalse(err.retryable)
+        self.assertIn("OSError: bad heif magic", str(err))
+        mock_thumb.assert_called_once_with(
+            photo.file_path,
+            force=True,
+            raise_on_error=True,
+        )
+
+    def test_non_heic_thumbnail_failure_falls_back_to_original(self) -> None:
+        db = _FakeDB()
+        with tempfile.NamedTemporaryFile(suffix=".jpg") as src:
+            photo = SimpleNamespace(
+                id=7,
+                file_path=src.name,
+                thumbnail_path=None,
+            )
+            cause = OSError("decode failed")
+
+            with patch("app.services.aijob_app_service.generate_thumbnail") as mock_thumb:
+                mock_thumb.side_effect = ThumbnailGenerationError(photo.file_path, cause)
+
+                result = AIJobAppService(db)._pick_image_path(photo)
+
+        self.assertEqual(result, photo.file_path)
+        self.assertEqual(db.flushes, 0)
 
 
 if __name__ == "__main__":

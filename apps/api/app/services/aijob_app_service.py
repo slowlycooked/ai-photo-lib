@@ -41,7 +41,7 @@ from ..services.project_ai_service import (
 )
 from ..services.project_embedding_settings_service import resolve_embedding_settings_strict
 from ..services.search.result_cache import bump_project_search_cache_epoch
-from ..services.thumbnail import generate_thumbnail
+from ..services.thumbnail import ThumbnailGenerationError, generate_thumbnail
 from .task_claim_service import TaskClaimService
 from ..services.vlm_client import VLMRequestError, analyze_image
 from ..face.providers import FaceRecognitionProviderUnavailableError
@@ -215,7 +215,17 @@ class AIJobAppService:
         if photo.thumbnail_path and Path(photo.thumbnail_path).exists():
             return photo.thumbnail_path
 
-        new_thumb = generate_thumbnail(photo.file_path, force=True)
+        thumbnail_error: ThumbnailGenerationError | None = None
+        try:
+            new_thumb = generate_thumbnail(
+                photo.file_path,
+                force=True,
+                raise_on_error=True,
+            )
+        except ThumbnailGenerationError as exc:
+            thumbnail_error = exc
+            new_thumb = None
+
         if new_thumb:
             logger.info(
                 "Photo %d: generated missing thumbnail on-the-fly: %s",
@@ -228,9 +238,14 @@ class AIJobAppService:
 
         suffix = Path(photo.file_path).suffix.lower()
         if suffix in (".heic", ".heif"):
+            detail = ""
+            if thumbnail_error is not None:
+                cause = thumbnail_error.cause
+                detail = f" 底层错误：{type(cause).__name__}: {cause}"
             raise VLMRequestError(
                 f"无法为 HEIC 文件生成缩略图，AI 分析跳过该照片（photo_id={photo.id}）。"
-                " 请检查 pillow-heif 安装是否正常后重新扫描。",
+                " 请检查 pillow-heif 安装是否正常、文件是否损坏或服务是否有读取权限后重新扫描。"
+                f"{detail}",
                 retryable=False,
                 code="heic_thumbnail_failed",
             )
