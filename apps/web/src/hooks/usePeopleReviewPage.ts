@@ -94,11 +94,6 @@ export function usePeopleReviewPage() {
     [archivedPersonIds, grouped],
   );
 
-  const groupedArchived = useMemo(
-    () => grouped.filter(([personId]) => archivedPersonIds.has(personId)),
-    [archivedPersonIds, grouped],
-  );
-
   const maxPage = Math.max(1, Math.ceil((reviewData?.total ?? 0) / PAGE_SIZE));
 
   const invalidateReviewQueries = () => {
@@ -221,7 +216,6 @@ export function usePeopleReviewPage() {
     statusMessage,
     errorMessage,
     grouped: groupedManaged,
-    groupedArchived,
     peopleData,
     peopleById,
     reviewData,

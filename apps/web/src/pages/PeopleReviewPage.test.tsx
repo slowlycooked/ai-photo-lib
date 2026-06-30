@@ -296,6 +296,17 @@ describe("PeopleReviewPage", () => {
     expect(screen.getByRole("button", { name: "delete" })).toBeInTheDocument();
   });
 
+  it("does not display review-pending faces for archived people", async () => {
+    window.localStorage.setItem("people-manual-archive-v1:1", JSON.stringify([101]));
+    renderPage();
+
+    expect(await screen.findByText("当前没有 review_pending 人脸")).toBeInTheDocument();
+    expect(screen.queryByText("人物 #101 · 爸爸")).not.toBeInTheDocument();
+    expect(screen.queryByText("face #501")).not.toBeInTheDocument();
+    expect(screen.queryByText("face #502")).not.toBeInTheDocument();
+    expect(screen.queryByText("archive 文件夹（不再管理）")).not.toBeInTheDocument();
+  });
+
   it("moves to the next page and requests the next offset", async () => {
     const user = userEvent.setup();
     renderPage();
