@@ -236,6 +236,9 @@ def match_face_detection_to_person(
     *,
     project_id: int,
     face_detection_id: int,
+    target_person_id: Optional[int] = None,
+    force_review_pending: bool = False,
+    assignment_source: str = "similarity_match",
 ) -> Optional[MatchDecision]:
     """Match one face detection against named people prototypes and persist assignment."""
     if not _has_people_learning_tables(db):
@@ -272,7 +275,7 @@ def match_face_detection_to_person(
     if not target_vector:
         return None
 
-    candidate_rows = (
+    candidate_query = (
         db.query(PersonPrototype, Person)
         .join(
             Person,
@@ -288,8 +291,11 @@ def match_face_detection_to_person(
             PersonPrototype.embedding_vector.isnot(None),
             Person.is_named.is_(True),
         )
-        .all()
     )
+    if target_person_id is not None:
+        candidate_query = candidate_query.filter(Person.id == int(target_person_id))
+
+    candidate_rows = candidate_query.all()
     if not candidate_rows:
         return None
 
@@ -322,7 +328,11 @@ def match_face_detection_to_person(
         return None
 
     assignment_status: Optional[str] = None
-    if best_similarity >= settings.auto_accept_threshold and settings.allow_auto_assignment:
+    if (
+        not force_review_pending
+        and best_similarity >= settings.auto_accept_threshold
+        and settings.allow_auto_assignment
+    ):
         assignment_status = STATUS_AUTO_ASSIGNED
     elif best_similarity >= settings.review_threshold:
         assignment_status = STATUS_REVIEW_PENDING
@@ -345,12 +355,12 @@ def match_face_detection_to_person(
             person_id=best_person_id,
             face_detection_id=face_detection_id,
             assignment_status=assignment_status,
-            assignment_source="similarity_match",
+            assignment_source=assignment_source,
         )
         db.add(assignment)
 
     assignment.assignment_status = assignment_status
-    assignment.assignment_source = "similarity_match"
+    assignment.assignment_source = assignment_source
     assignment.confidence = float(best_similarity)
     assignment.similarity_score = float(best_similarity)
     assignment.is_positive_sample = False

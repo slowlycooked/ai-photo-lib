@@ -334,6 +334,27 @@ describe("PeopleReviewPage", () => {
     expect(screen.getByText(/rematch=person\/queued\(task=77\)/)).toBeInTheDocument();
   });
 
+  it("rejects only selected review-pending faces", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await screen.findAllByText("人物 #101 · 爸爸");
+    await user.click(screen.getByRole("button", { name: "选择 face #502" }));
+    await user.click(screen.getByRole("button", { name: "排除已选 (1)" }));
+
+    await waitFor(() => {
+      expect(batchRejectReviewMock).toHaveBeenCalledWith(
+        1,
+        101,
+        expect.objectContaining({
+          face_detection_ids: [502],
+          operator: "web_review_page",
+          max_retries: 3,
+        }),
+      );
+    });
+  });
+
   it("triggers batch move with the selected target person", async () => {
     const user = userEvent.setup();
     renderPage();

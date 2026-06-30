@@ -463,6 +463,34 @@ class ProjectPeopleEndpointsTest(unittest.TestCase):
       self.assertIsNotNone(negative)
       self.assertEqual(negative[0], "human_corrected")
 
+    def test_batch_confirm_accepts_auto_assigned(self) -> None:
+      with self._engine.begin() as conn:
+        conn.execute(
+          sa.text(
+            """
+            UPDATE person_face_assignments
+            SET assignment_status = 'auto_assigned',
+                assignment_source = 'similarity_match'
+            WHERE id = 502
+            """
+          )
+        )
+
+      res = self.client.post(
+        "/projects/1/people/101/review/batch-confirm",
+        json={
+          "face_detection_ids": [302],
+          "request_id": "req-people-batch-auto",
+        },
+      )
+      self.assertEqual(res.status_code, 200)
+      self.assertEqual(res.json()["updated"], 1)
+
+      detail = self.client.get("/projects/1/people/101").json()
+      target = [a for a in detail["assignments"] if a["face_detection_id"] == 302][0]
+      self.assertEqual(target["assignment_status"], "human_confirmed")
+      self.assertTrue(target["is_positive_sample"])
+
     def test_batch_reject_and_move_review_pending(self) -> None:
       reject = self.client.post(
         "/projects/1/people/101/review/batch-reject",

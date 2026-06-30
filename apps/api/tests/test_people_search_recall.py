@@ -94,7 +94,7 @@ INSERT INTO persons (
   confirmed_sample_count, auto_assigned_count, review_pending_count, created_by
 ) VALUES
   (101, 1, '爸爸', '爸爸', 1, 3, 2, 1, 1, 'user'),
-  (102, 1, '妈妈', '妈妈', 1, 2, 2, 0, 0, 'user'),
+  (102, 1, '妈妈 #妈咪 #Mom', '妈妈 #妈咪 #mom', 1, 2, 2, 0, 0, 'user'),
   (201, 2, '爸爸', '爸爸', 1, 1, 1, 0, 0, 'user');
 
 INSERT INTO face_detections (id, project_id, photo_id, bbox_x, bbox_y, bbox_w, bbox_h, status)
@@ -180,6 +180,37 @@ class PeopleSearchRecallTest(unittest.TestCase):
 
         ids = {c.photo_id for c in result.candidates}
         self.assertEqual(ids, {15})
+
+    def test_search_person_by_hashtag_alias(self) -> None:
+        plan = understand_query("#妈咪")
+        resolution = resolve_people_query(
+            self.db,
+            project_id=1,
+            query="#妈咪",
+            query_plan=plan,
+        )
+
+        self.assertEqual(resolution.matched_person_ids, [102])
+        self.assertEqual(resolution.residual_query, "")
+
+        result = PeopleRecallService(self.db, 1).recall(resolution=resolution)
+        ids = {c.photo_id for c in result.candidates}
+        self.assertEqual(ids, {13, 15})
+        self.assertEqual(
+            result.candidates[0].people_explain["matched_people"][0]["name_tags"],
+            ["妈咪", "Mom"],
+        )
+
+    def test_search_person_by_tag_text_without_hash(self) -> None:
+        plan = understand_query("mom")
+        resolution = resolve_people_query(
+            self.db,
+            project_id=1,
+            query="mom",
+            query_plan=plan,
+        )
+
+        self.assertEqual(resolution.matched_person_ids, [102])
 
     def test_search_father_at_seaside_applies_semantic_constraint_after_people(self) -> None:
         plan = understand_query("爸爸在海边")

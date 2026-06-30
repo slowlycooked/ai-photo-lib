@@ -112,7 +112,7 @@ def rematch_unknown_faces(
     if scope == "person":
         if person_id is None:
             raise ValueError("person_id is required when scope=person")
-        target_person_exists = (
+        target_person_active_exists = (
             db.query(PersonFaceAssignment.id)
             .filter(
                 PersonFaceAssignment.project_id == project_id,
@@ -122,7 +122,7 @@ def rematch_unknown_faces(
             )
             .exists()
         )
-        query = query.filter(target_person_exists)
+        query = query.filter(~target_person_active_exists)
     elif scope == "time_range":
         if start_time is None or end_time is None:
             raise ValueError("start_time and end_time are required when scope=time_range")
@@ -149,6 +149,11 @@ def rematch_unknown_faces(
             db,
             project_id=project_id,
             face_detection_id=face_id,
+            target_person_id=person_id if scope == "person" else None,
+            force_review_pending=scope == "person",
+            assignment_source=(
+                "targeted_person_rematch" if scope == "person" else "similarity_match"
+            ),
         )
         if decision is None:
             continue

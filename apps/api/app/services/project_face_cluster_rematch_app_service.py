@@ -6,6 +6,7 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
+from ..models.face import Person
 from ..schemas.face import (
     FaceClusterUnknownResponse,
     FaceClusterUnknownStatusResponse,
@@ -107,6 +108,8 @@ class ProjectFaceClusterRematchAppService:
             start_time=start_time,
             end_time=end_time,
         )
+        if scope == "person":
+            self._validate_person_rematch_target(project_id=project_id, person_id=person_id)
 
         result = enqueue_face_rematch_unknown_task(
             self.db,
@@ -159,3 +162,23 @@ class ProjectFaceClusterRematchAppService:
                 )
             if start_time > end_time:
                 raise FaceRematchValidationError("start_time must be <= end_time")
+
+    def _validate_person_rematch_target(
+        self, *, project_id: int, person_id: Optional[int]
+    ) -> None:
+        if person_id is None:
+            raise FaceRematchValidationError("person_id is required when scope=person")
+
+        person = (
+            self.db.query(Person)
+            .filter(Person.project_id == project_id, Person.id == int(person_id))
+            .first()
+        )
+        if person is None:
+            raise FaceRematchValidationError("person_id must reference a person in this project")
+        if not person.is_named:
+            raise FaceRematchValidationError("person scope rematch requires a named person")
+        if int(person.confirmed_sample_count or 0) <= 0:
+            raise FaceRematchValidationError(
+                "person scope rematch requires at least one confirmed face sample"
+            )

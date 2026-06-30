@@ -62,6 +62,8 @@ export function PeoplePage() {
     batchMoveReview,
     splitFaces,
     setRepresentativeFace,
+    rematchSelectedPerson,
+    personRematchRunning,
   } = usePeoplePage();
 
   if (selectedProjectId == null) {
@@ -149,6 +151,11 @@ export function PeoplePage() {
             totalAssignmentCount={totalAssignmentCount}
             canLoadMoreAssignments={canLoadMoreAssignments}
             onLoadMoreAssignments={loadMoreAssignments}
+            rematchBusy={personRematchRunning}
+            onRematchPersonFaces={() => {
+              if (!resolvedSelectedPersonId || !selectedPersonIsManageable) return;
+              rematchSelectedPerson();
+            }}
             onRename={(displayName) => {
               if (!resolvedSelectedPersonId || !selectedPersonIsManageable) return;
               renameSelectedPerson(displayName);

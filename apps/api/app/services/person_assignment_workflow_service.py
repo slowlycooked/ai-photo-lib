@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from ..models.face import Person, PersonFaceAssignment
 from .people_assignment_constants import (
+    STATUS_AUTO_ASSIGNED,
     STATUS_HUMAN_CONFIRMED,
     STATUS_HUMAN_CORRECTED,
     STATUS_REJECTED,
@@ -314,12 +315,17 @@ class PersonAssignmentWorkflowService:
                 PersonFaceAssignment.project_id == project_id,
                 PersonFaceAssignment.person_id == person_id,
                 PersonFaceAssignment.face_detection_id.in_(face_ids),
-                PersonFaceAssignment.assignment_status == STATUS_REVIEW_PENDING,
+                PersonFaceAssignment.assignment_status.in_(
+                    [STATUS_REVIEW_PENDING, STATUS_AUTO_ASSIGNED]
+                ),
             )
             .all()
         )
         if not assignments:
-            raise HTTPException(status_code=404, detail="No review_pending assignments found for this person")
+            raise HTTPException(
+                status_code=404,
+                detail="No review_pending or auto_assigned assignments found for this person",
+            )
 
         touched_person_ids = {person_id}
         assigned_face_ids = [assignment.face_detection_id for assignment in assignments]

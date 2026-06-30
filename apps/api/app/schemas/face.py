@@ -3,7 +3,9 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, computed_field
+
+from ..services.person_name_tags import extract_person_name_tags
 
 
 class ProjectFaceSettingsResponse(BaseModel):
@@ -221,6 +223,12 @@ class PersonSummaryResponse(BaseModel):
     project_id: int
     display_name: str
     normalized_name: Optional[str] = None
+
+    @computed_field
+    @property
+    def name_tags(self) -> list[str]:
+        return extract_person_name_tags(self.display_name)
+
     is_named: bool
     representative_face_detection_id: Optional[int] = None
     sample_count: int

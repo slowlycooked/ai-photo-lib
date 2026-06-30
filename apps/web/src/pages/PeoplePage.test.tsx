@@ -27,6 +27,8 @@ const setRepresentativeFaceMock = vi.fn();
 const batchConfirmReviewMock = vi.fn();
 const batchRejectReviewMock = vi.fn();
 const batchMoveReviewMock = vi.fn();
+const rematchUnknownMock = vi.fn();
+const rematchUnknownStatusMock = vi.fn();
 const mergePersonMock = vi.fn();
 const splitPersonMock = vi.fn();
 const deletePersonMock = vi.fn();
@@ -59,6 +61,11 @@ vi.mock("@/api", async () => {
       projectSettings: {
         ...actual.api.projectSettings,
         getFace: (...args: unknown[]) => getFaceSettingsMock(...args),
+      },
+      projectFaces: {
+        ...actual.api.projectFaces,
+        rematchUnknown: (...args: unknown[]) => rematchUnknownMock(...args),
+        rematchUnknownStatus: (...args: unknown[]) => rematchUnknownStatusMock(...args),
       },
     },
   };
@@ -251,6 +258,8 @@ describe("PeoplePage", () => {
     batchConfirmReviewMock.mockReset();
     batchRejectReviewMock.mockReset();
     batchMoveReviewMock.mockReset();
+    rematchUnknownMock.mockReset();
+    rematchUnknownStatusMock.mockReset();
     mergePersonMock.mockReset();
     splitPersonMock.mockReset();
     deletePersonMock.mockReset();
@@ -318,6 +327,45 @@ describe("PeoplePage", () => {
       request_id: null,
       operator: null,
       attempts: 1,
+    });
+    rematchUnknownStatusMock.mockResolvedValue({
+      project_id: 1,
+      task_id: null,
+      status: "idle",
+      running: false,
+      max_faces: 1000,
+      scope: "unknown",
+      person_id: null,
+      start_time: null,
+      end_time: null,
+      faces_considered: 0,
+      matched_faces: 0,
+      auto_assigned: 0,
+      review_pending: 0,
+      errors: 0,
+      recent_errors: [],
+      message: "idle",
+    });
+    rematchUnknownMock.mockResolvedValue({
+      message: "Unknown face rematch queued",
+      status: {
+        project_id: 1,
+        task_id: 3001,
+        status: "queued",
+        running: true,
+        max_faces: 10000,
+        scope: "person",
+        person_id: 101,
+        start_time: null,
+        end_time: null,
+        faces_considered: 0,
+        matched_faces: 0,
+        auto_assigned: 0,
+        review_pending: 0,
+        errors: 0,
+        recent_errors: [],
+        message: "queued",
+      },
     });
     mergePersonMock.mockResolvedValue({
       moved_assignments: 1,
@@ -405,6 +453,54 @@ describe("PeoplePage", () => {
 
     await waitFor(() => {
       expect(confirmPersonFaceMock).toHaveBeenCalledWith(1, 101, 301);
+    });
+  });
+
+  it("triggers targeted face rematch from the detail panel", async () => {
+    const user = userEvent.setup();
+    renderPage("/projects/1/people");
+
+    await user.click(await screen.findByRole("button", { name: "从已扫描人脸找相似候选" }));
+
+    await waitFor(() => {
+      expect(rematchUnknownMock).toHaveBeenCalledWith(1, {
+        scope: "person",
+        person_id: 101,
+        max_faces: 10000,
+      });
+    });
+  });
+
+  it("batch-confirms auto-assigned candidates from the detail panel", async () => {
+    const user = userEvent.setup();
+    personMock.mockImplementation((projectId: number, personId: number) => {
+      const detail = buildDetail(personId);
+      return Promise.resolve({
+        ...detail,
+        auto_assigned_count: 1,
+        review_pending_count: 0,
+        assignments: [
+          {
+            ...detail.assignments[0],
+            id: 901,
+            face_detection_id: 901,
+            assignment_status: "auto_assigned",
+            face_detection: {
+              ...detail.assignments[0].face_detection,
+              id: 901,
+            },
+          },
+        ],
+      });
+    });
+    renderPage("/projects/1/people");
+
+    await user.click(await screen.findByRole("button", { name: "全部确认自动识别" }));
+
+    await waitFor(() => {
+      expect(batchConfirmReviewMock).toHaveBeenCalledWith(1, 101, {
+        face_detection_ids: [901],
+      });
     });
   });
 

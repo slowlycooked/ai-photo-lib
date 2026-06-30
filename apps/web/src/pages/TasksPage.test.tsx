@@ -194,6 +194,10 @@ describe("TasksPage", () => {
       status: "idle",
       running: false,
       max_faces: 1000,
+      scope: "unknown",
+      person_id: null,
+      start_time: null,
+      end_time: null,
       faces_considered: 0,
       matched_faces: 0,
       auto_assigned: 0,
@@ -379,6 +383,41 @@ describe("TasksPage", () => {
     expect(await screen.findByText("未知人脸聚类任务 · failed")).toBeInTheDocument();
     expect(await screen.findByText("聚类失败明细")).toBeInTheDocument();
     expect(screen.getAllByText("cluster exploded").length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("starts a project-wide face rematch into labeled people", async () => {
+    const user = userEvent.setup();
+    rematchUnknownFacesMock.mockResolvedValue({
+      message: "queued",
+      status: {
+        project_id: 7,
+        task_id: 77,
+        status: "queued",
+        running: true,
+        max_faces: 10000,
+        scope: "project",
+        person_id: null,
+        start_time: null,
+        end_time: null,
+        faces_considered: 0,
+        matched_faces: 0,
+        auto_assigned: 0,
+        review_pending: 0,
+        errors: 0,
+        recent_errors: [],
+        message: "queued",
+      },
+    });
+
+    renderPage("/tasks?tab=face-scan");
+
+    await user.click(await screen.findByRole("button", { name: "聚合到已打标人物" }));
+
+    expect(rematchUnknownFacesMock).toHaveBeenCalledWith(7, {
+      scope: "project",
+      max_faces: 10000,
+    });
+    expect(await screen.findByText("已提交全项目已打标人物聚合任务（max_faces=10000）")).toBeInTheDocument();
   });
 
   it("can force-stop ai analyze jobs from tasks page", async () => {

@@ -33,12 +33,27 @@ export function PeopleReviewPage() {
     batchMoveReview,
   } = usePeopleReviewPage();
   const [activePersonId, setActivePersonId] = useState<number | null>(null);
+  const [selectedFaceIdsByPerson, setSelectedFaceIdsByPerson] = useState<Record<number, number[]>>(
+    {},
+  );
 
   const activeEntry =
     grouped.find(([personId]) => personId === activePersonId) ?? grouped[0] ?? null;
   const activePersonIdResolved = activeEntry?.[0] ?? null;
   const activeItems = activeEntry?.[1] ?? [];
   const activeFaceIds = activeItems.map((item) => item.face_detection_id);
+  const activeSelectedFaceIds =
+    activePersonIdResolved == null
+      ? []
+      : (selectedFaceIdsByPerson[activePersonIdResolved] ?? []).filter((faceId) =>
+          activeFaceIds.includes(faceId),
+        );
+  const activeActionFaceIds =
+    activeSelectedFaceIds.length > 0 ? activeSelectedFaceIds : activeFaceIds;
+  const activeSelectionLabel =
+    activeSelectedFaceIds.length > 0
+      ? `已选 ${activeSelectedFaceIds.length} / ${activeFaceIds.length} 张`
+      : "未选择时将操作当前目标全部人脸";
   const activePersonName =
     activePersonIdResolved == null
       ? null
@@ -64,6 +79,55 @@ export function PeopleReviewPage() {
     }
     setActivePersonId(grouped[0][0]);
   }, [activePersonId, grouped]);
+
+  useEffect(() => {
+    const visibleFaceIds = new Set(
+      grouped.flatMap(([, items]) => items.map((item) => item.face_detection_id)),
+    );
+    setSelectedFaceIdsByPerson((prev) => {
+      let changed = false;
+      const next: Record<number, number[]> = {};
+      for (const [personId, faceIds] of Object.entries(prev)) {
+        const filtered = faceIds.filter((faceId) => visibleFaceIds.has(faceId));
+        if (filtered.length > 0) {
+          next[Number(personId)] = filtered;
+        }
+        if (filtered.length !== faceIds.length) {
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [grouped]);
+
+  const toggleFaceSelection = (personId: number, faceId: number) => {
+    setSelectedFaceIdsByPerson((prev) => {
+      const current = prev[personId] ?? [];
+      const exists = current.includes(faceId);
+      const nextForPerson = exists
+        ? current.filter((id) => id !== faceId)
+        : [...current, faceId];
+      return {
+        ...prev,
+        [personId]: nextForPerson,
+      };
+    });
+  };
+
+  const selectAllFaces = (personId: number, faceIds: number[]) => {
+    setSelectedFaceIdsByPerson((prev) => ({
+      ...prev,
+      [personId]: faceIds,
+    }));
+  };
+
+  const clearFaceSelection = (personId: number) => {
+    setSelectedFaceIdsByPerson((prev) => {
+      const next = { ...prev };
+      delete next[personId];
+      return next;
+    });
+  };
 
   if (!Number.isFinite(routeProjectId) || routeProjectId <= 0) {
     return <Navigate to="/photos" replace />;
@@ -139,6 +203,7 @@ export function PeopleReviewPage() {
             {grouped.map(([personId, items]) => {
               const personName = peopleById.get(personId) ?? "未命名";
               const selected = personId === activePersonIdResolved;
+              const selectedFaceIds = selectedFaceIdsByPerson[personId] ?? [];
 
               return (
                 <article
@@ -158,49 +223,73 @@ export function PeopleReviewPage() {
                         人物 #{personId} · {personName}
                       </h2>
                       <p className="text-caption-sm text-mute mt-1">
-                        当前页待确认 {items.length} 张，点击卡片设为右侧操作目标。
+                        当前页待确认 {items.length} 张，点击卡片设为右侧操作目标；勾选后仅处理已选人脸。
                       </p>
                     </button>
-                    {selected && (
-                      <span className="px-2 py-0.5 rounded-full bg-primary/10 text-caption-sm text-primary">
-                        当前目标
-                      </span>
-                    )}
+                    <div className="flex items-center gap-2 flex-wrap justify-end">
+                      {selectedFaceIds.length > 0 && (
+                        <span className="px-2 py-0.5 rounded-full bg-surface-soft text-caption-sm text-mute">
+                          已选 {selectedFaceIds.length}
+                        </span>
+                      )}
+                      {selected && (
+                        <span className="px-2 py-0.5 rounded-full bg-primary/10 text-caption-sm text-primary">
+                          当前目标
+                        </span>
+                      )}
+                    </div>
                   </div>
 
                   <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-5 gap-2">
-                    {items.map((assignment) => (
-                      <div
-                        key={assignment.id}
-                        className="rounded-lg border border-hairline bg-surface-soft p-2"
-                      >
-                        <div className="w-full aspect-square rounded-md overflow-hidden border border-hairline bg-canvas mb-2">
-                          {assignment.face_detection.face_crop_path ? (
-                            <img
-                              src={api.projectFaces.cropUrl(
-                                selectedProjectId,
-                                assignment.face_detection.id,
-                                assignment.face_detection.updated_at,
-                              )}
-                              alt={`face-${assignment.face_detection.id}`}
-                              loading="lazy"
-                              decoding="async"
-                              className="w-full h-full object-cover"
-                            />
-                          ) : (
-                            <div className="w-full h-full flex items-center justify-center text-mute">
-                              <ScanFace className="w-4 h-4" />
-                            </div>
-                          )}
-                        </div>
-                        <div className="flex items-center justify-between gap-2 text-[11px] text-mute">
-                          <span>face #{assignment.face_detection_id}</span>
-                          {assignment.similarity_score != null && (
-                            <span>{Math.round(assignment.similarity_score * 100)}%</span>
-                          )}
-                        </div>
-                      </div>
-                    ))}
+                    {items.map((assignment) => {
+                      const faceSelected = selectedFaceIds.includes(assignment.face_detection_id);
+
+                      return (
+                        <button
+                          type="button"
+                          key={assignment.id}
+                          onClick={() => {
+                            setActivePersonId(personId);
+                            toggleFaceSelection(personId, assignment.face_detection_id);
+                          }}
+                          aria-pressed={faceSelected}
+                          aria-label={`选择 face #${assignment.face_detection_id}`}
+                          className={[
+                            "rounded-lg border bg-surface-soft p-2 text-left transition",
+                            faceSelected
+                              ? "border-primary ring-2 ring-primary/20"
+                              : "border-hairline",
+                          ].join(" ")}
+                        >
+                          <div className="w-full aspect-square rounded-md overflow-hidden border border-hairline bg-canvas mb-2">
+                            {assignment.face_detection.face_crop_path ? (
+                              <img
+                                src={api.projectFaces.cropUrl(
+                                  selectedProjectId,
+                                  assignment.face_detection.id,
+                                  assignment.face_detection.updated_at,
+                                )}
+                                alt={`face-${assignment.face_detection.id}`}
+                                loading="lazy"
+                                decoding="async"
+                                className="w-full h-full object-cover"
+                              />
+                            ) : (
+                              <div className="w-full h-full flex items-center justify-center text-mute">
+                                <ScanFace className="w-4 h-4" />
+                              </div>
+                            )}
+                          </div>
+                          <div className="flex items-center justify-between gap-2 text-[11px] text-mute">
+                            <span>face #{assignment.face_detection_id}</span>
+                            {faceSelected && <span className="text-primary">已选</span>}
+                            {assignment.similarity_score != null && (
+                              <span>{Math.round(assignment.similarity_score * 100)}%</span>
+                            )}
+                          </div>
+                        </button>
+                      );
+                    })}
                   </div>
 
                   <div className="flex items-center gap-2 flex-wrap border-t border-hairline pt-3">
@@ -210,6 +299,20 @@ export function PeopleReviewPage() {
                       className="px-2.5 py-1 rounded-md border border-hairline text-caption-sm text-ink hover:bg-surface-card"
                     >
                       设为目标
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        selectedFaceIds.length === items.length
+                          ? clearFaceSelection(personId)
+                          : selectAllFaces(
+                              personId,
+                              items.map((item) => item.face_detection_id),
+                            )
+                      }
+                      className="px-2.5 py-1 rounded-md border border-hairline text-caption-sm text-ink hover:bg-surface-card"
+                    >
+                      {selectedFaceIds.length === items.length ? "清除选择" : "全选"}
                     </button>
                     <Link
                       to={`/projects/${selectedProjectId}/people?person_id=${personId}`}
@@ -307,6 +410,7 @@ export function PeopleReviewPage() {
                     <p className="text-caption-sm text-mute mt-1">
                       当前目标 {activeItems.length} 张待确认人脸。
                     </p>
+                    <p className="text-caption-sm text-mute mt-1">{activeSelectionLabel}</p>
                   </>
                 )}
               </div>
@@ -316,19 +420,23 @@ export function PeopleReviewPage() {
                   <div className="grid grid-cols-2 gap-2">
                     <button
                       type="button"
-                      disabled={actionBusy || activeFaceIds.length === 0}
-                      onClick={() => batchConfirmReview(activePersonIdResolved, activeFaceIds)}
+                      disabled={actionBusy || activeActionFaceIds.length === 0}
+                      onClick={() => batchConfirmReview(activePersonIdResolved, activeActionFaceIds)}
                       className="px-2.5 py-2 rounded-md border border-emerald-200 bg-emerald-50 text-caption-sm text-emerald-800 hover:bg-emerald-100 disabled:opacity-50"
                     >
-                      批量确认
+                      {activeSelectedFaceIds.length > 0
+                        ? `确认已选 (${activeSelectedFaceIds.length})`
+                        : "批量确认"}
                     </button>
                     <button
                       type="button"
-                      disabled={actionBusy || activeFaceIds.length === 0}
-                      onClick={() => batchRejectReview(activePersonIdResolved, activeFaceIds)}
+                      disabled={actionBusy || activeActionFaceIds.length === 0}
+                      onClick={() => batchRejectReview(activePersonIdResolved, activeActionFaceIds)}
                       className="px-2.5 py-2 rounded-md border border-red-200 bg-red-50 text-caption-sm text-red-800 hover:bg-red-100 disabled:opacity-50"
                     >
-                      批量排除
+                      {activeSelectedFaceIds.length > 0
+                        ? `排除已选 (${activeSelectedFaceIds.length})`
+                        : "批量排除"}
                     </button>
                   </div>
 
@@ -369,12 +477,14 @@ export function PeopleReviewPage() {
                                 batchMoveReview(
                                   activePersonIdResolved,
                                   activeMoveTarget,
-                                  activeFaceIds,
+                                  activeActionFaceIds,
                                 )
                               }
                               className="px-2.5 py-2 rounded-md border border-hairline text-caption-sm text-ink hover:bg-surface-card disabled:opacity-50"
                             >
-                              批量移动
+                              {activeSelectedFaceIds.length > 0
+                                ? `移动已选 (${activeSelectedFaceIds.length})`
+                                : "批量移动"}
                             </button>
                             <button
                               type="button"

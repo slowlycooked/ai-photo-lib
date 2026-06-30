@@ -11,6 +11,7 @@ from typing import Dict, List, Optional, Sequence, Set
 from sqlalchemy.orm import Session
 
 from ...models.face import FaceDetection, Person, PersonFaceAssignment
+from ..person_name_tags import extract_person_name_tags
 from ..people_assignment_constants import (
     ASSIGNMENT_STATUS_WEIGHT,
     SEARCH_RECALL_ASSIGNMENT_STATUSES,
@@ -96,6 +97,7 @@ class PeopleRecallService:
                 {
                     "person_id": person_id,
                     "display_name": str(row.display_name),
+                    "name_tags": extract_person_name_tags(str(row.display_name)),
                     "assignment_status": str(row.assignment_status),
                     "confidence": float(row.confidence) if row.confidence is not None else None,
                     "similarity_score": (

@@ -118,6 +118,22 @@ CREATE TABLE face_embeddings (
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE persons (
+  id INTEGER PRIMARY KEY,
+  project_id INTEGER NOT NULL,
+  display_name TEXT NOT NULL,
+  normalized_name TEXT,
+  is_named BOOLEAN NOT NULL DEFAULT 0,
+  representative_face_detection_id INTEGER,
+  sample_count INTEGER NOT NULL DEFAULT 0,
+  confirmed_sample_count INTEGER NOT NULL DEFAULT 0,
+  auto_assigned_count INTEGER NOT NULL DEFAULT 0,
+  review_pending_count INTEGER NOT NULL DEFAULT 0,
+  created_by TEXT NOT NULL DEFAULT 'system',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE photo_derivatives (
   id INTEGER PRIMARY KEY,
   project_id INTEGER NOT NULL,
@@ -236,6 +252,14 @@ INSERT INTO face_embeddings (
   (501, 1, 301, 'fake-sface', 'v1', 3),
   (502, 1, 302, 'fake-sface', 'v1', 3),
   (601, 2, 401, 'fake-sface', 'v1', 3);
+
+INSERT INTO persons (
+  id, project_id, display_name, normalized_name, is_named,
+  representative_face_detection_id, sample_count, confirmed_sample_count, created_by
+) VALUES
+  (101, 1, 'Dad', 'dad', 1, 301, 1, 1, 'user'),
+  (102, 1, 'Person 102', 'person 102', 0, NULL, 0, 0, 'system'),
+  (103, 1, 'Mom', 'mom', 1, NULL, 0, 0, 'user');
 
 INSERT INTO photo_derivatives (
   id, project_id, photo_id, kind, path, source_path, source_mtime, status
@@ -640,6 +664,28 @@ class ProjectFacesEndpointsTest(unittest.TestCase):
     payload = start.json()
     self.assertEqual(payload["status"]["scope"], "person")
     self.assertEqual(payload["status"]["person_id"], 101)
+
+  def test_face_rematch_unknown_person_scope_requires_confirmed_named_person(self) -> None:
+    unnamed = self.client.post(
+      "/projects/1/face-rematch-unknown",
+      json={"scope": "person", "person_id": 102},
+    )
+    self.assertEqual(unnamed.status_code, 422)
+    self.assertIn("named person", unnamed.json()["detail"])
+
+    no_sample = self.client.post(
+      "/projects/1/face-rematch-unknown",
+      json={"scope": "person", "person_id": 103},
+    )
+    self.assertEqual(no_sample.status_code, 422)
+    self.assertIn("confirmed face sample", no_sample.json()["detail"])
+
+    missing = self.client.post(
+      "/projects/1/face-rematch-unknown",
+      json={"scope": "person", "person_id": 999},
+    )
+    self.assertEqual(missing.status_code, 422)
+    self.assertIn("this project", missing.json()["detail"])
 
   def test_face_rematch_unknown_time_range_requires_valid_window(self) -> None:
     missing = self.client.post(

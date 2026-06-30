@@ -43,6 +43,7 @@ export function usePeoplePage() {
   const [manualArchivedPersonIds, setManualArchivedPersonIds] = useState<Set<number>>(new Set());
   const [manualManagedPersonIds, setManualManagedPersonIds] = useState<Set<number>>(new Set());
   const [selectedPersonIds, setSelectedPersonIds] = useState<number[]>([]);
+  const [personRematchTaskId, setPersonRematchTaskId] = useState<number | null>(null);
   const [personDetailAssignmentWindow, setPersonDetailAssignmentWindow] = useState<{
     personId: number | null;
     limit: number;
@@ -197,6 +198,16 @@ export function usePeoplePage() {
     staleTime: 15_000,
   });
 
+  const { data: rematchStatus } = useQuery({
+    queryKey: ["face-rematch-unknown-status", selectedProjectId],
+    queryFn: () => api.projectFaces.rematchUnknownStatus(selectedProjectId!),
+    enabled: selectedProjectId != null,
+    refetchInterval: (query) => {
+      const d = query.state.data;
+      return d && d.running ? 3000 : 15000;
+    },
+  });
+
   const refreshPeopleData = () => {
     queryClient.invalidateQueries({ queryKey: ["project-people", selectedProjectId] });
     queryClient.invalidateQueries({ queryKey: ["project-people-archive-candidates", selectedProjectId] });
@@ -244,6 +255,21 @@ export function usePeoplePage() {
     setErrorMessage(error.message);
     setStatusMessage(null);
   };
+
+  useEffect(() => {
+    if (personRematchTaskId == null || !rematchStatus) return;
+    if (rematchStatus.task_id !== personRematchTaskId || rematchStatus.running) return;
+
+    if (rematchStatus.status === "success") {
+      handleSuccess(
+        `人物相似候选聚合完成：扫描 ${rematchStatus.faces_considered} 张，新增/更新待确认 ${rematchStatus.review_pending} 张`,
+      );
+    } else if (rematchStatus.status === "failed") {
+      setErrorMessage(`人物相似候选聚合失败：${rematchStatus.message}`);
+      setStatusMessage(null);
+    }
+    setPersonRematchTaskId(null);
+  }, [personRematchTaskId, rematchStatus]);
 
   const renameMutation = useMutation({
     mutationFn: (displayName: string) =>
@@ -384,6 +410,27 @@ export function usePeoplePage() {
     onError: handleError,
   });
 
+  const rematchPersonMutation = useMutation({
+    mutationFn: () =>
+      api.projectFaces.rematchUnknown(selectedProjectId!, {
+        scope: "person",
+        person_id: resolvedSelectedPersonId!,
+        max_faces: 10000,
+      }),
+    onSuccess: (result) => {
+      setErrorMessage(null);
+      setStatusMessage(
+        result.status.running
+          ? `已提交人物相似候选聚合任务 #${result.status.task_id ?? "-"}`
+          : result.message,
+      );
+      setPersonRematchTaskId(result.status.task_id ?? null);
+      refreshPeopleData();
+      queryClient.invalidateQueries({ queryKey: ["face-rematch-unknown-status", selectedProjectId] });
+    },
+    onError: handleError,
+  });
+
   const selectNextManagedPerson = (removedPersonIds: Set<number>) => {
     const nextCandidate = managedPeople.find((person) => !removedPersonIds.has(person.id));
     const next = new URLSearchParams(searchParams);
@@ -419,7 +466,8 @@ export function usePeoplePage() {
     createPersonMutation.isPending ||
     mergePersonMutation.isPending ||
     splitPersonMutation.isPending ||
-    deletePersonMutation.isPending;
+    deletePersonMutation.isPending ||
+    rematchPersonMutation.isPending;
 
   const moveCandidates = selectedPersonIsManageable
     ? managedPeople.filter((person) => person.id !== resolvedSelectedPersonId)
@@ -430,6 +478,10 @@ export function usePeoplePage() {
     personDetail?.assignments_total ?? personDetail?.sample_count ?? loadedAssignmentCount;
   const canLoadMoreAssignments =
     !!personDetail?.assignments_has_more && personDetailAssignmentLimit < 500;
+  const personRematchRunning =
+    !!rematchStatus?.running &&
+    rematchStatus.scope === "person" &&
+    rematchStatus.person_id === resolvedSelectedPersonId;
   const namedCount = managedPeople.filter((item) => item.is_named).length;
   const unnamedCount = Math.max(0, managedPeople.length - namedCount);
 
@@ -611,5 +663,7 @@ export function usePeoplePage() {
     splitFaces: (faceIds: number[], newDisplayName?: string) =>
       splitPersonMutation.mutate({ faceIds, newDisplayName }),
     setRepresentativeFace: (faceId: number) => representativeMutation.mutate(faceId),
+    rematchSelectedPerson: () => rematchPersonMutation.mutate(),
+    personRematchRunning,
   };
 }

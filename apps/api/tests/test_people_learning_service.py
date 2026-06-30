@@ -329,7 +329,22 @@ def test_rematch_unknown_faces_supports_person_scope() -> None:
         )
         assert result.faces_considered == 1
         assert result.matched_faces == 1
-        assert result.auto_assigned == 1
+        assert result.auto_assigned == 0
+        assert result.review_pending == 1
+
+        row = db.execute(
+            sa.text(
+                """
+                SELECT face_detection_id, assignment_status, assignment_source
+                FROM person_face_assignments
+                WHERE project_id = 1 AND person_id = 101 AND face_detection_id = 203
+                """
+            )
+        ).first()
+        assert row is not None
+        assert row[0] == 203
+        assert row[1] == "review_pending"
+        assert row[2] == "targeted_person_rematch"
     finally:
         db.close()
 

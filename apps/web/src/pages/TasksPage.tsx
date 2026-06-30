@@ -388,12 +388,17 @@ function FaceScanSection({ projectId }: { projectId: number | null }) {
   });
 
   const rematchMutation = useMutation({
-    mutationFn: () => api.projectFaces.rematchUnknown(projectId!),
+    mutationFn: (scope: "unknown" | "project" = "unknown") =>
+      api.projectFaces.rematchUnknown(
+        projectId!,
+        scope === "project" ? { scope: "project", max_faces: 10000 } : undefined,
+      ),
     onSuccess: (result) => {
       setError(null);
+      const label = result.status.scope === "project" ? "全项目已打标人物聚合" : "未知人脸重匹配";
       setMessage(
         result.status.status === "queued" || result.status.status === "running"
-          ? `已提交未知人脸重匹配任务（max_faces=${result.status.max_faces}）`
+          ? `已提交${label}任务（max_faces=${result.status.max_faces}）`
           : result.message
       );
       queryClient.invalidateQueries({ queryKey: ["face-rematch-unknown-status", projectId] });
@@ -544,10 +549,10 @@ function FaceScanSection({ projectId }: { projectId: number | null }) {
       {rematchStatus && rematchStatus.status !== "idle" && (
         <div className="bg-surface-soft border border-hairline rounded-md px-4 py-3 space-y-1">
           <p className="text-body-sm font-medium text-ink">
-            未知人脸重匹配任务 · {rematchStatus.status}
+            {rematchStatus.scope === "project" ? "全项目已打标人物聚合任务" : "未知人脸重匹配任务"} · {rematchStatus.status}
           </p>
           <p className="text-caption-sm text-mute">
-            task={rematchStatus.task_id ?? "-"} · max_faces={rematchStatus.max_faces} · errors={rematchStatus.errors}
+            task={rematchStatus.task_id ?? "-"} · scope={rematchStatus.scope} · max_faces={rematchStatus.max_faces} · errors={rematchStatus.errors}
           </p>
           <p className="text-caption-sm text-mute">
             considered={rematchStatus.faces_considered} · matched={rematchStatus.matched_faces} · auto={rematchStatus.auto_assigned} · review={rematchStatus.review_pending}
@@ -617,7 +622,7 @@ function FaceScanSection({ projectId }: { projectId: number | null }) {
           </button>
         )}
         <button
-          onClick={() => rematchMutation.mutate()}
+          onClick={() => rematchMutation.mutate("unknown")}
           disabled={!canRun || rematchMutation.isPending || !!rematchStatus?.running}
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-hairline text-btn-sm hover:bg-surface-card disabled:opacity-50 transition-colors"
         >
@@ -627,6 +632,19 @@ function FaceScanSection({ projectId }: { projectId: number | null }) {
             : rematchStatus?.running
               ? "重匹配进行中…"
               : "重匹配未知人脸"}
+        </button>
+        <button
+          onClick={() => rematchMutation.mutate("project")}
+          disabled={!canRun || rematchMutation.isPending || !!rematchStatus?.running}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-primary text-white text-btn-sm font-bold hover:bg-primary-pressed disabled:bg-stone transition-colors"
+          title="扫描已有 embedding 的人脸，把相似候选聚合到已命名人物下面"
+        >
+          <RefreshCw className="w-3.5 h-3.5" />
+          {rematchMutation.isPending
+            ? "提交中…"
+            : rematchStatus?.running
+              ? "聚合任务进行中…"
+              : "聚合到已打标人物"}
         </button>
         {!!rematchStatus?.running && (
           <button

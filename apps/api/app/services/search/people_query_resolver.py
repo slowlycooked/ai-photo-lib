@@ -12,6 +12,7 @@ from typing import List
 from sqlalchemy.orm import Session
 
 from ...models.face import Person
+from ...services.person_name_tags import person_name_search_terms
 from ...services.query_understanding_service import SearchQueryPlan
 
 
@@ -73,7 +74,7 @@ def resolve_people_query(
 
     Matching strategy:
     - search only named people in the same project
-    - try both normalized_name and display_name substring matching
+    - try normalized_name, display_name, display_name without #tags, and #tag aliases
     - remove matched names from query to produce residual semantic query
     """
     source_query = query
@@ -103,12 +104,8 @@ def resolve_people_query(
     seen_ids: set[int] = set()
     matched_terms: List[str] = []
     for person in people_rows:
-        candidates = [
-            _normalize_text(person.normalized_name or ""),
-            _normalize_text(person.display_name or ""),
-        ]
-        candidates = [c for c in candidates if c]
-        for candidate in sorted(set(candidates), key=len, reverse=True):
+        candidates = person_name_search_terms(person.display_name, person.normalized_name)
+        for candidate in sorted(candidates, key=len, reverse=True):
             if candidate and candidate in query_for_match:
                 if int(person.id) not in seen_ids:
                     seen_ids.add(int(person.id))
