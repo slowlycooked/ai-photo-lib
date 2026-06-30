@@ -240,11 +240,12 @@ class KeywordRecallService:
             return []
 
         top_k = limit if limit is not None else self._settings.keyword_top_k
+        scan_limit = max(top_k, min(top_k * 5, 10_000))
 
         logger.debug(
-            "[keyword_recall] start project_id=%d top_k=%d "
+            "[keyword_recall] start project_id=%d top_k=%d scan_limit=%d "
             "exact=%s expanded=%s broad=%s (broad excluded from SQL filter)",
-            project_id, top_k,
+            project_id, top_k, scan_limit,
             query_plan.exact_terms,
             query_plan.expanded_terms,
             query_plan.broad_terms,
@@ -273,11 +274,16 @@ class KeywordRecallService:
         rows: list[tuple[Photo, PhotoAIAnalysis]] = (
             base_query
             .order_by(Photo.taken_at.desc().nullslast(), Photo.created_at.desc())
-            .limit(top_k)
+            .limit(scan_limit)
             .all()
         )
 
-        logger.debug("[keyword_recall] db_rows=%d (limit=%d)", len(rows), top_k)
+        logger.debug(
+            "[keyword_recall] db_rows=%d (scan_limit=%d final_top_k=%d)",
+            len(rows),
+            scan_limit,
+            top_k,
+        )
 
         candidates: list[SearchCandidate] = []
         zero_score_count = 0
@@ -310,4 +316,4 @@ class KeywordRecallService:
         if candidates and logger.isEnabledFor(5):  # TRACE level
             for c in candidates[:10]:
                 logger.log(5, "[keyword_recall] photo_id=%d score=%.4f hit_tiers=%s explain=%s", c.photo_id, c.keyword_score, c.hit_tiers, c.keyword_explain)
-        return candidates
+        return candidates[:top_k]

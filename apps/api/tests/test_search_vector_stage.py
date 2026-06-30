@@ -58,9 +58,9 @@ def test_run_vector_stage_uses_two_layer_top_k_strategy() -> None:
             trace_writer=trace_writer,
         )
 
-    assert len(result.vector_scores) == 10
-    assert mock_service.search.call_args.kwargs["limit"] == 20
+    assert len(result.vector_scores) == 25
+    assert mock_service.search.call_args.kwargs["limit"] == 50
 
     vector_trace = [item for item in trace if item.get("stage") == "vector_recall"][-1]
-    assert vector_trace.get("raw_vector_top_k_per_field") == 20
-    assert vector_trace.get("final_vector_top_k") == 10
+    assert vector_trace.get("raw_vector_top_k_per_field") == 50
+    assert vector_trace.get("final_vector_top_k") == 50

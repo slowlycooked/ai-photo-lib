@@ -15,12 +15,12 @@ export function ProjectSelector() {
     setCurrentProjectId(projectId);
     setOpen(false);
 
-    const projectSettingsMatch = location.pathname.match(
-      /^\/projects\/\d+\/settings\/(.+)$/,
+    const projectScopedPathMatch = location.pathname.match(
+      /^\/projects\/\d+\/(people(?:\/review)?|settings(?:\/.*)?)$/,
     );
 
-    if (projectSettingsMatch) {
-      navigate(`/projects/${projectId}/settings/${projectSettingsMatch[1]}`, {
+    if (projectScopedPathMatch) {
+      navigate(`/projects/${projectId}/${projectScopedPathMatch[1]}`, {
         replace: true,
       });
     }

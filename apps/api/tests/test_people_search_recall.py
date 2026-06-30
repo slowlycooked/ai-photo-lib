@@ -159,6 +159,9 @@ class PeopleSearchRecallTest(unittest.TestCase):
             query_plan=plan,
         )
 
+        self.assertEqual(resolution.people_filter_mode, "boost")
+        self.assertFalse(resolution.is_people_only)
+
         result = PeopleRecallService(self.db, 1).recall(resolution=resolution)
         ids = {c.photo_id for c in result.candidates}
 
@@ -192,6 +195,8 @@ class PeopleSearchRecallTest(unittest.TestCase):
 
         self.assertEqual(resolution.matched_person_ids, [102])
         self.assertEqual(resolution.residual_query, "")
+        self.assertEqual(resolution.people_filter_mode, "any")
+        self.assertTrue(resolution.is_people_only)
 
         result = PeopleRecallService(self.db, 1).recall(resolution=resolution)
         ids = {c.photo_id for c in result.candidates}
@@ -200,6 +205,19 @@ class PeopleSearchRecallTest(unittest.TestCase):
             result.candidates[0].people_explain["matched_people"][0]["name_tags"],
             ["妈咪", "Mom"],
         )
+
+    def test_kinship_query_with_photo_noise_uses_boost_mode(self) -> None:
+        plan = understand_query("爸爸的照片")
+        resolution = resolve_people_query(
+            self.db,
+            project_id=1,
+            query="爸爸的照片",
+            query_plan=plan,
+        )
+
+        self.assertEqual(resolution.matched_person_ids, [101])
+        self.assertEqual(resolution.residual_query, "")
+        self.assertEqual(resolution.people_filter_mode, "boost")
 
     def test_search_person_by_tag_text_without_hash(self) -> None:
         plan = understand_query("mom")

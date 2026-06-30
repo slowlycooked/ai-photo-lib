@@ -182,6 +182,7 @@ def run_people_stage(
         folder_rows = db.query(folder_subquery.c.id).all()
         next_constrained = {int(row[0]) for row in folder_rows}
 
+    people_filter_mode = str(execution_context.people_resolution.people_filter_mode or "none")
     people_recall = PeopleRecallService(db, execution_context.project_id).recall(
         resolution=execution_context.people_resolution,
         constrained_photo_ids=next_constrained,
@@ -190,10 +191,11 @@ def run_people_stage(
     matched_person_ids = people_recall.matched_person_ids
 
     people_photo_ids = people_recall.photo_ids
-    if next_constrained is None:
-        next_constrained = set(people_photo_ids)
-    else:
-        next_constrained = next_constrained & set(people_photo_ids)
+    if people_filter_mode != "boost":
+        if next_constrained is None:
+            next_constrained = set(people_photo_ids)
+        else:
+            next_constrained = next_constrained & set(people_photo_ids)
 
     people_candidates_debug = [
         {
@@ -207,7 +209,7 @@ def run_people_stage(
 
     trace_writer.write_stage(
         "people_recall",
-        people_filter_mode=execution_context.people_resolution.people_filter_mode,
+        people_filter_mode=people_filter_mode,
         matched_person_ids=matched_person_ids,
         people_candidates=len(people_results),
         constrained_photo_ids=len(next_constrained or set()),
@@ -215,7 +217,7 @@ def run_people_stage(
 
     logger.debug(
         "[search] people_recall mode=%s matched_person_ids=%s candidates=%d constrained=%d",
-        execution_context.people_resolution.people_filter_mode,
+        people_filter_mode,
         matched_person_ids,
         len(people_results),
         len(next_constrained or set()),
@@ -307,12 +309,9 @@ def run_vector_stage(
     is_ocr_query = execution_context.search_query_plan.intent == "ocr_text_search"
     raw_vector_top_k_per_field = max(
         1,
-        min(
-            int(execution_context.effective_settings.vector_top_k),
-            max(1, int(execution_context.page_size) * 2),
-        ),
+        int(execution_context.effective_settings.vector_top_k),
     )
-    final_vector_top_k = max(1, int(execution_context.page_size))
+    final_vector_top_k = raw_vector_top_k_per_field
 
     logger.debug(
         "[search] vector_recall start is_ocr=%s project_id=%s",

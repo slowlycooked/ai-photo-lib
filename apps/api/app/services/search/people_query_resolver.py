@@ -19,6 +19,27 @@ from ...services.query_understanding_service import SearchQueryPlan
 _CONNECTOR_RE = re.compile(r"(和|与|跟|及|以及|还有|and|with)", re.IGNORECASE)
 _NOISE_RE = re.compile(r"(的照片|的图片|的相片|照片|图片|相片)", re.IGNORECASE)
 _SPACE_RE = re.compile(r"\s+")
+_SOFT_PEOPLE_ONLY_TERMS = {
+    "爸爸",
+    "爸",
+    "父亲",
+    "妈妈",
+    "妈",
+    "母亲",
+    "爷爷",
+    "奶奶",
+    "外公",
+    "外婆",
+    "儿子",
+    "女儿",
+    "孩子",
+    "家人",
+    "亲子",
+    "father",
+    "mother",
+    "dad",
+    "mom",
+}
 
 
 @dataclass(frozen=True)
@@ -46,7 +67,11 @@ class PeopleQueryResolution:
 
     @property
     def is_people_only(self) -> bool:
-        return self.has_people and not self.residual_query.strip()
+        return (
+            self.has_people
+            and self.people_filter_mode != "boost"
+            and not self.residual_query.strip()
+        )
 
 
 def _normalize_text(value: str) -> str:
@@ -61,6 +86,28 @@ def _strip_people_terms(query: str, matched_terms: List[str]) -> str:
     residual = _CONNECTOR_RE.sub(" ", residual)
     residual = _SPACE_RE.sub(" ", residual).strip()
     return residual
+
+
+def _should_soften_people_only(
+    *,
+    query_for_match: str,
+    query_plan: SearchQueryPlan,
+    matched: List[ResolvedPersonRef],
+    matched_terms: List[str],
+    residual_query: str,
+) -> bool:
+    """Let kinship terms expand semantically instead of ending at named people."""
+    if len(matched) != 1 or residual_query.strip():
+        return False
+    if getattr(query_plan, "intent", "") != "people_search":
+        return False
+    normalized_terms = {_normalize_text(term) for term in matched_terms if term}
+    soft_query = _normalize_text(
+        _CONNECTOR_RE.sub(" ", _NOISE_RE.sub(" ", query_for_match))
+    )
+    if soft_query not in _SOFT_PEOPLE_ONLY_TERMS:
+        return False
+    return bool(normalized_terms & _SOFT_PEOPLE_ONLY_TERMS)
 
 
 def resolve_people_query(
@@ -122,6 +169,14 @@ def resolve_people_query(
 
     residual_query = _strip_people_terms(source_query, matched_terms)
     filter_mode = "all" if len(matched) > 1 else ("any" if matched else "none")
+    if _should_soften_people_only(
+        query_for_match=query_for_match,
+        query_plan=query_plan,
+        matched=matched,
+        matched_terms=matched_terms,
+        residual_query=residual_query,
+    ):
+        filter_mode = "boost"
 
     return PeopleQueryResolution(
         query=query,

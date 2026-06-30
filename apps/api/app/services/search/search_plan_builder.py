@@ -215,9 +215,10 @@ def build_search_plan(
             search_query_plan.query_constraints = constraints
 
     metadata_filters = dict(search_query_plan.metadata_filters or {})
+    people_filter_mode = str(people_resolution.people_filter_mode or "none")
     people_context_active = (
         bool(people_resolution.is_people_only)
-        or str(people_resolution.people_filter_mode or "none") != "none"
+        or people_filter_mode not in ("none", "boost")
     )
     force_temporal_metadata_filters = any(
         metadata_filters.get(key) not in (None, "", [], {})

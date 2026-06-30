@@ -144,6 +144,52 @@ class RecallPipelineStageTest(unittest.TestCase):
         self.assertEqual(result.matched_person_ids, [1])
         self.assertEqual(trace[-1]["stage"], "people_recall")
 
+    def test_people_stage_boost_mode_does_not_constrain_followup_recall(self) -> None:
+        trace: list[dict] = []
+        writer = SearchDebugTraceWriter(trace)
+        people_resolution = PeopleQueryResolution(
+            query="爸爸",
+            residual_query="",
+            people_filter_mode="boost",
+            matched_people=[
+                ResolvedPersonRef(
+                    person_id=1,
+                    display_name="爸爸",
+                    normalized_name="爸爸",
+                    matched_term="爸爸",
+                )
+            ],
+        )
+        context = self._build_context(people_resolution=people_resolution)
+        people_candidates = [
+            SearchCandidate(
+                photo_id=9,
+                people_score=1.0,
+                people_rank=1,
+                people_explain={"matched_people": [{"person_id": 1}]},
+            )
+        ]
+        fake_recall_result = SimpleNamespace(
+            candidates=people_candidates,
+            matched_person_ids=[1],
+            photo_ids=[9],
+        )
+
+        with patch(
+            "app.services.search.recall_pipeline.PeopleRecallService.recall",
+            return_value=fake_recall_result,
+        ):
+            result = run_people_stage(
+                db=MagicMock(),
+                execution_context=context,
+                trace_writer=writer,
+            )
+
+        self.assertIsNone(result.constrained_photo_ids)
+        self.assertIsNone(result.people_only_candidates)
+        self.assertEqual(result.people_results[0].photo_id, 9)
+        self.assertEqual(trace[-1]["people_filter_mode"], "boost")
+
     def test_vector_stage_reports_fallback_on_embedding_error(self) -> None:
         trace: list[dict] = []
         writer = SearchDebugTraceWriter(trace)
