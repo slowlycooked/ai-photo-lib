@@ -40,6 +40,7 @@ class RecallPipelineStageTest(unittest.TestCase):
         metadata_filter_active: bool = False,
         metadata_only_requested: bool = False,
         metadata_only_allowed: bool = True,
+        constrained_photo_ids: set[int] | None = None,
         people_resolution: PeopleQueryResolution | None = None,
     ) -> SearchExecutionContext:
         query_plan = SearchQueryPlan(
@@ -69,6 +70,7 @@ class RecallPipelineStageTest(unittest.TestCase):
             metadata_filter_active=metadata_filter_active,
             trace=[],
             folder_photo_subquery=None,
+            constrained_photo_ids=constrained_photo_ids,
         )
 
     def test_metadata_only_stage_returns_terminal_candidates(self) -> None:
@@ -96,6 +98,32 @@ class RecallPipelineStageTest(unittest.TestCase):
         self.assertEqual(result.metadata_only_candidates[0].photo_id, 7)
         self.assertEqual(trace[-1]["stage"], "metadata_filter")
         self.assertEqual(trace[-1]["path"], "metadata-only")
+
+    def test_metadata_mixed_stage_intersects_existing_constraints(self) -> None:
+        trace: list[dict] = []
+        writer = SearchDebugTraceWriter(trace)
+        context = self._build_context(
+            metadata_filters={"year": 2024},
+            metadata_filter_active=True,
+            constrained_photo_ids={1, 2, 3},
+        )
+
+        with patch(
+            "app.services.search.recall_pipeline.MetadataRecallService.resolve_photo_ids",
+            return_value={2, 3, 4},
+        ):
+            result = run_metadata_stage(
+                db=MagicMock(),
+                execution_context=context,
+                trace_writer=writer,
+            )
+
+        self.assertEqual(result.constrained_photo_ids, {2, 3})
+        self.assertIsNone(result.metadata_only_candidates)
+        self.assertEqual(trace[-1]["stage"], "metadata_filter")
+        self.assertEqual(trace[-1]["path"], "mixed")
+        self.assertEqual(trace[-1]["matched_count"], 3)
+        self.assertEqual(trace[-1]["constrained_count"], 2)
 
     def test_people_stage_people_only_returns_candidates(self) -> None:
         trace: list[dict] = []

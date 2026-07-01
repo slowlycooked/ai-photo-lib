@@ -227,6 +227,7 @@ def build_search_plan(
     force_location_metadata_filters = (
         _should_force_location_metadata_filters(search_query_plan, metadata_filters)
         and (not people_context_active)
+        and search_query_plan.intent not in _METADATA_ONLY_BLOCKED_INTENTS
     )
 
     if people_context_active:

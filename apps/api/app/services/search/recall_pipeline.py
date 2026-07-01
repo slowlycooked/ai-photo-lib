@@ -147,15 +147,25 @@ def run_metadata_stage(
         metadata_filters=execution_context.metadata_filters,
         folder_photo_subquery=execution_context.folder_photo_subquery,
     )
-    logger.debug("[search] metadata_filter (mixed) matched=%d", len(metadata_ids))
+    next_constrained = (
+        set(metadata_ids)
+        if execution_context.constrained_photo_ids is None
+        else execution_context.constrained_photo_ids & metadata_ids
+    )
+    logger.debug(
+        "[search] metadata_filter (mixed) matched=%d constrained=%d",
+        len(metadata_ids),
+        len(next_constrained),
+    )
     trace_writer.write_stage(
         "metadata_filter",
         path="mixed",
         filters=compact_filter_dict(execution_context.metadata_filters),
         matched_count=len(metadata_ids),
+        constrained_count=len(next_constrained),
     )
     return MetadataStageResult(
-        constrained_photo_ids=metadata_ids,
+        constrained_photo_ids=next_constrained,
         metadata_only_candidates=None,
     )
 

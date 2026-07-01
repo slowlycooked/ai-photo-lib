@@ -23,6 +23,7 @@ from app.services.search.people_query_resolver import (  # noqa: E402
     ResolvedPersonRef,
 )
 from app.services.search.people_recall import PeopleRecallResult  # noqa: E402
+from app.services.search.result_cache import _SEARCH_RESULT_CACHE  # noqa: E402
 from app.services.search.types import (  # noqa: E402
     EffectiveSearchSettings,
     SearchCandidate,
@@ -72,6 +73,21 @@ class RRFMergeTest(unittest.TestCase):
         merged = rrf_merge(keyword, {}, _default_settings())
         self.assertEqual(len(merged), 1)
         self.assertEqual(merged[0].photo_id, 7)
+
+    def test_preserves_auxiliary_keyword_stream_source(self) -> None:
+        keyword = [
+            SearchCandidate(
+                photo_id=7,
+                keyword_score=0.6,
+                match_source=["concept"],
+            )
+        ]
+
+        merged = rrf_merge(keyword, {}, _default_settings())
+
+        self.assertEqual(len(merged), 1)
+        self.assertEqual(merged[0].photo_id, 7)
+        self.assertEqual(merged[0].match_source, ["concept"])
 
     def test_both_empty_returns_empty(self) -> None:
         merged = rrf_merge([], {}, _default_settings())
@@ -353,6 +369,22 @@ class VectorRecallServiceTest(unittest.TestCase):
 class SearchPhotosTest(unittest.TestCase):
     """Integration-style tests for app_service.search_photos fallback/debug."""
 
+    def setUp(self) -> None:
+        _SEARCH_RESULT_CACHE.clear_project(1)
+
+    def _settings(self, **overrides) -> EffectiveSearchSettings:
+        return replace(
+            _default_settings(),
+            query_planner_enabled=False,
+            search_result_cache_ttl_seconds=0,
+            **overrides,
+        )
+
+    def _db(self) -> MagicMock:
+        db = MagicMock()
+        db.query.return_value.filter.return_value.first.return_value = None
+        return db
+
     def _make_candidate(self, photo_id: int = 9, score: float = 0.7) -> SearchCandidate:
         return SearchCandidate(photo_id=photo_id, keyword_score=score, final_score=score)
 
@@ -362,7 +394,7 @@ class SearchPhotosTest(unittest.TestCase):
         with (
             patch(
                 "app.services.search.app_service.SearchSettingsResolver.resolve",
-                return_value=_default_settings(),
+                return_value=self._settings(),
             ),
             patch(
                 "app.services.search.app_service.understand_query",
@@ -382,11 +414,11 @@ class SearchPhotosTest(unittest.TestCase):
                 return_value=None,
             ),
             patch(
-                "app.services.search.app_service.KeywordRecallService.search",
+                "app.services.search.recall_pipeline.KeywordRecallService.search",
                 return_value=[candidate],
             ),
             patch(
-                "app.services.search.app_service.VectorRecallService.search",
+                "app.services.search.recall_pipeline.VectorRecallService.search",
                 side_effect=EmbeddingRequestError("down"),
             ),
             patch(
@@ -395,7 +427,7 @@ class SearchPhotosTest(unittest.TestCase):
             ) as build_items,
         ):
             total, items, _debug = search_photos(
-                db=MagicMock(),
+                db=self._db(),
                 query="hike",
                 page=1,
                 page_size=20,
@@ -412,7 +444,7 @@ class SearchPhotosTest(unittest.TestCase):
         with (
             patch(
                 "app.services.search.app_service.SearchSettingsResolver.resolve",
-                return_value=_default_settings(),
+                return_value=self._settings(),
             ),
             patch(
                 "app.services.search.app_service.understand_query",
@@ -434,11 +466,11 @@ class SearchPhotosTest(unittest.TestCase):
                 return_value=None,
             ),
             patch(
-                "app.services.search.app_service.KeywordRecallService.search",
+                "app.services.search.recall_pipeline.KeywordRecallService.search",
                 return_value=[candidate],
             ) as keyword_search,
             patch(
-                "app.services.search.app_service.VectorRecallService.search",
+                "app.services.search.recall_pipeline.VectorRecallService.search",
                 side_effect=EmbeddingRequestError("down"),
             ),
             patch(
@@ -447,7 +479,7 @@ class SearchPhotosTest(unittest.TestCase):
             ),
         ):
             total, items, _debug = search_photos(
-                db=MagicMock(),
+                db=self._db(),
                 query="合照",
                 page=1,
                 page_size=20,
@@ -467,7 +499,7 @@ class SearchPhotosTest(unittest.TestCase):
         with (
             patch(
                 "app.services.search.app_service.SearchSettingsResolver.resolve",
-                return_value=_default_settings(),
+                return_value=self._settings(),
             ),
             patch(
                 "app.services.search.app_service.understand_query",
@@ -487,11 +519,11 @@ class SearchPhotosTest(unittest.TestCase):
                 return_value=None,
             ),
             patch(
-                "app.services.search.app_service.KeywordRecallService.search",
+                "app.services.search.recall_pipeline.KeywordRecallService.search",
                 return_value=[candidate],
             ),
             patch(
-                "app.services.search.app_service.VectorRecallService.search",
+                "app.services.search.recall_pipeline.VectorRecallService.search",
                 side_effect=EmbeddingRequestError("embedding-down"),
             ),
             patch(
@@ -500,7 +532,7 @@ class SearchPhotosTest(unittest.TestCase):
             ),
         ):
             _total, _items, debug_payload = search_photos(
-                db=MagicMock(),
+                db=self._db(),
                 query="合照",
                 page=1,
                 page_size=20,
@@ -548,7 +580,7 @@ class SearchPhotosTest(unittest.TestCase):
         with (
             patch(
                 "app.services.search.app_service.SearchSettingsResolver.resolve",
-                return_value=_default_settings(),
+                return_value=self._settings(),
             ),
             patch(
                 "app.services.search.app_service.understand_query",
@@ -568,11 +600,11 @@ class SearchPhotosTest(unittest.TestCase):
                 return_value=None,
             ),
             patch(
-                "app.services.search.app_service.KeywordRecallService.search",
+                "app.services.search.recall_pipeline.KeywordRecallService.search",
                 return_value=[candidate],
             ),
             patch(
-                "app.services.search.app_service.VectorRecallService.search",
+                "app.services.search.recall_pipeline.VectorRecallService.search",
                 return_value=({}, "test-model", "ok", 0),
             ),
             patch(
@@ -581,7 +613,7 @@ class SearchPhotosTest(unittest.TestCase):
             ),
         ):
             total, items, debug_payload = search_photos(
-                db=MagicMock(),
+                db=self._db(),
                 query="cat",
                 project_id=1,
                 mode="keyword",
@@ -626,7 +658,7 @@ class SearchPhotosTest(unittest.TestCase):
         with (
             patch(
                 "app.services.search.app_service.SearchSettingsResolver.resolve",
-                return_value=_default_settings(),
+                return_value=self._settings(),
             ),
             patch(
                 "app.services.search.app_service.understand_query",
@@ -644,11 +676,11 @@ class SearchPhotosTest(unittest.TestCase):
                 return_value=None,
             ),
             patch(
-                "app.services.search.app_service.KeywordRecallService.search",
+                "app.services.search.recall_pipeline.KeywordRecallService.search",
                 return_value=[],
             ),
             patch(
-                "app.services.search.app_service.ConceptRecallService.search",
+                "app.services.search.recall_pipeline.ConceptRecallService.search",
                 return_value=[concept_candidate],
             ),
             patch(
@@ -657,7 +689,7 @@ class SearchPhotosTest(unittest.TestCase):
             ) as build_items,
         ):
             total, items, debug_payload = search_photos(
-                db=MagicMock(),
+                db=self._db(),
                 query="动物",
                 project_id=1,
                 mode="keyword",
@@ -724,7 +756,7 @@ class SearchPhotosTest(unittest.TestCase):
         with (
             patch(
                 "app.services.search.app_service.SearchSettingsResolver.resolve",
-                return_value=_default_settings(),
+                return_value=self._settings(),
             ),
             patch(
                 "app.services.search.app_service.understand_query",
@@ -739,7 +771,7 @@ class SearchPhotosTest(unittest.TestCase):
                 return_value=None,
             ),
             patch(
-                "app.services.search.app_service.PeopleRecallService.recall",
+                "app.services.search.recall_pipeline.PeopleRecallService.recall",
                 return_value=PeopleRecallResult(
                     candidates=[people_candidate],
                     photo_ids={2},
@@ -747,11 +779,11 @@ class SearchPhotosTest(unittest.TestCase):
                 ),
             ),
             patch(
-                "app.services.search.app_service.KeywordRecallService.search",
+                "app.services.search.recall_pipeline.KeywordRecallService.search",
                 return_value=[SearchCandidate(photo_id=2, keyword_score=0.8, final_score=0.8)],
             ) as kw_search_mock,
             patch(
-                "app.services.search.app_service.VectorRecallService.search",
+                "app.services.search.recall_pipeline.VectorRecallService.search",
                 return_value=({2: VectorMatchScores(total_score=0.7)}, "test-model", "", 0),
             ),
             patch(
@@ -760,7 +792,7 @@ class SearchPhotosTest(unittest.TestCase):
             ),
         ):
             total, items, debug_payload = search_photos(
-                db=MagicMock(),
+                db=self._db(),
                 query="爸爸在海边",
                 page=1,
                 page_size=20,
@@ -798,7 +830,7 @@ class SearchPhotosTest(unittest.TestCase):
         with (
             patch(
                 "app.services.search.app_service.SearchSettingsResolver.resolve",
-                return_value=replace(_default_settings(), enable_structured_filters=False),
+                return_value=self._settings(enable_structured_filters=False),
             ),
             patch(
                 "app.services.search.app_service.understand_query",
@@ -809,10 +841,10 @@ class SearchPhotosTest(unittest.TestCase):
                 return_value=None,
             ),
             patch(
-                "app.services.search.app_service.MetadataRecallService",
+                "app.services.search.recall_pipeline.MetadataRecallService",
             ) as metadata_service_cls,
             patch(
-                "app.services.search.app_service.KeywordRecallService.search",
+                "app.services.search.recall_pipeline.KeywordRecallService.search",
                 return_value=[candidate],
             ) as keyword_search_mock,
             patch(
@@ -821,7 +853,7 @@ class SearchPhotosTest(unittest.TestCase):
             ),
         ):
             total, items, _debug = search_photos(
-                db=MagicMock(),
+                db=self._db(),
                 query="动物",
                 page=1,
                 page_size=20,
@@ -853,7 +885,7 @@ class SearchPhotosTest(unittest.TestCase):
         with (
             patch(
                 "app.services.search.app_service.SearchSettingsResolver.resolve",
-                return_value=replace(_default_settings(), enable_structured_filters=False),
+                return_value=self._settings(enable_structured_filters=False),
             ),
             patch(
                 "app.services.search.app_service.understand_query",
@@ -864,11 +896,11 @@ class SearchPhotosTest(unittest.TestCase):
                 return_value=None,
             ),
             patch(
-                "app.services.search.app_service.MetadataRecallService.search",
+                "app.services.search.recall_pipeline.MetadataRecallService.search",
                 return_value=[candidate],
             ) as metadata_only_search_mock,
             patch(
-                "app.services.search.app_service.KeywordRecallService.search",
+                "app.services.search.recall_pipeline.KeywordRecallService.search",
                 return_value=[candidate],
             ) as keyword_search_mock,
             patch(
@@ -877,7 +909,7 @@ class SearchPhotosTest(unittest.TestCase):
             ),
         ):
             total, items, _debug = search_photos(
-                db=MagicMock(),
+                db=self._db(),
                 query="去年的照片",
                 page=1,
                 page_size=20,
@@ -908,7 +940,7 @@ class SearchPhotosTest(unittest.TestCase):
         with (
             patch(
                 "app.services.search.app_service.SearchSettingsResolver.resolve",
-                return_value=replace(_default_settings(), enable_structured_filters=True),
+                return_value=self._settings(enable_structured_filters=True),
             ),
             patch(
                 "app.services.search.app_service.understand_query",
@@ -919,15 +951,15 @@ class SearchPhotosTest(unittest.TestCase):
                 return_value=None,
             ),
             patch(
-                "app.services.search.app_service.MetadataRecallService.search",
+                "app.services.search.recall_pipeline.MetadataRecallService.search",
                 return_value=[],
             ) as metadata_only_search_mock,
             patch(
-                "app.services.search.app_service.MetadataRecallService.resolve_photo_ids",
+                "app.services.search.recall_pipeline.MetadataRecallService.resolve_photo_ids",
                 return_value={9},
             ) as metadata_resolve_ids_mock,
             patch(
-                "app.services.search.app_service.KeywordRecallService.search",
+                "app.services.search.recall_pipeline.KeywordRecallService.search",
                 return_value=[candidate],
             ) as keyword_search_mock,
             patch(
@@ -936,7 +968,7 @@ class SearchPhotosTest(unittest.TestCase):
             ),
         ):
             total, items, _debug = search_photos(
-                db=MagicMock(),
+                db=self._db(),
                 query="动物",
                 page=1,
                 page_size=20,

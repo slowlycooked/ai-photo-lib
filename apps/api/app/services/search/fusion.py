@@ -56,8 +56,9 @@ def rrf_merge(
                 for t in terms:
                     if t not in existing:
                         existing.append(t)
-        if "keyword" not in row.match_source:
-            row.match_source.append("keyword")
+        for source_name in candidate.match_source or ["keyword"]:
+            if source_name not in row.match_source:
+                row.match_source.append(source_name)
 
     for rank, (photo_id, vector_match) in enumerate(
         sorted(vector_scores.items(), key=lambda x: x[1].total_score, reverse=True),
