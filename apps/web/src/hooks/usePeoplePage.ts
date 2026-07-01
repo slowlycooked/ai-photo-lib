@@ -262,7 +262,7 @@ export function usePeoplePage() {
 
     if (rematchStatus.status === "success") {
       handleSuccess(
-        `人物相似候选聚合完成：扫描 ${rematchStatus.faces_considered} 张，新增/更新待确认 ${rematchStatus.review_pending} 张`,
+        `人物相似候选聚合完成：扫描 ${rematchStatus.faces_considered} 张，新增/更新候选 ${rematchStatus.matched_faces} 张`,
       );
     } else if (rematchStatus.status === "failed") {
       setErrorMessage(`人物相似候选聚合失败：${rematchStatus.message}`);

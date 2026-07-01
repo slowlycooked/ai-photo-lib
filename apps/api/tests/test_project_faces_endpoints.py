@@ -655,6 +655,12 @@ class ProjectFacesEndpointsTest(unittest.TestCase):
     self.assertEqual(status_payload["max_faces"], 123)
     self.assertEqual(status_payload["scope"], "unknown")
 
+  def test_face_rematch_unknown_defaults_to_full_batch_size(self) -> None:
+    start = self.client.post("/projects/1/face-rematch-unknown", json={})
+    self.assertEqual(start.status_code, 200)
+    payload = start.json()
+    self.assertEqual(payload["status"]["max_faces"], 10000)
+
   def test_face_rematch_unknown_supports_person_scope(self) -> None:
     start = self.client.post(
       "/projects/1/face-rematch-unknown",

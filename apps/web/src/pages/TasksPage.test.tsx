@@ -193,7 +193,7 @@ describe("TasksPage", () => {
       task_id: null,
       status: "idle",
       running: false,
-      max_faces: 1000,
+      max_faces: 10000,
       scope: "unknown",
       person_id: null,
       start_time: null,
@@ -411,6 +411,7 @@ describe("TasksPage", () => {
 
     renderPage("/tasks?tab=face-scan");
 
+    expect(await screen.findByLabelText("全项目聚合 max_faces")).toHaveValue(10000);
     await user.click(await screen.findByRole("button", { name: "聚合到已打标人物" }));
 
     expect(rematchUnknownFacesMock).toHaveBeenCalledWith(7, {
@@ -418,6 +419,44 @@ describe("TasksPage", () => {
       max_faces: 10000,
     });
     expect(await screen.findByText("已提交全项目已打标人物聚合任务（max_faces=10000）")).toBeInTheDocument();
+  });
+
+  it("uses the configured project-wide face rematch max_faces value", async () => {
+    const user = userEvent.setup();
+    rematchUnknownFacesMock.mockResolvedValue({
+      message: "queued",
+      status: {
+        project_id: 7,
+        task_id: 78,
+        status: "queued",
+        running: true,
+        max_faces: 2500,
+        scope: "project",
+        person_id: null,
+        start_time: null,
+        end_time: null,
+        faces_considered: 0,
+        matched_faces: 0,
+        auto_assigned: 0,
+        review_pending: 0,
+        errors: 0,
+        recent_errors: [],
+        message: "queued",
+      },
+    });
+
+    renderPage("/tasks?tab=face-scan");
+
+    const maxFacesInput = await screen.findByLabelText("全项目聚合 max_faces");
+    await user.clear(maxFacesInput);
+    await user.type(maxFacesInput, "2500");
+    await user.click(await screen.findByRole("button", { name: "聚合到已打标人物" }));
+
+    expect(rematchUnknownFacesMock).toHaveBeenCalledWith(7, {
+      scope: "project",
+      max_faces: 2500,
+    });
+    expect(await screen.findByText("已提交全项目已打标人物聚合任务（max_faces=2500）")).toBeInTheDocument();
   });
 
   it("can force-stop ai analyze jobs from tasks page", async () => {

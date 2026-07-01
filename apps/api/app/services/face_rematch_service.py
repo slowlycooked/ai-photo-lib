@@ -150,7 +150,7 @@ def rematch_unknown_faces(
             project_id=project_id,
             face_detection_id=face_id,
             target_person_id=person_id if scope == "person" else None,
-            force_review_pending=scope == "person",
+            force_auto_assigned=scope == "person",
             assignment_source=(
                 "targeted_person_rematch" if scope == "person" else "similarity_match"
             ),

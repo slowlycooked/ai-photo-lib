@@ -1,11 +1,11 @@
 {
     "schema_version": 1,
-    "commit": "39807de33f4e8b08c5be7874d6e3bf0a5bdff6b3",
-    "indexed_at": "2026-07-01T07:29:10Z",
+    "commit": "76649e95418e9c11f67d439d1a5157b703ea2c08",
+    "indexed_at": "2026-07-01T08:15:14Z",
     "project": "Users-unclema-Workspace-ai-photo-lib",
-    "nodes": 5671,
-    "edges": 20947,
-    "original_size": 20447232,
-    "compressed_size": 3629876,
+    "nodes": 5676,
+    "edges": 20823,
+    "original_size": 20381696,
+    "compressed_size": 3612002,
     "compression_level": 3
 }

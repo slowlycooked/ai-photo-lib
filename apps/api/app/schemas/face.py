@@ -185,7 +185,7 @@ class FaceClusterUnknownResponse(BaseModel):
 
 
 class FaceRematchUnknownRequest(BaseModel):
-    max_faces: int = Field(1000, ge=1, le=10000)
+    max_faces: int = Field(10000, ge=1, le=10000)
     scope: Literal["unknown", "person", "time_range", "project"] = "unknown"
     person_id: Optional[int] = Field(default=None, ge=1)
     start_time: Optional[datetime] = None

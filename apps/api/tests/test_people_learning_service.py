@@ -21,6 +21,7 @@ from app.services.people_learning_service import (  # noqa: E402
     rebuild_person_centroid_prototype,
 )
 from app.services.face_rematch_service import rematch_unknown_faces  # noqa: E402
+from app.models.project import Project  # noqa: E402,F401
 
 
 SCHEMA_SQL = """
@@ -329,8 +330,8 @@ def test_rematch_unknown_faces_supports_person_scope() -> None:
         )
         assert result.faces_considered == 1
         assert result.matched_faces == 1
-        assert result.auto_assigned == 0
-        assert result.review_pending == 1
+        assert result.auto_assigned == 1
+        assert result.review_pending == 0
 
         row = db.execute(
             sa.text(
@@ -343,7 +344,7 @@ def test_rematch_unknown_faces_supports_person_scope() -> None:
         ).first()
         assert row is not None
         assert row[0] == 203
-        assert row[1] == "review_pending"
+        assert row[1] == "auto_assigned"
         assert row[2] == "targeted_person_rematch"
     finally:
         db.close()

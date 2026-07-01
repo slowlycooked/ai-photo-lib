@@ -213,6 +213,19 @@ function AISection({ projectId }: { projectId: number | null }) {
 
 type FaceScanScope = "missing" | "failed" | "stale" | "all";
 type FaceScanPreviewScope = FaceScanScope | "selected";
+const DEFAULT_FACE_REMATCH_MAX_FACES = 10000;
+const MAX_FACE_REMATCH_MAX_FACES = 10000;
+
+type FaceRematchMutationPayload =
+  | { scope: "unknown" }
+  | { scope: "project"; maxFaces: number };
+
+function parseFaceRematchMaxFaces(value: string): number | null {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed)) return null;
+  if (parsed < 1 || parsed > MAX_FACE_REMATCH_MAX_FACES) return null;
+  return parsed;
+}
 
 const FACE_SCAN_SCOPE_OPTIONS: Array<{
   scope: FaceScanScope;
@@ -245,6 +258,9 @@ function FaceScanSection({ projectId }: { projectId: number | null }) {
   const queryClient = useQueryClient();
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [projectRematchMaxFaces, setProjectRematchMaxFaces] = useState(
+    String(DEFAULT_FACE_REMATCH_MAX_FACES)
+  );
   const clusterWasActiveRef = useRef(false);
   const rematchWasActiveRef = useRef(false);
   const [preview, setPreview] = useState<{
@@ -260,6 +276,8 @@ function FaceScanSection({ projectId }: { projectId: number | null }) {
   const canRun = projectId != null;
   const peoplePath = canRun ? `/projects/${projectId}/people` : "/photos";
   const reviewPath = canRun ? `/projects/${projectId}/people/review` : "/photos";
+  const parsedProjectRematchMaxFaces = parseFaceRematchMaxFaces(projectRematchMaxFaces);
+  const hasInvalidProjectRematchMaxFaces = parsedProjectRematchMaxFaces == null;
 
   const { data: faceSettings, isLoading: settingsLoading } = useQuery({
     queryKey: ["project-face-settings", projectId],
@@ -388,10 +406,12 @@ function FaceScanSection({ projectId }: { projectId: number | null }) {
   });
 
   const rematchMutation = useMutation({
-    mutationFn: (scope: "unknown" | "project" = "unknown") =>
+    mutationFn: (payload: FaceRematchMutationPayload = { scope: "unknown" }) =>
       api.projectFaces.rematchUnknown(
         projectId!,
-        scope === "project" ? { scope: "project", max_faces: 10000 } : undefined,
+        payload.scope === "project"
+          ? { scope: "project", max_faces: payload.maxFaces }
+          : undefined,
       ),
     onSuccess: (result) => {
       setError(null);
@@ -622,7 +642,7 @@ function FaceScanSection({ projectId }: { projectId: number | null }) {
           </button>
         )}
         <button
-          onClick={() => rematchMutation.mutate("unknown")}
+          onClick={() => rematchMutation.mutate({ scope: "unknown" })}
           disabled={!canRun || rematchMutation.isPending || !!rematchStatus?.running}
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-hairline text-btn-sm hover:bg-surface-card disabled:opacity-50 transition-colors"
         >
@@ -633,9 +653,39 @@ function FaceScanSection({ projectId }: { projectId: number | null }) {
               ? "重匹配进行中…"
               : "重匹配未知人脸"}
         </button>
+        <label className="flex items-center gap-1.5 text-caption-sm text-mute">
+          <span>max_faces</span>
+          <input
+            aria-label="全项目聚合 max_faces"
+            type="number"
+            min={1}
+            max={MAX_FACE_REMATCH_MAX_FACES}
+            step={1}
+            value={projectRematchMaxFaces}
+            onChange={(event) => setProjectRematchMaxFaces(event.target.value)}
+            disabled={!canRun || rematchMutation.isPending || !!rematchStatus?.running}
+            aria-invalid={hasInvalidProjectRematchMaxFaces}
+            className="w-28 rounded-md border border-hairline bg-canvas px-2 py-1 text-body-sm text-ink disabled:opacity-50"
+            title={`本次最多处理的人脸数，范围 1-${MAX_FACE_REMATCH_MAX_FACES}`}
+          />
+        </label>
         <button
-          onClick={() => rematchMutation.mutate("project")}
-          disabled={!canRun || rematchMutation.isPending || !!rematchStatus?.running}
+          onClick={() => {
+            if (parsedProjectRematchMaxFaces == null) {
+              setError(`max_faces 必须是 1-${MAX_FACE_REMATCH_MAX_FACES} 的整数`);
+              return;
+            }
+            rematchMutation.mutate({
+              scope: "project",
+              maxFaces: parsedProjectRematchMaxFaces,
+            });
+          }}
+          disabled={
+            !canRun ||
+            rematchMutation.isPending ||
+            !!rematchStatus?.running ||
+            hasInvalidProjectRematchMaxFaces
+          }
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-primary text-white text-btn-sm font-bold hover:bg-primary-pressed disabled:bg-stone transition-colors"
           title="扫描已有 embedding 的人脸，把相似候选聚合到已命名人物下面"
         >

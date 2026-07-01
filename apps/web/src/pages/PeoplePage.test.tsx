@@ -471,7 +471,7 @@ describe("PeoplePage", () => {
     });
   });
 
-  it("batch-confirms auto-assigned candidates from the detail panel", async () => {
+  it("batch-confirms candidates from the detail panel", async () => {
     const user = userEvent.setup();
     personMock.mockImplementation((projectId: number, personId: number) => {
       const detail = buildDetail(personId);
@@ -495,7 +495,7 @@ describe("PeoplePage", () => {
     });
     renderPage("/projects/1/people");
 
-    await user.click(await screen.findByRole("button", { name: "全部确认自动识别" }));
+    await user.click(await screen.findByRole("button", { name: "全部确认候选" }));
 
     await waitFor(() => {
       expect(batchConfirmReviewMock).toHaveBeenCalledWith(1, 101, {

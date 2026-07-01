@@ -224,6 +224,9 @@ export function PersonDetailPanel({
   const candidateReviewPendingAssignments = candidateAssignments.filter(
     (item) => item.assignment_status === "review_pending",
   );
+  const candidateReviewPendingFaceIds = candidateReviewPendingAssignments.map(
+    (item) => item.face_detection.id,
+  );
   const candidateAutoAssignedAssignments = candidateAssignments.filter(
     (item) => item.assignment_status === "auto_assigned",
   );
@@ -231,7 +234,7 @@ export function PersonDetailPanel({
     (item) => item.face_detection.id,
   );
   const allConfirmableCandidateFaceIds = Array.from(
-    new Set([...reviewFaceIds, ...candidateAutoAssignedFaceIds]),
+    new Set([...candidateReviewPendingFaceIds, ...candidateAutoAssignedFaceIds]),
   );
   const candidateOtherAssignments = candidateAssignments.filter(
     (item) =>
@@ -550,7 +553,7 @@ export function PersonDetailPanel({
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-hairline text-body-sm text-ink hover:bg-surface-card disabled:opacity-50"
                 title={
                   detail.is_named && detail.confirmed_sample_count > 0
-                    ? "从已有扫描人脸中查找相似候选，并追加到待确认"
+                    ? "从已有扫描人脸中查找相似候选，并追加到候选样本"
                     : "需要已命名人物和至少一张正样本"
                 }
               >
@@ -558,7 +561,7 @@ export function PersonDetailPanel({
                 {rematchBusy ? "聚合候选中..." : "从已扫描人脸找相似候选"}
               </button>
               <span className="text-caption-sm text-mute">
-                命中的相似人脸会追加到此人物的 Review Pending。
+                命中的相似人脸会追加到当前详情页的候选样本。
               </span>
             </div>
           </div>
@@ -575,35 +578,24 @@ export function PersonDetailPanel({
       </div>
 
       <div className="px-6 py-5 space-y-4">
-        {allConfirmableCandidateFaceIds.length > 0 && (
+        {reviewFaceIds.length > 0 && (
           <div className="sticky top-3 z-10 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 shadow-sm">
             <div className="flex items-center justify-between gap-3 flex-wrap">
               <div>
-                <h3 className="text-body-sm font-semibold text-amber-900">候选批量处理</h3>
+                <h3 className="text-body-sm font-semibold text-amber-900">Review Pending 快速处理</h3>
                 <p className="text-caption-sm text-amber-800 mt-1">
-                  当前人物有 {reviewFaceIds.length} 张 review_pending 和{" "}
-                  {candidateAutoAssignedFaceIds.length} 张 auto_assigned 人脸。
+                  当前人物仍有 {reviewFaceIds.length} 张 review_pending 人脸，可批量排除或移动。
                 </p>
               </div>
               <div className="flex items-center gap-2 flex-wrap">
                 <button
                   type="button"
                   disabled={actionBusy}
-                  onClick={() => onBatchConfirmReview(allConfirmableCandidateFaceIds)}
+                  onClick={() => onBatchRejectReview(reviewFaceIds)}
                   className="px-2.5 py-1 rounded-md border border-hairline text-caption-sm text-ink hover:bg-canvas disabled:opacity-50"
                 >
-                  全部确认候选
+                  排除 review_pending
                 </button>
-                {reviewFaceIds.length > 0 && (
-                  <button
-                    type="button"
-                    disabled={actionBusy}
-                    onClick={() => onBatchRejectReview(reviewFaceIds)}
-                    className="px-2.5 py-1 rounded-md border border-hairline text-caption-sm text-ink hover:bg-canvas disabled:opacity-50"
-                  >
-                    排除 review_pending
-                  </button>
-                )}
                 {reviewFaceIds.length > 0 && moveCandidates.length > 0 && batchMoveTargetId != null && (
                   <>
                     <select
@@ -694,9 +686,21 @@ export function PersonDetailPanel({
             </section>
 
             <section className="space-y-2">
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between gap-3">
                 <h4 className="text-body-sm font-semibold text-ink">候选样本</h4>
-                <span className="text-caption-sm text-mute">{candidateAssignments.length} 条</span>
+                <div className="flex items-center gap-2">
+                  <span className="text-caption-sm text-mute">{candidateAssignments.length} 条</span>
+                  {allConfirmableCandidateFaceIds.length > 0 && (
+                    <button
+                      type="button"
+                      disabled={actionBusy}
+                      onClick={() => onBatchConfirmReview(allConfirmableCandidateFaceIds)}
+                      className="px-2.5 py-1 rounded-md border border-hairline text-caption-sm text-ink hover:bg-canvas disabled:opacity-50"
+                    >
+                      全部确认候选
+                    </button>
+                  )}
+                </div>
               </div>
               {candidateAssignments.length === 0 ? (
                 <div className="rounded-lg border border-dashed border-hairline px-4 py-3 text-caption-sm text-mute">
@@ -774,16 +778,6 @@ export function PersonDetailPanel({
                           <span className="text-caption-sm text-mute">
                             {candidateAutoAssignedAssignments.length} 条
                           </span>
-                          {candidateAutoAssignedFaceIds.length > 0 && (
-                            <button
-                              type="button"
-                              disabled={actionBusy}
-                              onClick={() => onBatchConfirmReview(candidateAutoAssignedFaceIds)}
-                              className="px-2.5 py-1 rounded-md border border-hairline text-caption-sm text-ink hover:bg-canvas disabled:opacity-50"
-                            >
-                              全部确认自动识别
-                            </button>
-                          )}
                         </div>
                       </div>
                       {candidateAutoAssignedAssignments.length === 0 ? (

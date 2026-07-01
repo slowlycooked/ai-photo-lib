@@ -238,6 +238,7 @@ def match_face_detection_to_person(
     face_detection_id: int,
     target_person_id: Optional[int] = None,
     force_review_pending: bool = False,
+    force_auto_assigned: bool = False,
     assignment_source: str = "similarity_match",
 ) -> Optional[MatchDecision]:
     """Match one face detection against named people prototypes and persist assignment."""
@@ -328,7 +329,9 @@ def match_face_detection_to_person(
         return None
 
     assignment_status: Optional[str] = None
-    if (
+    if force_auto_assigned and best_similarity >= settings.review_threshold:
+        assignment_status = STATUS_AUTO_ASSIGNED
+    elif (
         not force_review_pending
         and best_similarity >= settings.auto_accept_threshold
         and settings.allow_auto_assignment
