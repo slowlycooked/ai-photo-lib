@@ -305,6 +305,34 @@ def test_rematch_unknown_faces_only_matches_unassigned_faces() -> None:
         db.close()
 
 
+def test_rematch_unknown_faces_prioritizes_newer_faces_when_limited() -> None:
+    db = _make_session()
+    try:
+        rebuild_person_centroid_prototype(db, project_id=1, person_id=101)
+
+        result = rematch_unknown_faces(db, project_id=1, max_faces=1)
+        assert result.faces_considered == 1
+        assert result.matched_faces == 1
+        assert result.review_pending == 1
+
+        rows = db.execute(
+            sa.text(
+                """
+                SELECT face_detection_id, assignment_status
+                FROM person_face_assignments
+                WHERE project_id = 1 AND person_id = 101
+                ORDER BY face_detection_id
+                """
+            )
+        ).fetchall()
+        assert [(row[0], row[1]) for row in rows] == [
+            (201, "human_confirmed"),
+            (203, "review_pending"),
+        ]
+    finally:
+        db.close()
+
+
 def test_rematch_unknown_faces_supports_person_scope() -> None:
     db = _make_session()
     try:

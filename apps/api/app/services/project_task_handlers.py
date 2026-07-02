@@ -146,6 +146,7 @@ class FaceRematchUnknownTaskHandler:
             matched_faces=result.matched_faces,
             auto_assigned=result.auto_assigned,
             review_pending=result.review_pending,
+            skipped_reason=result.skipped_reason,
         )
 
 

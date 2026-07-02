@@ -136,7 +136,11 @@ def rematch_unknown_faces(
     else:
         query = query.filter(sa.or_(~active_assignment_exists, cluster_or_pending_exists))
 
-    query = query.order_by(FaceDetection.id.asc()).limit(max_faces)
+    query = query.order_by(
+        FaceEmbedding.embedded_at.desc().nullslast(),
+        FaceDetection.detected_at.desc().nullslast(),
+        FaceDetection.id.desc(),
+    ).limit(max_faces)
 
     face_ids = [int(row[0]) for row in query.all()]
     matched_faces = 0
@@ -214,4 +218,5 @@ def rematch_unknown_faces(
         matched_faces=matched_faces,
         auto_assigned=auto_assigned,
         review_pending=review_pending,
+        skipped_reason="no_eligible_embedded_faces" if not face_ids else None,
     )

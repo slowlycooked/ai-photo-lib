@@ -708,6 +708,7 @@ class ProjectTaskAppServiceTest(unittest.TestCase):
             matched_faces = 5
             auto_assigned = 2
             review_pending = 3
+            skipped_reason = None
 
         with patch(
             "app.services.project_task_handlers.rematch_unknown_faces",

@@ -859,6 +859,7 @@ def empty_face_rematch_state(
         "matched_faces": 0,
         "auto_assigned": 0,
         "review_pending": 0,
+        "skipped_reason": None,
         "errors": 0,
         "recent_errors": [],
         "message": "idle",
@@ -878,6 +879,7 @@ def build_face_rematch_result_payload(
     matched_faces: int,
     auto_assigned: int,
     review_pending: int,
+    skipped_reason: Optional[str] = None,
 ) -> dict:
     payload = empty_face_rematch_state(
         project_id=project_id,
@@ -887,6 +889,12 @@ def build_face_rematch_result_payload(
         start_time=start_time,
         end_time=end_time,
     )
+    message = "Unknown face rematch completed"
+    if skipped_reason == "no_eligible_embedded_faces":
+        message = "No eligible embedded faces found. Run face scan first or adjust rematch scope."
+    elif skipped_reason == "missing_people_tables":
+        message = "People recognition tables are missing."
+
     payload.update(
         task_id=task_id,
         status="success",
@@ -895,7 +903,8 @@ def build_face_rematch_result_payload(
         matched_faces=matched_faces,
         auto_assigned=auto_assigned,
         review_pending=review_pending,
-        message="Unknown face rematch completed",
+        skipped_reason=skipped_reason,
+        message=message,
     )
     return payload
 

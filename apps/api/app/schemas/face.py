@@ -206,6 +206,7 @@ class FaceRematchUnknownStatusResponse(BaseModel):
     matched_faces: int = 0
     auto_assigned: int = 0
     review_pending: int = 0
+    skipped_reason: Optional[str] = None
     errors: int = 0
     recent_errors: list[str] = Field(default_factory=list)
     message: str

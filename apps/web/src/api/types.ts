@@ -695,6 +695,7 @@ export interface FaceRematchUnknownStatusResponse {
   matched_faces: number;
   auto_assigned: number;
   review_pending: number;
+  skipped_reason?: string | null;
   errors: number;
   recent_errors: string[];
   message: string;
