@@ -529,6 +529,29 @@ describe("PeoplePage", () => {
     });
   });
 
+  it("links review-pending people to the filtered review page", async () => {
+    const reviewAssignment = buildDetail(101).assignments[0];
+    reviewPendingMock.mockResolvedValue({
+      total: 112,
+      items: [
+        {
+          ...reviewAssignment,
+          face_detection_id: 901,
+          face_detection: {
+            ...reviewAssignment.face_detection,
+            id: 901,
+          },
+        },
+      ],
+    } satisfies PersonReviewListResponse);
+
+    renderPage("/projects/1/people?person_id=101");
+
+    const reviewLink = await screen.findByRole("link", { name: "去 Review 页逐张审核" });
+    expect(reviewLink).toHaveAttribute("href", "/projects/1/people/review?person_id=101");
+    expect(screen.getByText(/当前人物仍有 1 张 review_pending 人脸/)).toBeInTheDocument();
+  });
+
   it("falls back to a valid merge target when the URL target is missing or invalid", async () => {
     const user = userEvent.setup();
     renderPage("/projects/1/people?person_id=101&merge_target_id=0");

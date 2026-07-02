@@ -296,6 +296,22 @@ describe("PeopleReviewPage", () => {
     expect(screen.getByRole("button", { name: "delete" })).toBeInTheDocument();
   });
 
+  it("filters review-pending faces to a person from the query string", async () => {
+    renderPage("/projects/1/people/review?person_id=101");
+
+    expect((await screen.findAllByText("人物 #101 · 爸爸")).length).toBeGreaterThan(0);
+    expect(screen.getByText(/只看 爸爸 \(#101\)/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "返回当前人物" })).toHaveAttribute(
+      "href",
+      "/projects/1/people?person_id=101",
+    );
+    expect(screen.getByRole("link", { name: "查看全部 review" })).toHaveAttribute(
+      "href",
+      "/projects/1/people/review",
+    );
+    expect(reviewPendingMock).toHaveBeenCalledWith(1, 101, 40, 0);
+  });
+
   it("does not display review-pending faces for archived people", async () => {
     window.localStorage.setItem("people-manual-archive-v1:1", JSON.stringify([101]));
     renderPage();

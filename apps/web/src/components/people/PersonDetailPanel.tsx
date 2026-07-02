@@ -9,6 +9,7 @@ import {
   X,
   ZoomIn,
 } from "lucide-react";
+import { Link } from "react-router-dom";
 import { api, type PersonDetail, type PersonSummary } from "@/api";
 import { formatDateTime } from "./formatDateTime";
 
@@ -588,6 +589,12 @@ export function PersonDetailPanel({
                 </p>
               </div>
               <div className="flex items-center gap-2 flex-wrap">
+                <Link
+                  to={`/projects/${projectId}/people/review?person_id=${detail.id}`}
+                  className="px-2.5 py-1 rounded-md border border-amber-300 bg-canvas text-caption-sm text-ink hover:bg-white"
+                >
+                  去 Review 页逐张审核
+                </Link>
                 <button
                   type="button"
                   disabled={actionBusy}

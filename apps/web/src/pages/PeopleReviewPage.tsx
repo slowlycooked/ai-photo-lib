@@ -10,6 +10,7 @@ export function PeopleReviewPage() {
     routeProjectId,
     currentProject,
     selectedProjectId,
+    selectedReviewPersonId,
     page,
     setPage,
     statusMessage,
@@ -57,6 +58,10 @@ export function PeopleReviewPage() {
     activePersonIdResolved == null
       ? null
       : (peopleById.get(activePersonIdResolved) ?? "未命名");
+  const selectedReviewPersonName =
+    selectedReviewPersonId == null
+      ? null
+      : (peopleById.get(selectedReviewPersonId) ?? `#${selectedReviewPersonId}`);
   const activeTargetCandidates =
     activePersonIdResolved == null
       ? []
@@ -139,9 +144,27 @@ export function PeopleReviewPage() {
           <h1 className="text-heading-md font-semibold text-ink">Review Pending</h1>
           <p className="text-body-sm text-mute mt-1">
             项目 {currentProject?.id === selectedProjectId ? currentProject.name : `#${selectedProjectId}`} · 共 {reviewData?.total ?? 0} 条待确认
+            {selectedReviewPersonId != null &&
+              ` · 只看 ${selectedReviewPersonName} (#${selectedReviewPersonId})`}
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          {selectedReviewPersonId != null && (
+            <>
+              <Link
+                to={`/projects/${selectedProjectId}/people?person_id=${selectedReviewPersonId}`}
+                className="px-3 py-1.5 rounded-md border border-hairline text-body-sm text-ink hover:bg-surface-card"
+              >
+                返回当前人物
+              </Link>
+              <Link
+                to={`/projects/${selectedProjectId}/people/review`}
+                className="px-3 py-1.5 rounded-md border border-hairline text-body-sm text-ink hover:bg-surface-card"
+              >
+                查看全部 review
+              </Link>
+            </>
+          )}
           <Link
             to={`/projects/${selectedProjectId}/people`}
             className="px-3 py-1.5 rounded-md border border-hairline text-body-sm text-ink hover:bg-surface-card"
@@ -194,7 +217,9 @@ export function PeopleReviewPage() {
         </div>
       ) : grouped.length === 0 ? (
         <div className="bg-canvas rounded-xl border border-hairline p-8 text-center text-mute">
-          当前没有 review_pending 人脸
+          {selectedReviewPersonId == null
+            ? "当前没有 review_pending 人脸"
+            : "当前人物没有 review_pending 人脸"}
         </div>
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_340px] gap-4 h-[calc(100vh-220px)] min-h-[520px] overflow-hidden">

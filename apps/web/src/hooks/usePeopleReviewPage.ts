@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useParams, useSearchParams } from "react-router-dom";
 import type { PersonFaceAssignment } from "@/api";
 import { api } from "@/api";
 import { useProjectContext } from "@/contexts/ProjectContext";
@@ -12,6 +12,12 @@ import {
 } from "@/lib/personArchive";
 
 const PAGE_SIZE = 40;
+
+function parsePositiveIntParam(value: string | null): number | null {
+  if (!value) return null;
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
 
 function buildRequestId(): string {
   try {
@@ -26,6 +32,7 @@ function buildRequestId(): string {
 
 export function usePeopleReviewPage() {
   const params = useParams<{ projectId: string }>();
+  const [searchParams] = useSearchParams();
   const routeProjectId = Number(params.projectId);
   const { currentProject } = useProjectContext();
   const queryClient = useQueryClient();
@@ -38,6 +45,11 @@ export function usePeopleReviewPage() {
   const selectedProjectId = Number.isFinite(routeProjectId)
     ? routeProjectId
     : (currentProject?.id ?? 0);
+  const selectedReviewPersonId = parsePositiveIntParam(searchParams.get("person_id"));
+
+  useEffect(() => {
+    setPage(1);
+  }, [selectedReviewPersonId]);
 
   useEffect(() => {
     if (selectedProjectId <= 0) {
@@ -54,9 +66,14 @@ export function usePeopleReviewPage() {
   });
 
   const { data: reviewData, isLoading, isFetching, error } = useQuery({
-    queryKey: ["project-review-page", selectedProjectId, page],
+    queryKey: ["project-review-page", selectedProjectId, selectedReviewPersonId, page],
     queryFn: () =>
-      api.projectPeople.reviewPending(selectedProjectId, null, PAGE_SIZE, (page - 1) * PAGE_SIZE),
+      api.projectPeople.reviewPending(
+        selectedProjectId,
+        selectedReviewPersonId,
+        PAGE_SIZE,
+        (page - 1) * PAGE_SIZE,
+      ),
     enabled: selectedProjectId > 0,
     placeholderData: (previousData) => previousData,
   });
@@ -211,6 +228,7 @@ export function usePeopleReviewPage() {
     routeProjectId,
     currentProject,
     selectedProjectId,
+    selectedReviewPersonId,
     page,
     setPage,
     statusMessage,
