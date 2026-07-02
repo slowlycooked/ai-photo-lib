@@ -265,4 +265,66 @@ start_postgres() {
   log_ok "postgres 已启动 (data=$POSTGRES_DATA_DIR, port $POSTGRES_PORT)"
 }
 
-start_postgres
+stop_postgres() {
+  if [ -z "$PG_CTL_BIN" ]; then
+    log_error "缺少 PostgreSQL 工具: PG_CTL。请先安装 postgresql@17 或在 .env 中配置 POSTGRES_BIN_DIR"
+    return 1
+  fi
+
+  local pg_pid=""
+  pg_pid="$(postgres_pid_from_data_dir)"
+  if [ -n "$pg_pid" ] && kill -0 "$pg_pid" 2>/dev/null; then
+    log_info "停止 PostgreSQL (PID $pg_pid)..."
+    "$PG_CTL_BIN" -D "$POSTGRES_DATA_DIR" stop -m fast >/dev/null || true
+    rm -f "$(pid_file postgres)"
+    log_ok "postgres 已停止"
+    return 0
+  fi
+
+  if postgres_is_ready; then
+    local listen_pid=""
+    listen_pid="$(get_listen_pid_by_port "$POSTGRES_PORT")"
+    log_error "检测到 PostgreSQL 正在端口 $POSTGRES_PORT 运行 (PID ${listen_pid:-?})，但不属于当前 POSTGRES_DATA_DIR: $POSTGRES_DATA_DIR"
+    log_error "请切换到对应实例的数据目录后再停止，或手动停止该实例。"
+    return 1
+  fi
+
+  log_info "postgres 未在运行"
+}
+
+restart_postgres() {
+  stop_postgres
+  start_postgres
+}
+
+show_help() {
+  echo "用法: ./scripts/start-postgres.sh [start|stop|restart|help]"
+  echo ""
+  echo "命令:"
+  echo "  start    启动 PostgreSQL（默认）"
+  echo "  stop     停止当前 POSTGRES_DATA_DIR 对应的 PostgreSQL"
+  echo "  restart  重启 PostgreSQL"
+  echo "  help     显示帮助"
+}
+
+COMMAND="${1:-start}"
+
+case "$COMMAND" in
+  start)
+    start_postgres
+    ;;
+  stop)
+    stop_postgres
+    ;;
+  restart)
+    restart_postgres
+    ;;
+  help|--help|-h)
+    show_help
+    ;;
+  *)
+    log_error "未知命令: $COMMAND"
+    show_help
+    exit 1
+    ;;
+esac
