@@ -1168,10 +1168,21 @@ do_stop() {
   services="$(resolve_services "$@")"
   # shellcheck disable=SC2206
   local requested=( $services )
+  local requested_without_db=()
   local ordered=()
+  local postgres_requested=0
+
+  local svc
+  for svc in "${requested[@]}"; do
+    if [ "$svc" = "postgres" ]; then
+      postgres_requested=1
+      continue
+    fi
+    requested_without_db+=("$svc")
+  done
 
   for s in mobile-web web worker api embed ai planner postgres; do
-    if contains_service "$s" "${requested[@]}"; then
+    if contains_service "$s" "${requested_without_db[@]}"; then
       ordered+=("$s")
     fi
   done
@@ -1184,6 +1195,10 @@ do_stop() {
   echo ""
   log_info "停止服务: ${ordered_text}"
   echo ""
+
+  if [ "$postgres_requested" -eq 1 ]; then
+    log_warn "stop 已忽略 postgres：数据库进程已剥离，不由 svc.sh 管理"
+  fi
 
   if [ "${#ordered[@]}" -eq 0 ]; then
     return 0
@@ -1205,10 +1220,39 @@ do_stop() {
 }
 
 do_restart() {
+  local services
+  services="$(resolve_services "$@")"
+  # shellcheck disable=SC2206
+  local requested=( $services )
+  local restart_services=()
+  local postgres_requested=0
+
+  local svc
+  for svc in "${requested[@]}"; do
+    if [ "$svc" = "postgres" ]; then
+      postgres_requested=1
+      continue
+    fi
+    restart_services+=("$svc")
+  done
+
   echo ""
-  log_info "重启服务: $*"
-  do_stop "$@"
-  do_start "$@"
+  if [ "${#restart_services[@]}" -gt 0 ]; then
+    log_info "重启服务: ${restart_services[*]}"
+  else
+    log_info "重启服务:"
+  fi
+
+  if [ "$postgres_requested" -eq 1 ]; then
+    log_warn "restart 已忽略 postgres：数据库进程已剥离，不由 svc.sh 管理"
+  fi
+
+  if [ "${#restart_services[@]}" -eq 0 ]; then
+    return 0
+  fi
+
+  do_stop "${restart_services[@]}"
+  do_start "${restart_services[@]}"
 }
 
 COMMAND="${1:-help}"
@@ -1244,8 +1288,8 @@ case "$COMMAND" in
     echo ""
     echo -e "${BOLD}命令:${RESET}"
     echo "  start   [服务...]   启动服务（默认: 全部）"
-    echo "  stop    [服务...]   停止服务（默认: 全部）"
-    echo "  restart [服务...]   重启服务（默认: 全部）"
+    echo "  stop    [服务...]   停止服务（默认: 全部非数据库服务）"
+    echo "  restart [服务...]   重启服务（默认: 全部非数据库服务）"
     echo "  status              查看所有服务状态"
     echo "  logs    <服务>      实时追踪日志"
     echo ""
