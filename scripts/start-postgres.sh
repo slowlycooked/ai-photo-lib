@@ -12,13 +12,13 @@ mkdir -p "$RUN_DIR" "$LOG_DIR"
 
 # Runtime config for loading project env files.
 # If this script is moved outside the repo, update these vars at the top only.
-ENV_ROOT_DIR="${ENV_ROOT_DIR:-$ROOT}"
-ENV_BASE_FILE="${ENV_BASE_FILE:-$ENV_ROOT_DIR/.env}"
-ENV_PROFILE_PREFIX="${ENV_PROFILE_PREFIX:-$ENV_ROOT_DIR/.env}"
-ENV_DEPLOY_PROFILE="${DEPLOY_PROFILE:-dev}"
+ENV_ROOT_DIR="${ENV_ROOT_DIR:-}"
+ENV_BASE_FILE="${ENV_BASE_FILE:-}"
+ENV_PROFILE_PREFIX="${ENV_PROFILE_PREFIX:-}"
+ENV_DEPLOY_PROFILE="${ENV_DEPLOY_PROFILE:-}"
 POSTGRES_PORT_CONFIG="${POSTGRES_PORT_CONFIG:-}"
-POSTGRES_CONF_FILE="${POSTGRES_CONF_FILE:-$ENV_ROOT_DIR/postgresql.conf}"
 LOCAL_ENV_FILE="${LOCAL_ENV_FILE:-$SCRIPT_DIR/.env}"
+POSTGRES_CONF_FILE="${POSTGRES_CONF_FILE:-}"
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
 CYAN='\033[0;36m'; RESET='\033[0m'
@@ -92,6 +92,15 @@ read_env_value() {
 }
 
 CLI_DEPLOY_PROFILE="${DEPLOY_PROFILE:-}"
+# Load local .env first so script-local overrides (e.g. ENV_ROOT_DIR / POSTGRES_PORT_CONFIG) take effect.
+load_env_file "$LOCAL_ENV_FILE"
+
+ENV_ROOT_DIR="${ENV_ROOT_DIR:-$ROOT}"
+ENV_BASE_FILE="${ENV_BASE_FILE:-$ENV_ROOT_DIR/.env}"
+ENV_PROFILE_PREFIX="${ENV_PROFILE_PREFIX:-$ENV_ROOT_DIR/.env}"
+ENV_DEPLOY_PROFILE="${ENV_DEPLOY_PROFILE:-${DEPLOY_PROFILE:-dev}}"
+POSTGRES_CONF_FILE="${POSTGRES_CONF_FILE:-$ENV_ROOT_DIR/postgresql.conf}"
+
 if [ -n "$ENV_DEPLOY_PROFILE" ]; then
   CLI_DEPLOY_PROFILE="$ENV_DEPLOY_PROFILE"
 fi
@@ -123,6 +132,7 @@ POSTGRES_USER="${POSTGRES_USER:-photo}"
 POSTGRES_DB="${POSTGRES_DB:-photo}"
 POSTGRES_CONF_PORT="$(read_conf_value "$POSTGRES_CONF_FILE" port || true)"
 POSTGRES_CONF_DATA_DIR="$(read_conf_value "$POSTGRES_CONF_FILE" data_directory || true)"
+LOCAL_ENV_POSTGRES_PORT_CONFIG="$(read_env_value "$LOCAL_ENV_FILE" POSTGRES_PORT_CONFIG || true)"
 LOCAL_ENV_POSTGRES_PORT="$(read_env_value "$LOCAL_ENV_FILE" POSTGRES_PORT || true)"
 LOCAL_ENV_POSTGRES_HOST_PORT="$(read_env_value "$LOCAL_ENV_FILE" POSTGRES_HOST_PORT || true)"
 LOCAL_ENV_POSTGRES_DATA_DIR="$(read_env_value "$LOCAL_ENV_FILE" POSTGRES_DATA_DIR || true)"
@@ -136,6 +146,9 @@ if [ -n "$POSTGRES_PORT_CONFIG" ]; then
 elif [ -n "$POSTGRES_CONF_PORT" ]; then
   POSTGRES_PORT="$POSTGRES_CONF_PORT"
   POSTGRES_PORT_SOURCE="postgresql.conf:port"
+elif [ -n "$LOCAL_ENV_POSTGRES_PORT_CONFIG" ]; then
+  POSTGRES_PORT="$LOCAL_ENV_POSTGRES_PORT_CONFIG"
+  POSTGRES_PORT_SOURCE="local .env:POSTGRES_PORT_CONFIG"
 elif [ -n "$LOCAL_ENV_POSTGRES_PORT" ]; then
   POSTGRES_PORT="$LOCAL_ENV_POSTGRES_PORT"
   POSTGRES_PORT_SOURCE="local .env:POSTGRES_PORT"
@@ -231,14 +244,12 @@ check_preflight_config() {
     check_line 1 "postgresql.conf" "已找到: $POSTGRES_CONF_FILE" ""
   else
     check_line 0 "postgresql.conf" "未找到: $POSTGRES_CONF_FILE" "在 ENV_ROOT_DIR 下提供 postgresql.conf，或在 $LOCAL_ENV_FILE 配置 POSTGRES_PORT/POSTGRES_DATA_DIR"
-    failed=1
   fi
 
   if [ -f "$LOCAL_ENV_FILE" ]; then
     check_line 1 "local .env" "已找到: $LOCAL_ENV_FILE" ""
   else
     check_line 0 "local .env" "未找到: $LOCAL_ENV_FILE" "在脚本目录创建 .env，并至少配置 POSTGRES_PORT 与 POSTGRES_DATA_DIR"
-    failed=1
   fi
 
   if echo "$POSTGRES_PORT" | grep -Eq '^[0-9]+$'; then
