@@ -86,6 +86,17 @@ def _coerce_vector(raw_vector: object) -> list[float]:
     return []
 
 
+def _coerce_datetime(value: object) -> datetime:
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, str):
+        try:
+            return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return datetime.min.replace(tzinfo=timezone.utc)
+    return datetime.min.replace(tzinfo=timezone.utc)
+
+
 def _refresh_person_counters(db: Session, *, project_id: int, person_id: int) -> None:
     person = (
         db.query(Person)
@@ -142,6 +153,10 @@ def rebuild_person_centroid_prototype(
             FaceEmbedding.embedding_dim,
             FaceEmbedding.model_name,
             FaceEmbedding.model_version,
+            FaceDetection.face_quality_score,
+            PersonFaceAssignment.updated_at,
+            FaceEmbedding.embedded_at,
+            FaceEmbedding.id,
         )
         .join(
             FaceDetection,
@@ -165,7 +180,7 @@ def rebuild_person_centroid_prototype(
                 FaceDetection.face_quality_score >= settings.min_quality_for_prototype,
             ),
         )
-        .order_by(PersonFaceAssignment.id.asc())
+        .order_by(FaceEmbedding.embedded_at.desc().nullslast(), FaceEmbedding.id.desc())
         .all()
     )
 
@@ -183,13 +198,32 @@ def rebuild_person_centroid_prototype(
         )
         return None
 
-    vectors: list[list[float]] = []
-    assignment_ids: list[int] = []
     embedding_dim = int(rows[0][2])
     model_name = str(rows[0][3])
     model_version = str(rows[0][4] or "")
+    candidate_rows = [
+        row
+        for row in rows
+        if int(row[2]) == embedding_dim
+        and str(row[3]) == model_name
+        and str(row[4] or "") == model_version
+    ]
+    candidate_rows = sorted(
+        candidate_rows,
+        key=lambda row: (
+            float(row[5]) if row[5] is not None else -1.0,
+            _coerce_datetime(row[6]),
+            int(row[0]),
+        ),
+        reverse=True,
+    )
+    sample_limit = int(settings.max_positive_samples_per_person or 0)
+    if sample_limit > 0:
+        candidate_rows = candidate_rows[:sample_limit]
 
-    for assignment_id, raw_vector, _, _, _ in rows:
+    vectors: list[list[float]] = []
+    assignment_ids: list[int] = []
+    for assignment_id, raw_vector, _, _, _, _, _, _, _ in candidate_rows:
         vector = _coerce_vector(raw_vector)
         if len(vector) != embedding_dim:
             continue
@@ -275,6 +309,10 @@ def match_face_detection_to_person(
     target_vector = _coerce_vector(embedding.embedding_vector)
     if not target_vector:
         return None
+    embedding_dim = int(embedding.embedding_dim)
+    if len(target_vector) != embedding_dim:
+        return None
+    embedding_model_version = str(embedding.model_version or "")
 
     candidate_query = (
         db.query(PersonPrototype, Person)
@@ -289,6 +327,8 @@ def match_face_detection_to_person(
             PersonPrototype.project_id == project_id,
             PersonPrototype.prototype_type == "centroid",
             PersonPrototype.model_name == settings.face_embedding_model,
+            PersonPrototype.model_version == embedding_model_version,
+            PersonPrototype.embedding_dim == embedding_dim,
             PersonPrototype.embedding_vector.isnot(None),
             Person.is_named.is_(True),
         )

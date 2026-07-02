@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import logging
 from typing import Collection, Optional
 
 from sqlalchemy.orm import Session
@@ -8,6 +9,7 @@ from sqlalchemy.orm import Session
 from .project_task_service import enqueue_face_rematch_unknown_task
 
 _DEFAULT_MANUAL_REMATCH_MAX_FACES = 1000
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -61,8 +63,17 @@ class PeopleFeedbackEffectsService:
                 )
                 effects.unknown_rematch_task_id = result.task.id
                 effects.unknown_rematch_task_created = bool(result.created)
-            except Exception:  # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001
                 self._db.rollback()
+                logger.warning(
+                    "Failed to enqueue face rematch task after people feedback: "
+                    "project_id=%s scope=%s person_id=%s: %s",
+                    project_id,
+                    rematch_scope,
+                    rematch_person_id,
+                    exc,
+                    exc_info=True,
+                )
                 effects.unknown_rematch_task_id = None
                 effects.unknown_rematch_task_created = False
         self._last_effects = effects

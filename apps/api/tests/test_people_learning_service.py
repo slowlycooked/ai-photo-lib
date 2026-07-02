@@ -242,6 +242,102 @@ def test_rebuild_person_centroid_prototype() -> None:
         db.close()
 
 
+def test_rebuild_person_centroid_prototype_caps_to_best_quality_samples() -> None:
+    db = _make_session()
+    try:
+        db.execute(
+            sa.text(
+                "UPDATE project_face_settings SET max_positive_samples_per_person = 2 WHERE project_id = 1"
+            )
+        )
+        db.execute(
+            sa.text(
+                """
+                INSERT INTO face_detections (
+                  id, project_id, photo_id, bbox_x, bbox_y, bbox_w, bbox_h, face_quality_score, status
+                ) VALUES
+                  (204, 1, 14, 4, 4, 10, 10, 0.95, 'embedded'),
+                  (205, 1, 15, 5, 5, 10, 10, 0.80, 'embedded')
+                """
+            )
+        )
+        db.execute(
+            sa.text(
+                """
+                INSERT INTO face_embeddings (
+                  id, project_id, face_detection_id, model_name, model_version,
+                  embedding_dim, embedding_vector
+                ) VALUES
+                  (304, 1, 204, 'sface', '', 128, :vec_high),
+                  (305, 1, 205, 'sface', '', 128, :vec_low)
+                """
+            ),
+            {
+                "vec_high": json.dumps([0.0, 1.0] + ([0.0] * 126)),
+                "vec_low": json.dumps([-1.0, 0.0] + ([0.0] * 126)),
+            },
+        )
+        db.execute(
+            sa.text(
+                """
+                INSERT INTO person_face_assignments (
+                  id, project_id, person_id, face_detection_id,
+                  assignment_status, assignment_source, is_positive_sample, is_training_candidate
+                ) VALUES
+                  (404, 1, 101, 204, 'human_confirmed', 'human_label', 1, 1),
+                  (405, 1, 101, 205, 'human_confirmed', 'human_label', 1, 1)
+                """
+            )
+        )
+
+        row = rebuild_person_centroid_prototype(db, project_id=1, person_id=101)
+
+        assert row is not None
+        assert row.sample_count == 2
+        assert row.source_assignment_ids == [404, 401]
+        assert row.embedding_vector == [0.5, 0.5] + ([0.0] * 126)
+    finally:
+        db.close()
+
+
+def test_match_face_detection_requires_matching_model_version_and_dimension() -> None:
+    db = _make_session()
+    try:
+        rebuild_person_centroid_prototype(db, project_id=1, person_id=101)
+        db.execute(
+            sa.text(
+                "UPDATE face_embeddings SET model_version = 'v2' WHERE face_detection_id = 202"
+            )
+        )
+        db.execute(
+            sa.text(
+                """
+                INSERT INTO person_prototypes (
+                  id, project_id, person_id, prototype_type, embedding_vector,
+                  sample_count, source_assignment_ids, model_name, model_version,
+                  embedding_dim
+                ) VALUES (
+                  901, 1, 101, 'centroid', :vector, 1, '[401]', 'sface', 'v2', 64
+                )
+                """
+            ),
+            {"vector": json.dumps([0.95, 0.05] + ([0.0] * 126))},
+        )
+
+        assert match_face_detection_to_person(db, project_id=1, face_detection_id=202) is None
+
+        db.execute(
+            sa.text("UPDATE person_prototypes SET embedding_dim = 128 WHERE id = 901")
+        )
+        decision = match_face_detection_to_person(db, project_id=1, face_detection_id=202)
+
+        assert decision is not None
+        assert decision.person_id == 101
+        assert decision.assignment_status == "auto_assigned"
+    finally:
+        db.close()
+
+
 def test_match_face_detection_assigns_auto_and_review() -> None:
     db = _make_session()
     try:

@@ -309,7 +309,7 @@ describe("PeopleReviewPage", () => {
       "href",
       "/projects/1/people/review",
     );
-    expect(reviewPendingMock).toHaveBeenCalledWith(1, 101, 40, 0);
+    expect(reviewPendingMock).toHaveBeenCalledWith(1, 101, 500, 0);
   });
 
   it("does not display review-pending faces for archived people", async () => {

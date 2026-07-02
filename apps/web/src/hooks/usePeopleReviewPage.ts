@@ -12,6 +12,7 @@ import {
 } from "@/lib/personArchive";
 
 const PAGE_SIZE = 40;
+const PERSON_REVIEW_PAGE_SIZE = 500;
 
 function parsePositiveIntParam(value: string | null): number | null {
   if (!value) return null;
@@ -46,6 +47,7 @@ export function usePeopleReviewPage() {
     ? routeProjectId
     : (currentProject?.id ?? 0);
   const selectedReviewPersonId = parsePositiveIntParam(searchParams.get("person_id"));
+  const pageSize = selectedReviewPersonId == null ? PAGE_SIZE : PERSON_REVIEW_PAGE_SIZE;
 
   useEffect(() => {
     setPage(1);
@@ -66,13 +68,13 @@ export function usePeopleReviewPage() {
   });
 
   const { data: reviewData, isLoading, isFetching, error } = useQuery({
-    queryKey: ["project-review-page", selectedProjectId, selectedReviewPersonId, page],
+    queryKey: ["project-review-page", selectedProjectId, selectedReviewPersonId, page, pageSize],
     queryFn: () =>
       api.projectPeople.reviewPending(
         selectedProjectId,
         selectedReviewPersonId,
-        PAGE_SIZE,
-        (page - 1) * PAGE_SIZE,
+        pageSize,
+        (page - 1) * pageSize,
       ),
     enabled: selectedProjectId > 0,
     placeholderData: (previousData) => previousData,
@@ -111,7 +113,7 @@ export function usePeopleReviewPage() {
     [archivedPersonIds, grouped],
   );
 
-  const maxPage = Math.max(1, Math.ceil((reviewData?.total ?? 0) / PAGE_SIZE));
+  const maxPage = Math.max(1, Math.ceil((reviewData?.total ?? 0) / pageSize));
 
   const invalidateReviewQueries = () => {
     queryClient.invalidateQueries({ queryKey: ["project-review-page", selectedProjectId] });
