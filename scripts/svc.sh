@@ -524,8 +524,6 @@ ensure_postgres_db() {
 }
 
 start_postgres() {
-  require_postgres_tools || return 1
-
   if postgres_is_ready; then
     local listen_pid=""
     listen_pid="$(get_listen_pid_by_port "$POSTGRES_PORT")"
@@ -537,61 +535,17 @@ start_postgres() {
     return 0
   fi
 
-  local occupied_pid=""
-  occupied_pid="$(get_listen_pid_by_port "$POSTGRES_PORT")"
-  if [ -n "$occupied_pid" ]; then
-    local occupied_cmd=""
-    occupied_cmd="$(ps -p "$occupied_pid" -o command= 2>/dev/null || true)"
-    log_error "端口 $POSTGRES_PORT 已被占用 (PID $occupied_pid): $occupied_cmd"
-    return 1
-  fi
-
-  init_postgres_cluster
-
-  log_info "启动 PostgreSQL (port $POSTGRES_PORT)..."
-  if ! "$PG_CTL_BIN" \
-    -D "$POSTGRES_DATA_DIR" \
-    -l "$(log_file postgres)" \
-    -o "-p $POSTGRES_PORT -h 127.0.0.1" \
-    start >/dev/null; then
-    if detect_postgres_locale_mismatch; then
-      show_postgres_repair_hint
-    fi
-    log_error "postgres 启动失败，请查看 $(log_file postgres)"
-    return 1
-  fi
-
-  wait_for_postgres 30
-  ensure_postgres_db
-
-  local pg_pid=""
-  pg_pid="$(postgres_pid_from_data_dir)"
-  if [ -n "$pg_pid" ]; then
-    save_pid "$pg_pid" postgres
-  fi
-
-  log_ok "postgres 已启动 (data=$POSTGRES_DATA_DIR, port $POSTGRES_PORT)"
+  log_error "postgres 不可用（.env 配置端口: $POSTGRES_PORT）"
+  log_error "svc.sh 不负责启动数据库，请先自行启动 .env 对应的 PostgreSQL 实例"
+  return 1
 }
 
 stop_postgres() {
-  require_postgres_tools || return 1
-
-  local pg_pid=""
-  pg_pid="$(postgres_pid_from_data_dir)"
-  if [ -n "$pg_pid" ] && kill -0 "$pg_pid" 2>/dev/null; then
-    log_info "停止 PostgreSQL (PID $pg_pid)..."
-    "$PG_CTL_BIN" -D "$POSTGRES_DATA_DIR" stop -m fast >/dev/null || true
-    rm -f "$(pid_file postgres)"
-    log_ok "postgres 已停止"
-    return 0
-  fi
-
   if postgres_is_ready; then
-    log_warn "检测到外部 PostgreSQL 正在端口 $POSTGRES_PORT 运行；未执行停止。"
-    return 0
+    log_warn "检测到 PostgreSQL 正在端口 $POSTGRES_PORT 运行；svc.sh 不执行数据库停止操作。"
+  else
+    log_warn "postgres 当前不可用（.env 配置端口: $POSTGRES_PORT）"
   fi
-
-  log_warn "postgres 未在运行"
 }
 
 run_migrations() {
@@ -610,7 +564,9 @@ start_api() {
   fi
 
   if ! database_url_is_ready; then
-    start_postgres
+    log_error "数据库不可用，无法启动 API。"
+    log_error "请先启动 .env 配置对应的 PostgreSQL，并确认 DATABASE_URL 可连接。"
+    return 1
   fi
 
   log_info "运行数据库迁移..."
@@ -1294,7 +1250,7 @@ case "$COMMAND" in
     echo "  logs    <服务>      实时追踪日志"
     echo ""
     echo -e "${BOLD}服务名:${RESET}"
-    echo "  postgres  — PostgreSQL（本地进程，数据目录见 POSTGRES_DATA_DIR）"
+    echo "  postgres  — PostgreSQL 状态检查（不执行启动/停止）"
     echo "  planner   — Query Planner llama-server（Qwen3-4B-Instruct）"
     echo "  ai        — llama-server"
     echo "  embed     — llama embedding server"
