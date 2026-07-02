@@ -17,6 +17,7 @@ ENV_BASE_FILE="${ENV_BASE_FILE:-}"
 ENV_PROFILE_PREFIX="${ENV_PROFILE_PREFIX:-}"
 ENV_DEPLOY_PROFILE="${ENV_DEPLOY_PROFILE:-}"
 POSTGRES_PORT_CONFIG="${POSTGRES_PORT_CONFIG:-}"
+POSTGRES_HOST_CONFIG="${POSTGRES_HOST_CONFIG:-}"
 LOCAL_ENV_FILE="${LOCAL_ENV_FILE:-$SCRIPT_DIR/.env}"
 POSTGRES_CONF_FILE="${POSTGRES_CONF_FILE:-}"
 
@@ -131,13 +132,20 @@ fi
 POSTGRES_USER="${POSTGRES_USER:-photo}"
 POSTGRES_DB="${POSTGRES_DB:-photo}"
 POSTGRES_CONF_PORT="$(read_conf_value "$POSTGRES_CONF_FILE" port || true)"
+POSTGRES_CONF_LISTEN_ADDRESSES="$(read_conf_value "$POSTGRES_CONF_FILE" listen_addresses || true)"
 POSTGRES_CONF_DATA_DIR="$(read_conf_value "$POSTGRES_CONF_FILE" data_directory || true)"
 LOCAL_ENV_POSTGRES_PORT_CONFIG="$(read_env_value "$LOCAL_ENV_FILE" POSTGRES_PORT_CONFIG || true)"
+LOCAL_ENV_POSTGRES_HOST_CONFIG="$(read_env_value "$LOCAL_ENV_FILE" POSTGRES_HOST_CONFIG || true)"
+LOCAL_ENV_POSTGRES_HOST="$(read_env_value "$LOCAL_ENV_FILE" POSTGRES_HOST || true)"
+LOCAL_ENV_POSTGRES_LISTEN_HOST="$(read_env_value "$LOCAL_ENV_FILE" POSTGRES_LISTEN_HOST || true)"
+LOCAL_ENV_POSTGRES_CONNECT_HOST="$(read_env_value "$LOCAL_ENV_FILE" POSTGRES_CONNECT_HOST || true)"
 LOCAL_ENV_POSTGRES_PORT="$(read_env_value "$LOCAL_ENV_FILE" POSTGRES_PORT || true)"
 LOCAL_ENV_POSTGRES_HOST_PORT="$(read_env_value "$LOCAL_ENV_FILE" POSTGRES_HOST_PORT || true)"
 LOCAL_ENV_POSTGRES_DATA_DIR="$(read_env_value "$LOCAL_ENV_FILE" POSTGRES_DATA_DIR || true)"
 
 POSTGRES_PORT_SOURCE=""
+POSTGRES_LISTEN_HOST_SOURCE=""
+POSTGRES_CONNECT_HOST_SOURCE=""
 POSTGRES_DATA_DIR_SOURCE=""
 
 if [ -n "$POSTGRES_PORT_CONFIG" ]; then
@@ -159,6 +167,43 @@ else
   POSTGRES_PORT="${POSTGRES_PORT:-${POSTGRES_HOST_PORT:-5432}}"
   POSTGRES_PORT_SOURCE="environment/default"
 fi
+
+if [ -n "$POSTGRES_HOST_CONFIG" ]; then
+  POSTGRES_LISTEN_HOST="$POSTGRES_HOST_CONFIG"
+  POSTGRES_LISTEN_HOST_SOURCE="POSTGRES_HOST_CONFIG"
+elif [ -n "$LOCAL_ENV_POSTGRES_HOST_CONFIG" ]; then
+  POSTGRES_LISTEN_HOST="$LOCAL_ENV_POSTGRES_HOST_CONFIG"
+  POSTGRES_LISTEN_HOST_SOURCE="local .env:POSTGRES_HOST_CONFIG"
+elif [ -n "$POSTGRES_CONF_LISTEN_ADDRESSES" ]; then
+  POSTGRES_LISTEN_HOST="$POSTGRES_CONF_LISTEN_ADDRESSES"
+  POSTGRES_LISTEN_HOST_SOURCE="postgresql.conf:listen_addresses"
+elif [ -n "$LOCAL_ENV_POSTGRES_LISTEN_HOST" ]; then
+  POSTGRES_LISTEN_HOST="$LOCAL_ENV_POSTGRES_LISTEN_HOST"
+  POSTGRES_LISTEN_HOST_SOURCE="local .env:POSTGRES_LISTEN_HOST"
+elif [ -n "$LOCAL_ENV_POSTGRES_HOST" ]; then
+  POSTGRES_LISTEN_HOST="$LOCAL_ENV_POSTGRES_HOST"
+  POSTGRES_LISTEN_HOST_SOURCE="local .env:POSTGRES_HOST"
+else
+  POSTGRES_LISTEN_HOST="${POSTGRES_LISTEN_HOST:-${POSTGRES_HOST:-0.0.0.0}}"
+  POSTGRES_LISTEN_HOST_SOURCE="environment/default"
+fi
+
+if [ -n "$LOCAL_ENV_POSTGRES_CONNECT_HOST" ]; then
+  POSTGRES_CONNECT_HOST="$LOCAL_ENV_POSTGRES_CONNECT_HOST"
+  POSTGRES_CONNECT_HOST_SOURCE="local .env:POSTGRES_CONNECT_HOST"
+elif [ -n "${POSTGRES_CONNECT_HOST:-}" ]; then
+  POSTGRES_CONNECT_HOST="$POSTGRES_CONNECT_HOST"
+  POSTGRES_CONNECT_HOST_SOURCE="environment:POSTGRES_CONNECT_HOST"
+else
+  POSTGRES_CONNECT_HOST="$POSTGRES_LISTEN_HOST"
+  POSTGRES_CONNECT_HOST_SOURCE="follow:POSTGRES_LISTEN_HOST"
+fi
+
+if [ "$POSTGRES_CONNECT_HOST" = "*" ] || [ "$POSTGRES_CONNECT_HOST" = "0.0.0.0" ]; then
+  POSTGRES_CONNECT_HOST="127.0.0.1"
+  POSTGRES_CONNECT_HOST_SOURCE="normalize(local-connect)"
+fi
+
 POSTGRES_BIN_DIR="${POSTGRES_BIN_DIR:-}"
 if [ -n "$POSTGRES_CONF_DATA_DIR" ]; then
   POSTGRES_DATA_DIR="$POSTGRES_CONF_DATA_DIR"
@@ -259,6 +304,20 @@ check_preflight_config() {
     failed=1
   fi
 
+  if [ -n "$POSTGRES_LISTEN_HOST" ]; then
+    check_line 1 "POSTGRES_LISTEN_HOST" "$POSTGRES_LISTEN_HOST (来源: $POSTGRES_LISTEN_HOST_SOURCE)" ""
+  else
+    check_line 0 "POSTGRES_LISTEN_HOST" "未配置" "在 postgresql.conf 配置 listen_addresses，或在 $LOCAL_ENV_FILE 配置 POSTGRES_HOST_CONFIG/POSTGRES_LISTEN_HOST"
+    failed=1
+  fi
+
+  if [ -n "$POSTGRES_CONNECT_HOST" ]; then
+    check_line 1 "POSTGRES_CONNECT_HOST" "$POSTGRES_CONNECT_HOST (来源: $POSTGRES_CONNECT_HOST_SOURCE)" ""
+  else
+    check_line 0 "POSTGRES_CONNECT_HOST" "未配置" "在 $LOCAL_ENV_FILE 配置 POSTGRES_CONNECT_HOST（例如 127.0.0.1）"
+    failed=1
+  fi
+
   if [ -n "$POSTGRES_DATA_DIR" ]; then
     if [ -d "$POSTGRES_DATA_DIR" ]; then
       check_line 1 "POSTGRES_DATA_DIR" "$POSTGRES_DATA_DIR (来源: $POSTGRES_DATA_DIR_SOURCE)" ""
@@ -354,7 +413,7 @@ postgres_pid_from_data_dir() {
 
 postgres_is_ready() {
   [ -n "$PG_ISREADY_BIN" ] || return 1
-  "$PG_ISREADY_BIN" -h 127.0.0.1 -p "$POSTGRES_PORT" -U "$POSTGRES_USER" -d "$POSTGRES_DB" >/dev/null 2>&1
+  "$PG_ISREADY_BIN" -h "$POSTGRES_CONNECT_HOST" -p "$POSTGRES_PORT" -U "$POSTGRES_USER" -d "$POSTGRES_DB" >/dev/null 2>&1
 }
 
 get_listen_pid_by_port() {
@@ -393,7 +452,7 @@ init_postgres_cluster() {
 ensure_postgres_db() {
   local exists=""
   exists="$("$PSQL_BIN" \
-    -h 127.0.0.1 \
+    -h "$POSTGRES_CONNECT_HOST" \
     -p "$POSTGRES_PORT" \
     -U "$POSTGRES_USER" \
     -d postgres \
@@ -405,7 +464,7 @@ ensure_postgres_db() {
   fi
 
   log_info "创建数据库: $POSTGRES_DB"
-  "$CREATEDB_BIN" -h 127.0.0.1 -p "$POSTGRES_PORT" -U "$POSTGRES_USER" "$POSTGRES_DB"
+  "$CREATEDB_BIN" -h "$POSTGRES_CONNECT_HOST" -p "$POSTGRES_PORT" -U "$POSTGRES_USER" "$POSTGRES_DB"
 }
 
 start_postgres() {
@@ -433,11 +492,11 @@ start_postgres() {
 
   init_postgres_cluster
 
-  log_info "启动 PostgreSQL (port $POSTGRES_PORT)..."
+  log_info "启动 PostgreSQL (host=$POSTGRES_LISTEN_HOST, port=$POSTGRES_PORT)..."
   if ! "$PG_CTL_BIN" \
     -D "$POSTGRES_DATA_DIR" \
     -l "$(log_file postgres)" \
-    -o "-p $POSTGRES_PORT -h 127.0.0.1" \
+    -o "-p $POSTGRES_PORT -h $POSTGRES_LISTEN_HOST" \
     start >/dev/null; then
     if detect_postgres_locale_mismatch; then
       show_postgres_repair_hint
