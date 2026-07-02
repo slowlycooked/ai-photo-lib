@@ -18,6 +18,8 @@ ENV_PROFILE_PREFIX="${ENV_PROFILE_PREFIX:-}"
 ENV_DEPLOY_PROFILE="${ENV_DEPLOY_PROFILE:-}"
 POSTGRES_PORT_CONFIG="${POSTGRES_PORT_CONFIG:-}"
 POSTGRES_HOST_CONFIG="${POSTGRES_HOST_CONFIG:-}"
+POSTGRES_HBA_FILE_CONFIG="${POSTGRES_HBA_FILE_CONFIG:-}"
+HBA_REQUIRED_CIDR="${HBA_REQUIRED_CIDR:-100.64.0.0/10}"
 LOCAL_ENV_FILE="${LOCAL_ENV_FILE:-$SCRIPT_DIR/.env}"
 POSTGRES_CONF_FILE="${POSTGRES_CONF_FILE:-}"
 
@@ -139,6 +141,8 @@ LOCAL_ENV_POSTGRES_HOST_CONFIG="$(read_env_value "$LOCAL_ENV_FILE" POSTGRES_HOST
 LOCAL_ENV_POSTGRES_HOST="$(read_env_value "$LOCAL_ENV_FILE" POSTGRES_HOST || true)"
 LOCAL_ENV_POSTGRES_LISTEN_HOST="$(read_env_value "$LOCAL_ENV_FILE" POSTGRES_LISTEN_HOST || true)"
 LOCAL_ENV_POSTGRES_CONNECT_HOST="$(read_env_value "$LOCAL_ENV_FILE" POSTGRES_CONNECT_HOST || true)"
+LOCAL_ENV_POSTGRES_HBA_FILE_CONFIG="$(read_env_value "$LOCAL_ENV_FILE" POSTGRES_HBA_FILE_CONFIG || true)"
+LOCAL_ENV_HBA_REQUIRED_CIDR="$(read_env_value "$LOCAL_ENV_FILE" HBA_REQUIRED_CIDR || true)"
 LOCAL_ENV_POSTGRES_PORT="$(read_env_value "$LOCAL_ENV_FILE" POSTGRES_PORT || true)"
 LOCAL_ENV_POSTGRES_HOST_PORT="$(read_env_value "$LOCAL_ENV_FILE" POSTGRES_HOST_PORT || true)"
 LOCAL_ENV_POSTGRES_DATA_DIR="$(read_env_value "$LOCAL_ENV_FILE" POSTGRES_DATA_DIR || true)"
@@ -147,6 +151,8 @@ POSTGRES_PORT_SOURCE=""
 POSTGRES_LISTEN_HOST_SOURCE=""
 POSTGRES_CONNECT_HOST_SOURCE=""
 POSTGRES_DATA_DIR_SOURCE=""
+POSTGRES_HBA_FILE_SOURCE=""
+HBA_REQUIRED_CIDR_SOURCE=""
 
 if [ -n "$POSTGRES_PORT_CONFIG" ]; then
   POSTGRES_PORT="$POSTGRES_PORT_CONFIG"
@@ -188,6 +194,13 @@ else
   POSTGRES_LISTEN_HOST_SOURCE="environment/default"
 fi
 
+if [ -n "$LOCAL_ENV_HBA_REQUIRED_CIDR" ]; then
+  HBA_REQUIRED_CIDR="$LOCAL_ENV_HBA_REQUIRED_CIDR"
+  HBA_REQUIRED_CIDR_SOURCE="local .env:HBA_REQUIRED_CIDR"
+elif [ -n "$HBA_REQUIRED_CIDR" ]; then
+  HBA_REQUIRED_CIDR_SOURCE="environment/default"
+fi
+
 if [ -n "$LOCAL_ENV_POSTGRES_CONNECT_HOST" ]; then
   POSTGRES_CONNECT_HOST="$LOCAL_ENV_POSTGRES_CONNECT_HOST"
   POSTGRES_CONNECT_HOST_SOURCE="local .env:POSTGRES_CONNECT_HOST"
@@ -214,6 +227,20 @@ elif [ -n "$LOCAL_ENV_POSTGRES_DATA_DIR" ]; then
 else
   POSTGRES_DATA_DIR="${POSTGRES_DATA_DIR:-}"
   POSTGRES_DATA_DIR_SOURCE="environment/default"
+fi
+
+if [ -n "$POSTGRES_HBA_FILE_CONFIG" ]; then
+  POSTGRES_HBA_FILE="$POSTGRES_HBA_FILE_CONFIG"
+  POSTGRES_HBA_FILE_SOURCE="POSTGRES_HBA_FILE_CONFIG"
+elif [ -n "$LOCAL_ENV_POSTGRES_HBA_FILE_CONFIG" ]; then
+  POSTGRES_HBA_FILE="$LOCAL_ENV_POSTGRES_HBA_FILE_CONFIG"
+  POSTGRES_HBA_FILE_SOURCE="local .env:POSTGRES_HBA_FILE_CONFIG"
+elif [ -n "$POSTGRES_DATA_DIR" ]; then
+  POSTGRES_HBA_FILE="$POSTGRES_DATA_DIR/pg_hba.conf"
+  POSTGRES_HBA_FILE_SOURCE="POSTGRES_DATA_DIR/pg_hba.conf"
+else
+  POSTGRES_HBA_FILE="$ENV_ROOT_DIR/pg_hba.conf"
+  POSTGRES_HBA_FILE_SOURCE="ENV_ROOT_DIR/pg_hba.conf"
 fi
 
 default_local_state_dir() {
@@ -278,6 +305,28 @@ check_line() {
   fi
 }
 
+hba_has_cidr_rule() {
+  local hba_file="$1"
+  local cidr="$2"
+
+  [ -r "$hba_file" ] || return 1
+  [ -n "$cidr" ] || return 1
+
+  awk -v cidr="$cidr" '
+    /^[[:space:]]*#/ { next }
+    NF == 0 { next }
+    ($1 == "host" || $1 == "hostssl" || $1 == "hostnossl" || $1 == "hostgssenc" || $1 == "hostnogssenc") {
+      for (i = 1; i <= NF; i++) {
+        if ($i == cidr) {
+          found = 1
+          exit
+        }
+      }
+    }
+    END { exit(found ? 0 : 1) }
+  ' "$hba_file"
+}
+
 check_preflight_config() {
   local failed=0
 
@@ -327,6 +376,30 @@ check_preflight_config() {
     fi
   else
     check_line 0 "POSTGRES_DATA_DIR" "未配置" "在 postgresql.conf 配置 data_directory，或在 $LOCAL_ENV_FILE 配置 POSTGRES_DATA_DIR"
+    failed=1
+  fi
+
+  if [ -f "$POSTGRES_HBA_FILE" ]; then
+    if [ -r "$POSTGRES_HBA_FILE" ]; then
+      check_line 1 "pg_hba.conf" "$POSTGRES_HBA_FILE (来源: $POSTGRES_HBA_FILE_SOURCE)" ""
+    else
+      check_line 0 "pg_hba.conf" "存在但不可读: $POSTGRES_HBA_FILE (来源: $POSTGRES_HBA_FILE_SOURCE)" "检查文件权限，确保当前用户可读，例如: chmod 640 '$POSTGRES_HBA_FILE'"
+      failed=1
+    fi
+  else
+    check_line 0 "pg_hba.conf" "未找到: $POSTGRES_HBA_FILE (来源: $POSTGRES_HBA_FILE_SOURCE)" "确认数据目录正确，或在本地 .env 设置 POSTGRES_HBA_FILE_CONFIG 指向正确路径"
+    failed=1
+  fi
+
+  if [ -n "$HBA_REQUIRED_CIDR" ]; then
+    if hba_has_cidr_rule "$POSTGRES_HBA_FILE" "$HBA_REQUIRED_CIDR"; then
+      check_line 1 "pg_hba CIDR 规则" "$HBA_REQUIRED_CIDR (来源: $HBA_REQUIRED_CIDR_SOURCE)" ""
+    else
+      check_line 0 "pg_hba CIDR 规则" "未找到网段规则: $HBA_REQUIRED_CIDR (来源: $HBA_REQUIRED_CIDR_SOURCE)" "在 $POSTGRES_HBA_FILE 添加 host 规则，例如: host all all $HBA_REQUIRED_CIDR scram-sha-256，然后 reload/restart PostgreSQL"
+      failed=1
+    fi
+  else
+    check_line 0 "pg_hba CIDR 规则" "未配置 HBA_REQUIRED_CIDR" "在本地 .env 配置 HBA_REQUIRED_CIDR，例如: 100.64.0.0/10"
     failed=1
   fi
 
@@ -550,7 +623,7 @@ restart_postgres() {
 }
 
 show_help() {
-  echo "用法: ./scripts/start-postgres.sh [start|stop|restart|check|help]"
+  echo "用法: ./scripts/start-postgres.sh [命令]"
   echo ""
   echo "命令:"
   echo "  start    启动 PostgreSQL（默认）"
@@ -558,6 +631,32 @@ show_help() {
   echo "  restart  重启 PostgreSQL"
   echo "  check    检查启动前配置（不启动服务）"
   echo "  help     显示帮助"
+  echo ""
+  echo "配置来源优先级（高 -> 低）:"
+  echo "  1) 脚本目录本地 .env（LOCAL_ENV_FILE，默认: $SCRIPT_DIR/.env）"
+  echo "  2) ENV_ROOT_DIR 下 postgresql.conf（默认: $ENV_ROOT_DIR/postgresql.conf）"
+  echo "  3) 环境变量与默认值"
+  echo ""
+  echo "常用配置项:"
+  echo "  POSTGRES_PORT_CONFIG        覆盖端口"
+  echo "  POSTGRES_HOST_CONFIG        覆盖监听 host（默认 0.0.0.0）"
+  echo "  POSTGRES_CONNECT_HOST       覆盖连接检测 host（默认跟随监听，0.0.0.0 自动归一到 127.0.0.1）"
+  echo "  POSTGRES_HBA_FILE_CONFIG    覆盖 pg_hba.conf 路径"
+  echo "  HBA_REQUIRED_CIDR           check 模式要求存在的网段规则（默认 100.64.0.0/10）"
+  echo "  POSTGRES_BIN_DIR            PostgreSQL 二进制目录"
+  echo "  POSTGRES_DATA_DIR           数据目录"
+  echo "  ENV_ROOT_DIR                外部配置根目录（用于解析 .env / postgresql.conf）"
+  echo ""
+  echo "示例:"
+  echo "  ./scripts/start-postgres.sh"
+  echo "  ./scripts/start-postgres.sh start"
+  echo "  ./scripts/start-postgres.sh stop"
+  echo "  ./scripts/start-postgres.sh restart"
+  echo "  ./scripts/start-postgres.sh check"
+  echo "  POSTGRES_HOST_CONFIG=0.0.0.0 POSTGRES_PORT_CONFIG=15432 ./scripts/start-postgres.sh start"
+  echo ""
+  echo "帮助:"
+  echo "  ./scripts/start-postgres.sh -h"
 }
 
 COMMAND="${1:-start}"
