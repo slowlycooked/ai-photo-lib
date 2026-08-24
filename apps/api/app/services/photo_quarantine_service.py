@@ -29,6 +29,31 @@ class QuarantineMoveResult:
     moved: bool
 
 
+@dataclass(frozen=True)
+class QuarantineBatchItemResult:
+    item_id: int
+    item: Optional[PhotoQuarantineItem] = None
+    error_code: Optional[str] = None
+    message: Optional[str] = None
+
+    @property
+    def succeeded(self) -> bool:
+        return self.item is not None
+
+
+@dataclass(frozen=True)
+class QuarantineBatchResult:
+    results: list[QuarantineBatchItemResult]
+
+    @property
+    def succeeded(self) -> int:
+        return sum(1 for result in self.results if result.succeeded)
+
+    @property
+    def failed(self) -> int:
+        return len(self.results) - self.succeeded
+
+
 class PhotoQuarantineService:
     def __init__(self, db: Session, *, root: Optional[Path] = None) -> None:
         self._db = db
@@ -277,6 +302,45 @@ class PhotoQuarantineService:
         self._db.commit()
         self._db.refresh(item)
         return item
+
+    def batch_action(
+        self,
+        *,
+        project_id: int,
+        item_ids: list[int],
+        action: str,
+    ) -> QuarantineBatchResult:
+        operations = {
+            "KEEP": self.keep,
+            "MOVE": lambda **kwargs: self.move(**kwargs).item,
+            "RESTORE": self.restore,
+        }
+        operation = operations.get(action)
+        if operation is None:
+            raise ValueError(f"Unsupported quarantine batch action: {action}")
+
+        results: list[QuarantineBatchItemResult] = []
+        for item_id in item_ids:
+            try:
+                item = operation(project_id=project_id, item_id=item_id)
+                results.append(QuarantineBatchItemResult(item_id=item_id, item=item))
+            except PhotoQuarantineConflict as exc:
+                results.append(
+                    QuarantineBatchItemResult(
+                        item_id=item_id,
+                        error_code="conflict",
+                        message=str(exc),
+                    )
+                )
+            except PhotoQuarantineError as exc:
+                results.append(
+                    QuarantineBatchItemResult(
+                        item_id=item_id,
+                        error_code="invalid_item",
+                        message=str(exc),
+                    )
+                )
+        return QuarantineBatchResult(results=results)
 
     def _load_item_photo_project(
         self, project_id: int, item_id: int

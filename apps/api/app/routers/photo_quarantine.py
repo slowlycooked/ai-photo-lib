@@ -12,6 +12,9 @@ from ..database import get_db
 from ..models.photo import Photo
 from ..models.project import Project
 from ..schemas.photo_quarantine import (
+    PhotoQuarantineBatchItemResponse,
+    PhotoQuarantineBatchRequest,
+    PhotoQuarantineBatchResponse,
     PhotoQuarantineItemResponse,
     PhotoQuarantineListResponse,
     ProjectPhotoQuarantineSettingsResponse,
@@ -27,6 +30,41 @@ from ..schemas.project_task import ProjectTaskResponse
 from ..services.project_tasks_app_service import ProjectTasksAppService
 
 router = APIRouter(prefix="/projects", tags=["photo-quarantine"])
+
+
+@router.post(
+    "/{project_id}/photo-quarantine/batches",
+    response_model=PhotoQuarantineBatchResponse,
+)
+def run_photo_quarantine_batch(
+    body: PhotoQuarantineBatchRequest,
+    project: Project = Depends(require_project_manager),
+    db: Session = Depends(get_db),
+):
+    result = PhotoQuarantineService(db).batch_action(
+        project_id=project.id,
+        item_ids=body.item_ids,
+        action=body.action,
+    )
+    return PhotoQuarantineBatchResponse(
+        requested=len(result.results),
+        succeeded=result.succeeded,
+        failed=result.failed,
+        results=[
+            PhotoQuarantineBatchItemResponse(
+                item_id=item.item_id,
+                succeeded=item.succeeded,
+                item=(
+                    PhotoQuarantineItemResponse.model_validate(item.item)
+                    if item.item is not None
+                    else None
+                ),
+                error_code=item.error_code,
+                message=item.message,
+            )
+            for item in result.results
+        ],
+    )
 
 
 @router.post(

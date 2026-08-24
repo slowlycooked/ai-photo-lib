@@ -154,3 +154,37 @@ def test_keep_records_human_decision_without_moving_file(quarantine_fixture) -> 
         photo = db.query(Photo).filter(Photo.id == 10).one()
         assert photo.status == "indexed"
         assert photo.deleted_at is None
+
+
+def test_batch_action_reports_partial_success_without_rolling_back(quarantine_fixture) -> None:
+    engine, _library, trash, original, _digest = quarantine_fixture
+    with Session(engine) as db:
+        result = PhotoQuarantineService(db, root=trash).batch_action(
+            project_id=1,
+            item_ids=[100, 999],
+            action="KEEP",
+        )
+
+        assert result.succeeded == 1
+        assert result.failed == 1
+        assert result.results[0].item is not None
+        assert result.results[0].item.status == "kept"
+        assert result.results[1].error_code == "invalid_item"
+        assert original.exists()
+
+
+def test_batch_action_cannot_mutate_another_project_item(quarantine_fixture) -> None:
+    engine, _library, trash, original, _digest = quarantine_fixture
+    with Session(engine) as db:
+        result = PhotoQuarantineService(db, root=trash).batch_action(
+            project_id=2,
+            item_ids=[100],
+            action="KEEP",
+        )
+
+        assert result.succeeded == 0
+        assert result.failed == 1
+        assert result.results[0].error_code == "invalid_item"
+        item = db.query(PhotoQuarantineItem).filter(PhotoQuarantineItem.id == 100).one()
+        assert item.status == "review"
+        assert original.exists()

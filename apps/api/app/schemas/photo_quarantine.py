@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -68,3 +68,29 @@ class PhotoQuarantineItemResponse(BaseModel):
 class PhotoQuarantineListResponse(BaseModel):
     total: int
     items: list[PhotoQuarantineItemResponse]
+
+
+class PhotoQuarantineBatchRequest(BaseModel):
+    action: Literal["KEEP", "MOVE", "RESTORE"]
+    item_ids: list[int] = Field(min_length=1, max_length=100)
+
+    @model_validator(mode="after")
+    def validate_unique_item_ids(self):
+        if len(set(self.item_ids)) != len(self.item_ids):
+            raise ValueError("item_ids must not contain duplicates")
+        return self
+
+
+class PhotoQuarantineBatchItemResponse(BaseModel):
+    item_id: int
+    succeeded: bool
+    item: Optional[PhotoQuarantineItemResponse] = None
+    error_code: Optional[str] = None
+    message: Optional[str] = None
+
+
+class PhotoQuarantineBatchResponse(BaseModel):
+    requested: int
+    succeeded: int
+    failed: int
+    results: list[PhotoQuarantineBatchItemResponse]
