@@ -65,6 +65,7 @@ POSTGRES_DATA_DIR="${POSTGRES_DATA_DIR:-}"
 API_HOST="${API_HOST:-0.0.0.0}"
 API_PORT="${API_PORT:-8000}"
 API_RELOAD="${SVC_RELOAD:-0}"
+API_START_TIMEOUT="${API_START_TIMEOUT:-30}"
 
 WEB_HOST="${WEB_HOST:-0.0.0.0}"
 WEB_PORT="${WEB_PORT:-8088}"
@@ -591,14 +592,23 @@ start_api() {
 
   run_named_process "ai-photo-api" "$py_bin" "${uvicorn_args[@]}" > "$(log_file api)" 2>&1 &
   save_bg_pid api
-  sleep 2
 
-  if is_running api && curl -fsS "http://127.0.0.1:$API_PORT/health" >/dev/null 2>&1; then
-    log_ok "api 已启动 (PID $(cat "$(pid_file api)"), log: logs/api.log)"
-  else
-    log_error "api 启动失败，请查看 logs/api.log"
-    return 1
-  fi
+  local waited=0
+  while is_running api; do
+    if curl -fsS --connect-timeout 1 --max-time 2 "http://127.0.0.1:$API_PORT/health" >/dev/null 2>&1; then
+      log_ok "api 已启动 (PID $(cat "$(pid_file api)"), log: logs/api.log)"
+      return 0
+    fi
+    if [ "$waited" -ge "$API_START_TIMEOUT" ]; then
+      log_error "api 在 ${API_START_TIMEOUT}s 内未就绪，请查看 logs/api.log"
+      return 1
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+
+  log_error "api 进程在启动期间退出，请查看 logs/api.log"
+  return 1
 }
 
 stop_api() {
