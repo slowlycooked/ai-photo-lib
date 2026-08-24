@@ -9,7 +9,11 @@ from sqlalchemy.orm import Session
 
 from ..database import SessionLocal
 from ..models.project_task import ProjectTask
-from .project_task_service import TASK_TYPE_LIBRARY_REINDEX, TASK_TYPE_LIBRARY_SCAN
+from .project_task_service import (
+    TASK_TYPE_LIBRARY_REINDEX,
+    TASK_TYPE_LIBRARY_SCAN,
+    TASK_TYPE_PHOTO_QUARANTINE_ANALYSIS,
+)
 from .search.result_cache import bump_project_search_cache_epoch
 from .task_claim_service import TaskClaimService
 from .project_task_handlers import (
@@ -273,7 +277,11 @@ class ProjectTaskAppService:
         task.locked_at = None
         task.heartbeat_at = None
         task.lease_expires_at = None
-        if task.task_type in (TASK_TYPE_LIBRARY_SCAN, TASK_TYPE_LIBRARY_REINDEX):
+        if task.task_type in (
+            TASK_TYPE_LIBRARY_SCAN,
+            TASK_TYPE_LIBRARY_REINDEX,
+            TASK_TYPE_PHOTO_QUARANTINE_ANALYSIS,
+        ):
             bump_project_search_cache_epoch(
                 self._db,
                 task.project_id,

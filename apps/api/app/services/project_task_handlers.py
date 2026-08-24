@@ -15,6 +15,7 @@ from .project_task_service import (
     TASK_TYPE_FACE_REMATCH_UNKNOWN,
     TASK_TYPE_LIBRARY_REINDEX,
     TASK_TYPE_LIBRARY_SCAN,
+    TASK_TYPE_PHOTO_QUARANTINE_ANALYSIS,
     TASK_TYPE_UNKNOWN_FACE_CLUSTERING,
     build_face_cluster_result_payload,
     build_face_rematch_result_payload,
@@ -22,6 +23,7 @@ from .project_task_service import (
     build_queued_progress_payload,
 )
 from .scanner import reindex_project, scan_project
+from .photo_quarantine_analysis_service import PhotoQuarantineAnalysisService
 from .unknown_face_clustering_service import cluster_unknown_faces
 
 
@@ -150,6 +152,19 @@ class FaceRematchUnknownTaskHandler:
         )
 
 
+class PhotoQuarantineAnalysisTaskHandler:
+    def run(self, task: ProjectTask, context: ProjectTaskRunContext) -> dict:
+        params = dict(task.request_params or {})
+        return PhotoQuarantineAnalysisService(context.db).run_project(
+            project_id=task.project_id,
+            ignore_window=bool(params.get("ignore_window", False)),
+            progress_callback=lambda state: context.persist_progress(
+                task.id,
+                context.with_task_id(state, task.id),
+            ),
+        )
+
+
 def build_default_project_task_handlers() -> dict[str, ProjectTaskHandler]:
     return {
         TASK_TYPE_LIBRARY_SCAN: LibraryScanTaskHandler(),
@@ -157,6 +172,7 @@ def build_default_project_task_handlers() -> dict[str, ProjectTaskHandler]:
         TASK_TYPE_UNKNOWN_FACE_CLUSTERING: UnknownFaceClusteringTaskHandler(),
         TASK_TYPE_FACE_SCAN_PROJECT: FaceScanProjectTaskHandler(),
         TASK_TYPE_FACE_REMATCH_UNKNOWN: FaceRematchUnknownTaskHandler(),
+        TASK_TYPE_PHOTO_QUARANTINE_ANALYSIS: PhotoQuarantineAnalysisTaskHandler(),
     }
 
 

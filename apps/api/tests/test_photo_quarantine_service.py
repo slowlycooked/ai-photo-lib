@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.database import Base
 from app.models.photo import Photo
+from app.models.folder import ProjectFolder
 from app.models.photo_quarantine import PhotoQuarantineItem
 from app.models.project import Project
 from app.services.photo_quarantine_service import (
@@ -20,9 +21,15 @@ from app.services.photo_quarantine_service import (
 @pytest.fixture()
 def quarantine_fixture(tmp_path: Path):
     engine = create_engine("sqlite:///:memory:")
+    with engine.begin() as connection:
+        connection.exec_driver_sql("CREATE TABLE project_folders (id INTEGER PRIMARY KEY)")
     Base.metadata.create_all(
         engine,
-        tables=[Project.__table__, Photo.__table__, PhotoQuarantineItem.__table__],
+        tables=[
+            Project.__table__,
+            Photo.__table__,
+            PhotoQuarantineItem.__table__,
+        ],
     )
     library = tmp_path / "library"
     trash = tmp_path / "tobetrash"

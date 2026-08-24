@@ -17,6 +17,7 @@ TASK_TYPE_LIBRARY_REINDEX = "library_reindex"
 TASK_TYPE_UNKNOWN_FACE_CLUSTERING = "unknown_face_clustering"
 TASK_TYPE_FACE_SCAN_PROJECT = "face_scan_project"
 TASK_TYPE_FACE_REMATCH_UNKNOWN = "face_rematch_unknown"
+TASK_TYPE_PHOTO_QUARANTINE_ANALYSIS = "photo_quarantine_analysis"
 
 SCAN_TASK_TYPES: tuple[str, ...] = (
     TASK_TYPE_LIBRARY_SCAN,
@@ -25,6 +26,7 @@ SCAN_TASK_TYPES: tuple[str, ...] = (
 FACE_CLUSTER_TASK_TYPES: tuple[str, ...] = (TASK_TYPE_UNKNOWN_FACE_CLUSTERING,)
 FACE_SCAN_TASK_TYPES: tuple[str, ...] = (TASK_TYPE_FACE_SCAN_PROJECT,)
 FACE_REMATCH_TASK_TYPES: tuple[str, ...] = (TASK_TYPE_FACE_REMATCH_UNKNOWN,)
+PHOTO_QUARANTINE_TASK_TYPES: tuple[str, ...] = (TASK_TYPE_PHOTO_QUARANTINE_ANALYSIS,)
 ACTIVE_TASK_STATUSES: tuple[str, ...] = ("queued", "running", "paused")
 
 
@@ -106,6 +108,10 @@ def get_active_face_rematch_task(db: Session, project_id: int) -> Optional[Proje
 
 def get_latest_face_rematch_task(db: Session, project_id: int) -> Optional[ProjectTask]:
     return _get_latest_project_task(db, project_id, FACE_REMATCH_TASK_TYPES)
+
+
+def get_active_photo_quarantine_task(db: Session, project_id: int) -> Optional[ProjectTask]:
+    return _get_active_project_task(db, project_id, PHOTO_QUARANTINE_TASK_TYPES)
 
 
 def _get_active_project_task(
@@ -216,6 +222,22 @@ def enqueue_face_rematch_unknown_task(
         task_type=TASK_TYPE_FACE_REMATCH_UNKNOWN,
         active_task_types=FACE_REMATCH_TASK_TYPES,
         request_params=request_params,
+    )
+
+
+def enqueue_photo_quarantine_task(
+    db: Session,
+    *,
+    project_id: int,
+    trigger: str = "schedule",
+    ignore_window: bool = False,
+) -> EnqueueProjectTaskResult:
+    return enqueue_unique_project_task(
+        db,
+        project_id=project_id,
+        task_type=TASK_TYPE_PHOTO_QUARANTINE_ANALYSIS,
+        active_task_types=PHOTO_QUARANTINE_TASK_TYPES,
+        request_params={"trigger": trigger, "ignore_window": ignore_window},
     )
 
 
@@ -768,6 +790,20 @@ def empty_project_task_state(
             start_time=(str(params.get("start_time")) if params.get("start_time") else None),
             end_time=(str(params.get("end_time")) if params.get("end_time") else None),
         )
+    if task_type == TASK_TYPE_PHOTO_QUARANTINE_ANALYSIS:
+        return {
+            "project_id": project_id,
+            "task_id": None,
+            "running": False,
+            "analyzed": 0,
+            "kept": 0,
+            "review": 0,
+            "quarantined": 0,
+            "errors": 0,
+            "window_closed": False,
+            "recent_errors": [],
+            "message": "idle",
+        }
     return empty_scan_state()
 
 
@@ -785,6 +821,8 @@ def _default_running_message(task_type: str, request_params: Optional[dict]) -> 
         max_faces = int((request_params or {}).get("max_faces") or 1000)
         scope = str((request_params or {}).get("scope") or "unknown")
         return f"rematching faces (scope={scope}, max_faces={max_faces})"
+    if task_type == TASK_TYPE_PHOTO_QUARANTINE_ANALYSIS:
+        return "analyzing photo quarantine candidates"
     return "scanning"
 
 

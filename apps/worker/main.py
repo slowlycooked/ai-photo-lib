@@ -51,6 +51,7 @@ from app.services.aijob_app_service import AIJobAppService
 from app.services.project_task_app_service import ProjectTaskAppService
 from app.services.embedding_client import close_all as close_all_embedding_clients
 from app.services.face_auto_rematch_scheduler import FaceAutoRematchScheduler
+from app.services.photo_quarantine_scheduler import PhotoQuarantineScheduler
 from app.services.runtime_settings_service import (
     RuntimeSettingsService,
     RuntimeSettingsStorageUnavailableError,
@@ -77,6 +78,7 @@ _last_debug_matrix: Optional[dict] = None
 _RECOVERY_SCAN_INTERVAL = 30
 _last_recovery_scan: float = 0.0
 _last_auto_rematch_scan: float = 0.0
+_last_photo_quarantine_schedule_scan: float = 0.0
 
 
 def _handle_signal(signum, frame):
@@ -206,6 +208,28 @@ def _maybe_schedule_auto_face_rematch(db) -> None:
         )
 
 
+def _maybe_schedule_photo_quarantine(db) -> None:
+    global _last_photo_quarantine_schedule_scan
+    interval = max(
+        30,
+        int(settings.photo_quarantine_scheduler_check_interval_seconds or 60),
+    )
+    now = time.monotonic()
+    if now - _last_photo_quarantine_schedule_scan < interval:
+        return
+    _last_photo_quarantine_schedule_scan = now
+    result = PhotoQuarantineScheduler(db).run_once()
+    if result.projects_checked:
+        logger.info(
+            "photo_quarantine_schedule_checked projects=%d created=%d reused=%d outside_window=%d skipped_today=%d",
+            result.projects_checked,
+            result.tasks_created,
+            result.tasks_reused,
+            result.skipped_outside_window,
+            result.skipped_today,
+        )
+
+
 def run() -> None:
     global _last_recovery_scan
 
@@ -251,6 +275,7 @@ def run() -> None:
                                     recovered["ai_jobs"],
                                 )
                         _maybe_schedule_auto_face_rematch(db)
+                        _maybe_schedule_photo_quarantine(db)
 
                         for _ in range(available_slots):
                             claimed = claim_service.claim_next()

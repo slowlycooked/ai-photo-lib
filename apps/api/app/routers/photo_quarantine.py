@@ -21,8 +21,28 @@ from ..services.photo_quarantine_service import (
     PhotoQuarantineError,
     PhotoQuarantineService,
 )
+from ..services.project_task_service import enqueue_photo_quarantine_task
+from ..schemas.project_task import ProjectTaskResponse
+from ..services.project_tasks_app_service import ProjectTasksAppService
 
 router = APIRouter(prefix="/projects", tags=["photo-quarantine"])
+
+
+@router.post(
+    "/{project_id}/photo-quarantine/runs",
+    response_model=ProjectTaskResponse,
+)
+def start_photo_quarantine_run(
+    project: Project = Depends(require_project_manager),
+    db: Session = Depends(get_db),
+):
+    result = enqueue_photo_quarantine_task(
+        db,
+        project_id=project.id,
+        trigger="manual",
+        ignore_window=True,
+    )
+    return ProjectTasksAppService(db).get_task(project.id, result.task.id)
 
 
 @router.get(

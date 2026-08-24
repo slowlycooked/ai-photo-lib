@@ -66,6 +66,17 @@ class ProjectTask(Base):
                 "task_type = 'face_rematch_unknown' AND status IN ('queued', 'running')"
             ),
         ),
+        sa.Index(
+            "uq_project_tasks_one_active_photo_quarantine",
+            "project_id",
+            unique=True,
+            sqlite_where=sa.text(
+                "task_type = 'photo_quarantine_analysis' AND status IN ('queued', 'running')"
+            ),
+            postgresql_where=sa.text(
+                "task_type = 'photo_quarantine_analysis' AND status IN ('queued', 'running')"
+            ),
+        ),
     )
 
     id: Mapped[int] = mapped_column(_TASK_ID_TYPE, primary_key=True, autoincrement=True)
