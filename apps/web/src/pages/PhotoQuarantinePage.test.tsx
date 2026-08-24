@@ -9,6 +9,8 @@ import { PhotoQuarantinePage } from "@/pages/PhotoQuarantinePage";
 const getSettingsMock = vi.fn();
 const listMock = vi.fn();
 const restoreMock = vi.fn();
+const batchMock = vi.fn();
+const taskListMock = vi.fn();
 const setCurrentProjectIdMock = vi.fn();
 
 vi.mock("@/api", async () => {
@@ -22,6 +24,11 @@ vi.mock("@/api", async () => {
         getSettings: (...args: unknown[]) => getSettingsMock(...args),
         list: (...args: unknown[]) => listMock(...args),
         restore: (...args: unknown[]) => restoreMock(...args),
+        batch: (...args: unknown[]) => batchMock(...args),
+      },
+      projectTasks: {
+        ...actual.api.projectTasks,
+        list: (...args: unknown[]) => taskListMock(...args),
       },
     },
   };
@@ -95,6 +102,8 @@ describe("PhotoQuarantinePage", () => {
     });
     listMock.mockResolvedValue({ total: 1, items: [item] });
     restoreMock.mockResolvedValue({ ...item, status: "restored" });
+    batchMock.mockResolvedValue({ requested: 1, succeeded: 1, failed: 0, results: [] });
+    taskListMock.mockResolvedValue({ total: 0, items: [] });
   });
 
   it("shows the recoverability guarantee and restores an item", async () => {
@@ -107,5 +116,47 @@ describe("PhotoQuarantinePage", () => {
 
     await waitFor(() => expect(restoreMock).toHaveBeenCalledWith(1, 7));
     expect(await screen.findByText("照片已安全放回原位置")).toBeInTheDocument();
+  });
+
+  it("uses the server batch endpoint for selected restores", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByRole("checkbox", { name: "选择审核项" }));
+    await user.click(screen.getByRole("button", { name: "批量放回（1）" }));
+
+    await waitFor(() => expect(batchMock).toHaveBeenCalledWith(1, "RESTORE", [7]));
+    expect(await screen.findByText("已放回 1 张")).toBeInTheDocument();
+  });
+
+  it("requests the next server page instead of loading every item", async () => {
+    const user = userEvent.setup();
+    listMock.mockImplementation((_projectId, _status, _limit, offset) =>
+      Promise.resolve({ total: 25, items: offset === 0 ? [item] : [] }),
+    );
+    renderPage();
+
+    await user.click(await screen.findByRole("button", { name: "下一页" }));
+
+    await waitFor(() => expect(listMock).toHaveBeenCalledWith(1, expect.any(String), 24, 24));
+    expect(await screen.findByText("第 2 / 2 页")).toBeInTheDocument();
+  });
+
+  it("shows progress from the latest quarantine task", async () => {
+    taskListMock.mockResolvedValue({
+      total: 1,
+      items: [{
+        id: 88,
+        project_id: 1,
+        task_type: "photo_quarantine_analysis",
+        status: "running",
+        progress_payload: { analyzed: 12, review: 3 },
+        result_payload: null,
+        error_message: null,
+      }],
+    });
+    renderPage();
+
+    expect(await screen.findByText(/最近分析任务：running · 已分析 12 张 · 待审核 3 张/)).toBeInTheDocument();
   });
 });

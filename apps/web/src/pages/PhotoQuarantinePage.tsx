@@ -15,6 +15,7 @@ import { canManageProjects } from "@/lib/permissions";
 
 const REVIEW_STATUSES = "review,quarantined,restore_conflict,restore_failed,move_failed,analysis_failed";
 const RESTORABLE_STATUSES = new Set(["quarantined", "restore_conflict", "restore_failed"]);
+const PAGE_SIZE = 24;
 
 const STATUS_OPTIONS = [
   { value: REVIEW_STATUSES, label: "待处理" },
@@ -62,6 +63,7 @@ export function PhotoQuarantinePage() {
   const projectExists = selectedProjectId != null && projects.some((project) => project.id === selectedProjectId);
   const canManage = canManageProjects(auth.session);
   const [statusFilter, setStatusFilter] = useState<string>(REVIEW_STATUSES);
+  const [page, setPage] = useState(0);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [form, setForm] = useState<ProjectPhotoQuarantineSettingsUpdate | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -78,10 +80,22 @@ export function PhotoQuarantinePage() {
     enabled: projectExists,
   });
   const itemsQuery = useQuery({
-    queryKey: queryKeys.photoQuarantineItems(selectedProjectId, statusFilter),
-    queryFn: () => api.photoQuarantine.list(selectedProjectId!, statusFilter),
+    queryKey: queryKeys.photoQuarantineItems(selectedProjectId, statusFilter, page * PAGE_SIZE),
+    queryFn: () => api.photoQuarantine.list(selectedProjectId!, statusFilter, PAGE_SIZE, page * PAGE_SIZE),
     enabled: projectExists,
     refetchInterval: 30_000,
+  });
+  const taskQuery = useQuery({
+    queryKey: ["photo-quarantine-latest-task", selectedProjectId],
+    queryFn: () => api.projectTasks.list(selectedProjectId!, {
+      task_type: "photo_quarantine_analysis",
+      limit: 1,
+    }),
+    enabled: projectExists,
+    refetchInterval: (query) => {
+      const task = query.state.data?.items[0];
+      return task && (task.status === "queued" || task.status === "running") ? 3_000 : 15_000;
+    },
   });
 
   useEffect(() => {
@@ -98,7 +112,10 @@ export function PhotoQuarantinePage() {
     });
   }, [settingsQuery.data]);
 
-  useEffect(() => setSelectedIds(new Set()), [statusFilter, selectedProjectId]);
+  useEffect(() => {
+    setPage(0);
+    setSelectedIds(new Set());
+  }, [statusFilter, selectedProjectId]);
 
   const refreshItems = () => {
     queryClient.invalidateQueries({ queryKey: ["photo-quarantine-items", selectedProjectId] });
@@ -118,6 +135,7 @@ export function PhotoQuarantinePage() {
     onSuccess: () => {
       setMessage("分析任务已进入队列，可在任务页查看进度");
       queryClient.invalidateQueries({ queryKey: queryKeys.projectTasks(selectedProjectId) });
+      queryClient.invalidateQueries({ queryKey: ["photo-quarantine-latest-task", selectedProjectId] });
     },
     onError: (error: Error) => setMessage(`启动失败：${error.message}`),
   });
@@ -134,21 +152,16 @@ export function PhotoQuarantinePage() {
     },
     onError: (error: Error) => setMessage(`操作失败：${error.message}`),
   });
-  const bulkRestoreMutation = useMutation({
-    mutationFn: async (ids: number[]) => {
-      const results = await Promise.allSettled(
-        ids.map((id) => api.photoQuarantine.restore(selectedProjectId!, id)),
-      );
-      return {
-        restored: results.filter((result) => result.status === "fulfilled").length,
-        failed: results.filter((result) => result.status === "rejected").length,
-      };
-    },
-    onSuccess: ({ restored, failed }) => {
-      setMessage(`已放回 ${restored} 张${failed ? `，${failed} 张失败，请逐项检查` : ""}`);
+  const batchMutation = useMutation({
+    mutationFn: ({ action, ids }: { action: "KEEP" | "RESTORE"; ids: number[] }) =>
+      api.photoQuarantine.batch(selectedProjectId!, action, ids),
+    onSuccess: (result, variables) => {
+      const verb = variables.action === "RESTORE" ? "放回" : "保留";
+      setMessage(`已${verb} ${result.succeeded} 张${result.failed ? `，${result.failed} 张失败，请逐项检查` : ""}`);
       setSelectedIds(new Set());
       refreshItems();
     },
+    onError: (error: Error) => setMessage(`批量操作失败：${error.message}`),
   });
 
   const items = itemsQuery.data?.items ?? [];
@@ -156,6 +169,12 @@ export function PhotoQuarantinePage() {
     () => items.filter((item) => selectedIds.has(item.id) && RESTORABLE_STATUSES.has(item.status)),
     [items, selectedIds],
   );
+  const reviewSelected = useMemo(
+    () => items.filter((item) => selectedIds.has(item.id) && item.status === "review"),
+    [items, selectedIds],
+  );
+  const latestTask = taskQuery.data?.items[0];
+  const taskProgress = latestTask?.progress_payload ?? latestTask?.result_payload;
 
   if (selectedProjectId == null) {
     return <main className="max-w-6xl mx-auto px-6 py-8 text-mute">请先选择一个项目。</main>;
@@ -187,6 +206,14 @@ export function PhotoQuarantinePage() {
       </div>
 
       {message && <div className="rounded-md border border-hairline bg-canvas px-4 py-3 text-body-sm text-ink">{message}</div>}
+      {latestTask && (
+        <div className="rounded-md border border-hairline bg-canvas px-4 py-3 text-body-sm text-mute">
+          最近分析任务：{latestTask.status}
+          {typeof taskProgress?.analyzed === "number" ? ` · 已分析 ${taskProgress.analyzed} 张` : ""}
+          {typeof taskProgress?.review === "number" ? ` · 待审核 ${taskProgress.review} 张` : ""}
+          {latestTask.error_message ? ` · ${latestTask.error_message}` : ""}
+        </div>
+      )}
 
       <section className="rounded-lg border border-hairline bg-canvas p-5 space-y-4">
         <div className="flex items-center gap-2">
@@ -233,11 +260,10 @@ export function PhotoQuarantinePage() {
             <span className="text-caption-sm text-mute">共 {itemsQuery.data?.total ?? 0} 项</span>
             <button type="button" onClick={() => itemsQuery.refetch()} className="text-mute hover:text-ink" aria-label="刷新"><RefreshCw className="w-4 h-4" /></button>
           </div>
-          {canManage && restorableSelected.length > 0 && (
-            <button type="button" onClick={() => bulkRestoreMutation.mutate(restorableSelected.map((item) => item.id))} disabled={bulkRestoreMutation.isPending} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-hairline text-btn-sm font-bold hover:bg-surface-card disabled:opacity-50">
-              <ArchiveRestore className="w-4 h-4" />批量放回（{restorableSelected.length}）
-            </button>
-          )}
+          <div className="flex flex-wrap gap-2">
+            {canManage && reviewSelected.length > 0 && <button type="button" onClick={() => batchMutation.mutate({ action: "KEEP", ids: reviewSelected.map((item) => item.id) })} disabled={batchMutation.isPending} className="px-3 py-2 rounded-md border border-hairline text-btn-sm font-bold hover:bg-surface-card disabled:opacity-50">批量保留（{reviewSelected.length}）</button>}
+            {canManage && restorableSelected.length > 0 && <button type="button" onClick={() => batchMutation.mutate({ action: "RESTORE", ids: restorableSelected.map((item) => item.id) })} disabled={batchMutation.isPending} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-hairline text-btn-sm font-bold hover:bg-surface-card disabled:opacity-50"><ArchiveRestore className="w-4 h-4" />批量放回（{restorableSelected.length}）</button>}
+          </div>
         </div>
 
         {itemsQuery.isLoading ? (
@@ -250,7 +276,7 @@ export function PhotoQuarantinePage() {
               <article key={item.id} className="overflow-hidden rounded-lg border border-hairline bg-canvas">
                 <div className="relative aspect-video bg-surface-card">
                   <img src={`${BASE}/projects/${selectedProjectId}/photo-quarantine/items/${item.id}/thumbnail`} alt="待删除候选图片" className="h-full w-full object-contain" loading="lazy" />
-                  {canManage && RESTORABLE_STATUSES.has(item.status) && <input type="checkbox" className="absolute top-3 left-3 w-4 h-4" aria-label="选择放回" checked={selectedIds.has(item.id)} onChange={(event) => setSelectedIds((current) => { const next = new Set(current); event.target.checked ? next.add(item.id) : next.delete(item.id); return next; })} />}
+                  {canManage && (item.status === "review" || RESTORABLE_STATUSES.has(item.status)) && <input type="checkbox" className="absolute top-3 left-3 w-4 h-4" aria-label="选择审核项" checked={selectedIds.has(item.id)} onChange={(event) => setSelectedIds((current) => { const next = new Set(current); event.target.checked ? next.add(item.id) : next.delete(item.id); return next; })} />}
                   <span className="absolute top-2 right-2 rounded-full bg-black/70 px-2 py-1 text-[11px] text-white">{STATUS_LABELS[item.status] ?? item.status}</span>
                 </div>
                 <div className="p-4 space-y-3">
@@ -273,6 +299,13 @@ export function PhotoQuarantinePage() {
                 </div>
               </article>
             ))}
+          </div>
+        )}
+        {(itemsQuery.data?.total ?? 0) > PAGE_SIZE && (
+          <div className="flex items-center justify-center gap-3">
+            <button type="button" onClick={() => setPage((value) => Math.max(0, value - 1))} disabled={page === 0} className="px-3 py-1.5 rounded-md border border-hairline text-btn-sm disabled:opacity-40">上一页</button>
+            <span className="text-caption-sm text-mute">第 {page + 1} / {Math.ceil((itemsQuery.data?.total ?? 0) / PAGE_SIZE)} 页</span>
+            <button type="button" onClick={() => setPage((value) => value + 1)} disabled={(page + 1) * PAGE_SIZE >= (itemsQuery.data?.total ?? 0)} className="px-3 py-1.5 rounded-md border border-hairline text-btn-sm disabled:opacity-40">下一页</button>
           </div>
         )}
       </section>
