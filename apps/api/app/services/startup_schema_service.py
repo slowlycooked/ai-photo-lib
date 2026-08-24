@@ -35,6 +35,8 @@ REQUIRED_TABLES: tuple[str, ...] = (
     "person_cannot_links",
     "photo_derivatives",
     "project_tasks",
+    "project_photo_quarantine_settings",
+    "photo_quarantine_items",
 )
 
 REQUIRED_COLUMNS: dict[str, tuple[str, ...]] = {
@@ -67,6 +69,9 @@ REQUIRED_INDEXES: dict[str, tuple[str, ...]] = {
         "uq_project_tasks_one_active_face_cluster",
         "uq_project_tasks_one_active_face_scan",
         "uq_project_tasks_one_active_face_rematch",
+    ),
+    "photo_quarantine_items": (
+        "ix_photo_quarantine_items_project_status_created",
     ),
 }
 

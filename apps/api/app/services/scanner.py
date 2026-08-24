@@ -690,6 +690,7 @@ def scan_project(
         return _snapshot_state(state)
 
     thumb_root = Path(thumb_path).resolve()
+    quarantine_root = Path(settings.photo_quarantine_root).expanduser().resolve()
     if not _is_writable_directory(thumb_root):
         state.update(running=False, message=f"Thumbnail path is not writable: {thumb_root}", errors=1)
         _push_scan_error(state, f"Thumbnail path is not writable: {thumb_root}")
@@ -753,6 +754,11 @@ def scan_project(
                 continue
             try:
                 entry.resolve().relative_to(thumb_root)
+                continue
+            except ValueError:
+                pass
+            try:
+                entry.resolve().relative_to(quarantine_root)
                 continue
             except ValueError:
                 pass

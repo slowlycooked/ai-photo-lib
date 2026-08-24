@@ -9,6 +9,8 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from ..database import Base
 
+_ID_TYPE = BigInteger().with_variant(Integer, "sqlite")
+
 
 class ProjectPhotoQuarantineSettings(Base):
     __tablename__ = "project_photo_quarantine_settings"
@@ -16,9 +18,9 @@ class ProjectPhotoQuarantineSettings(Base):
         sa.UniqueConstraint("project_id", name="uq_project_photo_quarantine_settings_project"),
     )
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(_ID_TYPE, primary_key=True, autoincrement=True)
     project_id: Mapped[int] = mapped_column(
-        BigInteger,
+        _ID_TYPE,
         ForeignKey("projects.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
@@ -56,15 +58,15 @@ class PhotoQuarantineItem(Base):
         ),
     )
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(_ID_TYPE, primary_key=True, autoincrement=True)
     project_id: Mapped[int] = mapped_column(
-        BigInteger,
+        _ID_TYPE,
         ForeignKey("projects.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
     photo_id: Mapped[int] = mapped_column(
-        BigInteger,
+        _ID_TYPE,
         ForeignKey("photos.id", ondelete="CASCADE"),
         nullable=False,
         index=True,

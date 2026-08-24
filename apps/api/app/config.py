@@ -107,6 +107,8 @@ class Settings(BaseSettings):
     scan_queue_max_size: int = 200
     scan_db_write_batch_size: int = 20
     scan_task_retry_limit: int = 3
+    photo_quarantine_root: str = "/Users/martinclaw/nas/ai-photo-data/tobetrash"
+    photo_quarantine_scheduler_check_interval_seconds: int = 60
     # Path prefix for model files used in .env variable expansion by svc.sh; not read by the API.
     ai_photo_lib_model_root: str = ""
     # Comma-separated list of allowed CORS origins.

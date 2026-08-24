@@ -34,6 +34,7 @@ class ProjectPhotosQueryService:
         base_query = self.db.query(Photo).filter(
             Photo.project_id == project_id,
             Photo.deleted_at.is_(None),
+            Photo.status != "quarantined",
         )
         if date_from is not None:
             base_query = base_query.filter(
@@ -75,6 +76,7 @@ class ProjectPhotosQueryService:
         base_query = self.db.query(Photo).filter(
             Photo.project_id == project_id,
             Photo.deleted_at.is_(None),
+            Photo.status != "quarantined",
             Photo.taken_at.is_not(None),
         )
         if folder_id is not None:

@@ -32,6 +32,7 @@ class PhotoRepository:
                 Photo.id == photo_id,
                 Photo.project_id == project_id,
                 Photo.deleted_at.is_(None),
+                Photo.status != "quarantined",
             )
             .first()
         )
@@ -54,6 +55,7 @@ class PhotoRepository:
         q = self._db.query(Photo).filter(
             Photo.project_id == project_id,
             Photo.deleted_at.is_(None),
+            Photo.status != "quarantined",
         )
         if date_from is not None:
             q = q.filter(Photo.taken_at >= datetime.combine(date_from, time_.min))
@@ -81,6 +83,7 @@ class PhotoRepository:
             .filter(
                 Photo.project_id == project_id,
                 Photo.deleted_at.is_(None),
+                Photo.status != "quarantined",
                 Photo.id.not_in(active_photo_ids_subquery),
                 Photo.id.not_in(analyzed_photo_ids_subquery),
             )
@@ -99,6 +102,7 @@ class PhotoRepository:
         query = self._db.query(Photo).filter(
             Photo.project_id == project_id,
             Photo.deleted_at.is_(None),
+            Photo.status != "quarantined",
             Photo.id.not_in(active_photo_ids_subquery),
         )
 
@@ -146,6 +150,7 @@ class PhotoRepository:
             .filter(
                 Photo.project_id == project_id,
                 Photo.deleted_at.is_(None),
+                Photo.status != "quarantined",
             )
             .scalar()
             or 0

@@ -162,7 +162,11 @@ def cleanup_missing_project_photos(
 
     photos = (
         db.query(Photo)
-        .filter(Photo.project_id == project_id, Photo.deleted_at.is_(None))
+        .filter(
+            Photo.project_id == project_id,
+            Photo.deleted_at.is_(None),
+            Photo.status != "quarantined",
+        )
         .all()
     )
 

@@ -52,6 +52,7 @@ from .routers import (
     project_face_settings,
     project_faces,
     project_people,
+    photo_quarantine,
 )
 from .schemas.debug_config import build_default_debug_config
 from .services.auth_service import (
@@ -280,3 +281,4 @@ app.include_router(project_tasks.router)
 app.include_router(project_face_settings.router)
 app.include_router(project_faces.router)
 app.include_router(project_people.router)
+app.include_router(photo_quarantine.router)
