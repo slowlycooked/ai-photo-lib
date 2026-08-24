@@ -184,6 +184,11 @@ People Recognition 已经从“只读调试阶段”进入“人工纠错闭环�
 | llama-server | 视觉模型服务 | `8082` | 本地进程 |
 | llama embedding | 向量模型服务 | `8083` | 本地进程 |
 
+视觉模型也可使用外部 Ollama 服务。设置 `AI_VISION_RUNTIME=ollama`、
+`OPENAI_BASE_URL=http://127.0.0.1:11434/v1` 和对应的视觉模型名后，
+`svc.sh` 会检查 Ollama 是否在线，不会再启动或停止项目内的视觉 llama-server。
+27B 视觉模型建议先将 `AI_WORKER_CONCURRENCY` 设为 `1`。
+
 ## Mobile Web（手机端）
 
 手机端作为独立应用位于 `apps/mobile-web`，能力边界为只读浏览：

@@ -86,6 +86,7 @@ LLAMA_CTX="${LLAMA_CTX:-8192}"
 LLAMA_CACHE_RAM="${LLAMA_CACHE_RAM:-0}"
 LLAMA_MEDIA_PATH="${LLAMA_MEDIA_PATH:-${PHOTO_LIBRARY_PATH:-}}"
 LLAMA_STOP_TIMEOUT="${LLAMA_STOP_TIMEOUT:-15}"
+AI_VISION_RUNTIME="${AI_VISION_RUNTIME:-llama-server}"
 
 QUERY_PLANNER_SERVER="${QUERY_PLANNER_SERVER:-${LLAMA_SERVER:-}}"
 QUERY_PLANNER_MODEL="${QUERY_PLANNER_MODEL:-}"
@@ -775,6 +776,18 @@ stop_worker() {
 }
 
 start_ai() {
+  if [ "$AI_VISION_RUNTIME" = "ollama" ]; then
+    local models_url="${OPENAI_BASE_URL%/}/models"
+    local http_code=""
+    http_code="$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 2 --max-time 4 "$models_url" 2>/dev/null || true)"
+    if [ "$http_code" = "200" ]; then
+      log_ok "Ollama 视觉服务在线 (${OPENAI_BASE_URL})"
+      return 0
+    fi
+    log_error "Ollama 视觉服务不可用 (${OPENAI_BASE_URL})，请先启动 ollama serve"
+    return 1
+  fi
+
   if is_running ai; then
     log_ok "llama-server 已在运行 (PID $(cat "$(pid_file ai)"), port $LLAMA_PORT)"
     return 0
@@ -819,6 +832,11 @@ start_ai() {
 }
 
 stop_ai() {
+  if [ "$AI_VISION_RUNTIME" = "ollama" ]; then
+    log_warn "Ollama 由外部服务管理，svc.sh 不执行停止操作"
+    return 0
+  fi
+
   if is_running ai; then
     local pid
     pid="$(cat "$(pid_file ai)")"
@@ -1059,7 +1077,11 @@ show_status() {
   status_process "mobile-web" "MobileWeb" "$MOBILE_PORT"
   status_process "worker" "Worker" "-"
   status_process "planner" "llm-plan" "$QUERY_PLANNER_PORT"
-  status_process "ai" "llama-srv" "$LLAMA_PORT"
+  if [ "$AI_VISION_RUNTIME" = "ollama" ]; then
+    printf "  ${YELLOW}%-10s${RESET} ${YELLOW}external${RESET} provider=ollama\n" "Vision"
+  else
+    status_process "ai" "llama-srv" "$LLAMA_PORT"
+  fi
   status_ai
   status_process "embed" "llama-emb" "$EMBED_PORT"
   status_embed
@@ -1252,7 +1274,7 @@ case "$COMMAND" in
     echo -e "${BOLD}服务名:${RESET}"
     echo "  postgres  — PostgreSQL 状态检查（不执行启动/停止）"
     echo "  planner   — Query Planner llama-server（Qwen3-4B-Instruct）"
-    echo "  ai        — llama-server"
+    echo "  ai        — 视觉模型服务（llama-server；Ollama 模式仅检查外部服务）"
     echo "  embed     — llama embedding server"
     echo "  api       — FastAPI / uvicorn"
     echo "  worker    — AI Worker"

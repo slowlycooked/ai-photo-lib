@@ -86,6 +86,7 @@ class Settings(BaseSettings):
     openai_base_url: str
     openai_model: str
     openai_vision_model: str
+    ai_vision_runtime: str = "llama-server"
 
     # ── The actual host-side path that is volume-mounted to photo_library_path ───
     # Defaults to photo_library_path when not explicitly set (local dev).
