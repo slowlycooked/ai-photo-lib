@@ -88,7 +88,10 @@ def start_photo_quarantine_run(
         trigger="manual",
         ignore_window=True,
     )
-    return ProjectTasksAppService(db).get_task(project.id, result.task.id)
+    return ProjectTasksAppService(db).get_task(
+        project_id=project.id,
+        task_id=result.task.id,
+    )
 
 
 @router.get(

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
@@ -164,3 +166,46 @@ def test_calibration_csv_has_auditable_header(monkeypatch) -> None:
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/csv")
     assert response.text.startswith("item_id,photo_id,classification,model_decision")
+
+
+def test_start_run_reads_enqueued_task_with_keyword_scope(monkeypatch) -> None:
+    class _FakeTaskService:
+        def __init__(self, _db) -> None:
+            pass
+
+        def get_task(self, *, project_id: int, task_id: int):
+            assert project_id == 1
+            assert task_id == 88
+            return {
+                "id": 88,
+                "project_id": 1,
+                "task_type": "photo_quarantine_analysis",
+                "status": "queued",
+                "retry_count": 0,
+                "request_params": {"trigger": "manual"},
+                "progress_payload": None,
+                "result_payload": None,
+                "error_message": None,
+                "created_at": "2026-08-24T21:00:00Z",
+                "updated_at": "2026-08-24T21:00:00Z",
+                "started_at": None,
+                "finished_at": None,
+            }
+
+    monkeypatch.setattr(
+        quarantine_router,
+        "enqueue_photo_quarantine_task",
+        lambda *_args, **_kwargs: SimpleNamespace(task=SimpleNamespace(id=88)),
+    )
+    monkeypatch.setattr(
+        quarantine_router,
+        "ProjectTasksAppService",
+        _FakeTaskService,
+    )
+
+    response = _build_client(monkeypatch).post(
+        "/api/projects/1/photo-quarantine/runs"
+    )
+
+    assert response.status_code == 200
+    assert response.json()["id"] == 88
