@@ -67,6 +67,14 @@ def _extract_message_text(message: dict[str, Any]) -> str:
     return ""
 
 
+def _thinking_control_payload(provider: str | None) -> dict[str, Any]:
+    """Return backend-specific controls that keep JSON analysis non-thinking."""
+    normalized = (provider or "").strip().lower()
+    if normalized == "ollama":
+        return {"reasoning_effort": "none"}
+    return {"chat_template_kwargs": {"enable_thinking": False}}
+
+
 def _send_chat_completion(
     *,
     url: str,
@@ -116,6 +124,7 @@ def _normalize_chat_url(endpoint_url: str) -> str:
 def analyze_image(
     image_path: str,
     *,
+    provider: str | None = None,
     endpoint_url: str | None = None,
     model_name: str | None = None,
     prompt_text: str | None = None,
@@ -204,12 +213,9 @@ def analyze_image(
         "top_p": top_p if top_p is not None else 0.8,
         # Most OpenAI-compatible servers honor this and suppress non-JSON text.
         "response_format": {"type": "json_object"},
-        # llama-server may enable thinking by default via the chat template.
-        # Explicitly disable it per request so JSON-only image analysis does not
-        # emit reasoning text before the object body.
-        "chat_template_kwargs": {"enable_thinking": False},
         "stream": False,
     }
+    payload.update(_thinking_control_payload(provider))
 
     url = _normalize_chat_url(endpoint_url or settings.openai_base_url)
     headers = {"Authorization": f"Bearer {settings.openai_api_key}"}
@@ -284,4 +290,3 @@ def analyze_image(
     if should_log_ai_raw_payload():
         logger.trace("VLM raw response text: %s", text)
     return text
-

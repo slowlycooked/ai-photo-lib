@@ -171,6 +171,7 @@ def test_project_prompt_template(
             analyze_image_fn=analyze_image,
             parse_output_fn=parse_model_json_output,
             image_path=image_path,
+            provider=runtime_settings["provider"],
             endpoint_url=runtime_settings["endpoint_url"],
             model_name=runtime_settings["model_name"],
             system_text=system_text,

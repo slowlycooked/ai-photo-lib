@@ -18,7 +18,10 @@ from app.services.project_ai_service import (  # noqa: E402
     analyze_with_strict_json_retry,
     render_analysis_prompt_parts,
 )
-from app.services.vlm_client import _extract_message_text  # noqa: E402
+from app.services.vlm_client import (  # noqa: E402
+    _extract_message_text,
+    _thinking_control_payload,
+)
 
 
 class PromptRenderAndRetryTest(unittest.TestCase):
@@ -62,6 +65,18 @@ class PromptRenderAndRetryTest(unittest.TestCase):
 
         self.assertEqual(_extract_message_text(message), "")
 
+    def test_ollama_uses_openai_reasoning_control(self) -> None:
+        self.assertEqual(
+            _thinking_control_payload("ollama"),
+            {"reasoning_effort": "none"},
+        )
+
+    def test_llama_server_keeps_chat_template_control(self) -> None:
+        self.assertEqual(
+            _thinking_control_payload("llama-server"),
+            {"chat_template_kwargs": {"enable_thinking": False}},
+        )
+
     def test_analyze_with_strict_json_retry_retries_once_for_non_json_prefix(self) -> None:
         calls: list[dict[str, str]] = []
         outputs = iter([
@@ -78,6 +93,7 @@ class PromptRenderAndRetryTest(unittest.TestCase):
             image_path="/tmp/a.jpg",
             system_text="system",
             user_text="original user prompt",
+            provider="ollama",
             endpoint_url="http://example.invalid/v1/chat/completions",
             model_name="demo-model",
             temperature=0.1,
@@ -91,6 +107,8 @@ class PromptRenderAndRetryTest(unittest.TestCase):
         self.assertIn("上一次输出无效，因为包含解释或推理过程。", calls[1]["prompt_text"])
         self.assertNotIn("original user prompt", calls[1]["prompt_text"])
         self.assertEqual(calls[1]["system_text"], "system")
+        self.assertEqual(calls[0]["provider"], "ollama")
+        self.assertEqual(calls[1]["provider"], "ollama")
 
     def test_analyze_and_parse_with_strict_json_retry_retries_on_parse_failure(self) -> None:
         calls: list[dict[str, str]] = []
@@ -115,6 +133,7 @@ class PromptRenderAndRetryTest(unittest.TestCase):
             system_text="system",
             user_text="original user prompt",
             strategy="strict_json",
+            provider="ollama",
             endpoint_url="http://example.invalid/v1/chat/completions",
             model_name="demo-model",
             temperature=0.1,
@@ -128,6 +147,8 @@ class PromptRenderAndRetryTest(unittest.TestCase):
         self.assertEqual(calls[0]["prompt_text"], "original user prompt")
         self.assertIn("上一次输出无效，因为包含解释或推理过程。", calls[1]["prompt_text"])
         self.assertNotIn("original user prompt", calls[1]["prompt_text"])
+        self.assertEqual(calls[0]["provider"], "ollama")
+        self.assertEqual(calls[1]["provider"], "ollama")
 
 
 if __name__ == "__main__":

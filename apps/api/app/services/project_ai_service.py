@@ -478,6 +478,7 @@ def analyze_with_strict_json_retry(
     image_path: str,
     system_text: str,
     user_text: str,
+    provider: str | None = None,
     endpoint_url: str | None = None,
     model_name: str | None = None,
     temperature: float | None = None,
@@ -486,6 +487,7 @@ def analyze_with_strict_json_retry(
 ) -> str:
     raw_text = analyze_image_fn(
         image_path,
+        provider=provider,
         endpoint_url=endpoint_url,
         model_name=model_name,
         prompt_text=user_text,
@@ -500,6 +502,7 @@ def analyze_with_strict_json_retry(
     logger.warning("Model output was not strict JSON; retrying once with stricter user prompt.")
     return analyze_image_fn(
         image_path,
+        provider=provider,
         endpoint_url=endpoint_url,
         model_name=model_name,
         prompt_text=build_strict_json_retry_user_text(),
@@ -518,6 +521,7 @@ def analyze_and_parse_with_strict_json_retry(
     system_text: str,
     user_text: str,
     strategy: str,
+    provider: str | None = None,
     endpoint_url: str | None = None,
     model_name: str | None = None,
     temperature: float | None = None,
@@ -526,6 +530,7 @@ def analyze_and_parse_with_strict_json_retry(
 ) -> tuple[str, dict[str, Any]]:
     raw_text = analyze_image_fn(
         image_path,
+        provider=provider,
         endpoint_url=endpoint_url,
         model_name=model_name,
         prompt_text=user_text,
@@ -539,6 +544,7 @@ def analyze_and_parse_with_strict_json_retry(
         logger.warning("Model output was not strict JSON; retrying once with strict retry prompt.")
         raw_text = analyze_image_fn(
             image_path,
+            provider=provider,
             endpoint_url=endpoint_url,
             model_name=model_name,
             prompt_text=build_strict_json_retry_user_text(),
@@ -554,6 +560,7 @@ def analyze_and_parse_with_strict_json_retry(
         logger.warning("Model output failed JSON parsing; retrying once with strict retry prompt.")
         retry_raw_text = analyze_image_fn(
             image_path,
+            provider=provider,
             endpoint_url=endpoint_url,
             model_name=model_name,
             prompt_text=build_strict_json_retry_user_text(),
