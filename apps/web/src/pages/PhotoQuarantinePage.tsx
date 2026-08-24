@@ -210,7 +210,7 @@ export function PhotoQuarantinePage() {
               <label className="text-caption-sm text-mute">模型
                 <input className={fieldClass()} disabled={!canManage} value={form.model_name} onChange={(event) => setForm({ ...form, model_name: event.target.value })} />
               </label>
-              <label className="text-caption-sm text-mute">保留天数
+              <label className="text-caption-sm text-mute">人工删除前建议保留天数
                 <input className={fieldClass()} type="number" min={1} max={3650} disabled={!canManage} value={form.retention_days} onChange={(event) => setForm({ ...form, retention_days: Number(event.target.value) })} />
               </label>
             </div>
@@ -219,7 +219,7 @@ export function PhotoQuarantinePage() {
               <label className="flex items-center gap-2"><input type="checkbox" disabled={!canManage} checked={form.dry_run} onChange={(event) => setForm({ ...form, dry_run: event.target.checked })} />校准模式（只识别、不移动）</label>
               {canManage && <button type="button" onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-hairline text-btn-sm font-bold hover:bg-surface-card disabled:opacity-50"><Save className="w-4 h-4" />保存设置</button>}
             </div>
-            <p className="text-caption-sm text-mute">默认 01:00–06:00。到结束时间后会完成当前图片再暂停，剩余图片次日继续。</p>
+            <p className="text-caption-sm text-mute">默认 01:00–06:00。到结束时间后会完成当前图片再暂停，剩余图片次日继续。系统不会按保留天数自动删除文件。</p>
           </div>
         )}
       </section>
