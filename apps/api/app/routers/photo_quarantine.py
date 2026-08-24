@@ -1,13 +1,15 @@
 from __future__ import annotations
 
+import csv
+import io
 from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy.orm import Session
 
-from ..api.deps import require_project, require_project_manager
+from ..api.deps import get_current_user, require_project, require_project_manager
 from ..database import get_db
 from ..models.photo import Photo
 from ..models.project import Project
@@ -15,11 +17,14 @@ from ..schemas.photo_quarantine import (
     PhotoQuarantineBatchItemResponse,
     PhotoQuarantineBatchRequest,
     PhotoQuarantineBatchResponse,
+    PhotoQuarantineCalibrationResponse,
     PhotoQuarantineItemResponse,
+    PhotoQuarantineLabelRequest,
     PhotoQuarantineListResponse,
     ProjectPhotoQuarantineSettingsResponse,
     ProjectPhotoQuarantineSettingsUpdate,
 )
+from ..schemas.user import CurrentUser
 from ..services.photo_quarantine_service import (
     PhotoQuarantineConflict,
     PhotoQuarantineError,
@@ -39,12 +44,14 @@ router = APIRouter(prefix="/projects", tags=["photo-quarantine"])
 def run_photo_quarantine_batch(
     body: PhotoQuarantineBatchRequest,
     project: Project = Depends(require_project_manager),
+    current_user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     result = PhotoQuarantineService(db).batch_action(
         project_id=project.id,
         item_ids=body.item_ids,
         action=body.action,
+        labeled_by=current_user.username,
     )
     return PhotoQuarantineBatchResponse(
         requested=len(result.results),
@@ -136,11 +143,12 @@ def list_photo_quarantine_items(
 def move_photo_quarantine_item(
     item_id: int,
     project: Project = Depends(require_project_manager),
+    current_user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     try:
         return PhotoQuarantineService(db).move(
-            project_id=project.id, item_id=item_id
+            project_id=project.id, item_id=item_id, labeled_by=current_user.username
         ).item
     except PhotoQuarantineConflict as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -155,11 +163,12 @@ def move_photo_quarantine_item(
 def restore_photo_quarantine_item(
     item_id: int,
     project: Project = Depends(require_project_manager),
+    current_user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     try:
         return PhotoQuarantineService(db).restore(
-            project_id=project.id, item_id=item_id
+            project_id=project.id, item_id=item_id, labeled_by=current_user.username
         )
     except PhotoQuarantineConflict as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -193,16 +202,98 @@ def confirm_photo_quarantine_item_deleted(
 def keep_photo_quarantine_item(
     item_id: int,
     project: Project = Depends(require_project_manager),
+    current_user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     try:
         return PhotoQuarantineService(db).keep(
-            project_id=project.id, item_id=item_id
+            project_id=project.id, item_id=item_id, labeled_by=current_user.username
         )
     except PhotoQuarantineConflict as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except PhotoQuarantineError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.put(
+    "/{project_id}/photo-quarantine/items/{item_id}/label",
+    response_model=PhotoQuarantineItemResponse,
+)
+def label_photo_quarantine_item(
+    item_id: int,
+    body: PhotoQuarantineLabelRequest,
+    project: Project = Depends(require_project_manager),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    try:
+        return PhotoQuarantineService(db).label(
+            project_id=project.id,
+            item_id=item_id,
+            label=body.label,
+            note=body.note,
+            labeled_by=current_user.username,
+        )
+    except PhotoQuarantineError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get(
+    "/{project_id}/photo-quarantine/calibration",
+    response_model=PhotoQuarantineCalibrationResponse,
+)
+def get_photo_quarantine_calibration(
+    project: Project = Depends(require_project),
+    db: Session = Depends(get_db),
+):
+    return PhotoQuarantineService(db).calibration_report(project_id=project.id)
+
+
+@router.get("/{project_id}/photo-quarantine/calibration.csv")
+def export_photo_quarantine_calibration(
+    project: Project = Depends(require_project),
+    db: Session = Depends(get_db),
+):
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(
+        [
+            "item_id",
+            "photo_id",
+            "classification",
+            "model_decision",
+            "confidence",
+            "human_label",
+            "human_label_note",
+            "human_labeled_by",
+            "human_labeled_at",
+            "model_name",
+            "prompt_version",
+        ]
+    )
+    for item in PhotoQuarantineService(db).list_labeled_items(project_id=project.id):
+        writer.writerow(
+            [
+                item.id,
+                item.photo_id,
+                item.classification,
+                item.first_result.get("decision"),
+                item.confidence,
+                item.human_label,
+                item.human_label_note,
+                item.human_labeled_by,
+                item.human_labeled_at.isoformat() if item.human_labeled_at else None,
+                item.model_name,
+                item.prompt_version,
+            ]
+        )
+    response = StreamingResponse(
+        iter([output.getvalue()]), media_type="text/csv; charset=utf-8"
+    )
+    response.headers["Content-Disposition"] = (
+        f'attachment; filename="photo-quarantine-calibration-project-{project.id}.csv"'
+    )
+    return response
 
 
 @router.get("/{project_id}/photo-quarantine/items/{item_id}/thumbnail")

@@ -138,9 +138,17 @@ class PhotoQuarantineService:
             raise PhotoQuarantineError("Quarantine item not found")
         return item
 
-    def move(self, *, project_id: int, item_id: int) -> QuarantineMoveResult:
+    def move(
+        self,
+        *,
+        project_id: int,
+        item_id: int,
+        labeled_by: Optional[str] = None,
+    ) -> QuarantineMoveResult:
         item, photo, project = self._load_item_photo_project(project_id, item_id)
         if item.status == "quarantined":
+            if labeled_by:
+                self._save_label(item, label="TRASH", labeled_by=labeled_by)
             return QuarantineMoveResult(item=item, moved=False)
         if item.status not in {"review", "moving", "move_failed"}:
             raise PhotoQuarantineConflict(
@@ -160,10 +168,10 @@ class PhotoQuarantineService:
                 raise PhotoQuarantineConflict(
                     "Recovered quarantine file hash does not match the audit record"
                 )
-            return QuarantineMoveResult(
-                item=self._finalize_move(item.id, destination_hash),
-                moved=False,
-            )
+            moved_item = self._finalize_move(item.id, destination_hash)
+            if labeled_by:
+                self._save_label(moved_item, label="TRASH", labeled_by=labeled_by)
+            return QuarantineMoveResult(item=moved_item, moved=False)
         if not source.exists():
             raise PhotoQuarantineError("Original file is missing")
 
@@ -202,14 +210,22 @@ class PhotoQuarantineService:
             self._db.commit()
             raise
 
-        return QuarantineMoveResult(
-            item=self._finalize_move(item.id, source_hash),
-            moved=True,
-        )
+        moved_item = self._finalize_move(item.id, source_hash)
+        if labeled_by:
+            self._save_label(moved_item, label="TRASH", labeled_by=labeled_by)
+        return QuarantineMoveResult(item=moved_item, moved=True)
 
-    def restore(self, *, project_id: int, item_id: int) -> PhotoQuarantineItem:
+    def restore(
+        self,
+        *,
+        project_id: int,
+        item_id: int,
+        labeled_by: Optional[str] = None,
+    ) -> PhotoQuarantineItem:
         item, photo, project = self._load_item_photo_project(project_id, item_id)
         if item.status == "restored":
+            if labeled_by:
+                self._save_label(item, label="KEEP", labeled_by=labeled_by)
             return item
         if item.status not in {
             "quarantined",
@@ -231,7 +247,10 @@ class PhotoQuarantineService:
                 raise PhotoQuarantineConflict(
                     "File at original path does not match the quarantined photo"
                 )
-            return self._finalize_restore(item.id)
+            restored = self._finalize_restore(item.id)
+            if labeled_by:
+                self._save_label(restored, label="KEEP", labeled_by=labeled_by)
+            return restored
         if destination.exists():
             item.status = "restore_conflict"
             item.last_error = "Original path is occupied; no file was overwritten"
@@ -264,7 +283,10 @@ class PhotoQuarantineService:
             self._db.commit()
             raise
 
-        return self._finalize_restore(item.id)
+        restored = self._finalize_restore(item.id)
+        if labeled_by:
+            self._save_label(restored, label="KEEP", labeled_by=labeled_by)
+        return restored
 
     def confirm_deleted(self, *, project_id: int, item_id: int) -> PhotoQuarantineItem:
         item, _photo, _project = self._load_item_photo_project(project_id, item_id)
@@ -286,10 +308,18 @@ class PhotoQuarantineService:
         self._db.refresh(item)
         return item
 
-    def keep(self, *, project_id: int, item_id: int) -> PhotoQuarantineItem:
+    def keep(
+        self,
+        *,
+        project_id: int,
+        item_id: int,
+        labeled_by: Optional[str] = None,
+    ) -> PhotoQuarantineItem:
         """Record a human keep decision without moving or deleting the photo."""
         item, photo, _project = self._load_item_photo_project(project_id, item_id)
         if item.status == "kept":
+            if labeled_by:
+                self._save_label(item, label="KEEP", labeled_by=labeled_by)
             return item
         if item.status not in {"review", "analysis_failed", "move_failed"}:
             raise PhotoQuarantineConflict(
@@ -301,11 +331,99 @@ class PhotoQuarantineService:
             )
         item.status = "kept"
         item.decision = "KEEP"
+        self._set_label_fields(item, label="KEEP", labeled_by=labeled_by)
         item.last_error = None
         item.updated_at = _now()
         self._db.commit()
         self._db.refresh(item)
         return item
+
+    def label(
+        self,
+        *,
+        project_id: int,
+        item_id: int,
+        label: str,
+        labeled_by: str,
+        note: Optional[str] = None,
+    ) -> PhotoQuarantineItem:
+        item = self.get_item(project_id=project_id, item_id=item_id)
+        self._save_label(
+            item,
+            label=label,
+            labeled_by=labeled_by,
+            note=note,
+        )
+        return item
+
+    def calibration_report(self, *, project_id: int) -> dict[str, object]:
+        items = self.list_labeled_items(project_id=project_id)
+        totals = _empty_confusion_counts()
+        categories: dict[str, dict[str, int]] = {}
+        for item in items:
+            counts = categories.setdefault(
+                item.classification, _empty_confusion_counts()
+            )
+            predicted_trash = bool(
+                item.verification_result
+                and _is_verified_auto_candidate(
+                    item.first_result, item.verification_result
+                )
+            )
+            actual_trash = item.human_label == "TRASH"
+            bucket = (
+                "true_positive" if predicted_trash and actual_trash
+                else "false_positive" if predicted_trash
+                else "false_negative" if actual_trash
+                else "true_negative"
+            )
+            for target in (totals, counts):
+                target["labeled_total"] += 1
+                target["human_trash" if actual_trash else "human_keep"] += 1
+                target[bucket] += 1
+
+        precision = _safe_ratio(
+            totals["true_positive"],
+            totals["true_positive"] + totals["false_positive"],
+        )
+        recall = _safe_ratio(
+            totals["true_positive"],
+            totals["true_positive"] + totals["false_negative"],
+        )
+        false_positive_rate = _safe_ratio(
+            totals["false_positive"], totals["human_keep"]
+        )
+        target_sample_size = 300
+        sample_target_met = totals["labeled_total"] >= target_sample_size
+        zero_false_positive_met = totals["false_positive"] == 0
+        return {
+            **totals,
+            "precision": precision,
+            "recall": recall,
+            "false_positive_rate": false_positive_rate,
+            "target_sample_size": target_sample_size,
+            "sample_target_met": sample_target_met,
+            "zero_false_positive_met": zero_false_positive_met,
+            "ready_for_auto_move": sample_target_met and zero_false_positive_met,
+            "categories": [
+                {"classification": classification, **counts}
+                for classification, counts in sorted(categories.items())
+            ],
+        }
+
+    def list_labeled_items(self, *, project_id: int) -> list[PhotoQuarantineItem]:
+        return (
+            self._db.query(PhotoQuarantineItem)
+            .filter(
+                PhotoQuarantineItem.project_id == project_id,
+                PhotoQuarantineItem.human_label.in_(["KEEP", "TRASH"]),
+            )
+            .order_by(
+                PhotoQuarantineItem.human_labeled_at.desc(),
+                PhotoQuarantineItem.id.desc(),
+            )
+            .all()
+        )
 
     def batch_action(
         self,
@@ -313,11 +431,18 @@ class PhotoQuarantineService:
         project_id: int,
         item_ids: list[int],
         action: str,
+        labeled_by: Optional[str] = None,
     ) -> QuarantineBatchResult:
         operations = {
-            "KEEP": self.keep,
-            "MOVE": lambda **kwargs: self.move(**kwargs).item,
-            "RESTORE": self.restore,
+            "KEEP": lambda **kwargs: self.keep(**kwargs, labeled_by=labeled_by),
+            "MOVE": lambda **kwargs: self.move(**kwargs, labeled_by=labeled_by).item,
+            "RESTORE": lambda **kwargs: self.restore(**kwargs, labeled_by=labeled_by),
+            "LABEL_KEEP": lambda **kwargs: self.label(
+                **kwargs, label="KEEP", labeled_by=labeled_by or "unknown"
+            ),
+            "LABEL_TRASH": lambda **kwargs: self.label(
+                **kwargs, label="TRASH", labeled_by=labeled_by or "unknown"
+            ),
         }
         operation = operations.get(action)
         if operation is None:
@@ -360,6 +485,36 @@ class PhotoQuarantineService:
                     )
                 )
         return QuarantineBatchResult(results=results)
+
+    def _save_label(
+        self,
+        item: PhotoQuarantineItem,
+        *,
+        label: str,
+        labeled_by: str,
+        note: Optional[str] = None,
+    ) -> None:
+        self._set_label_fields(item, label=label, labeled_by=labeled_by, note=note)
+        item.updated_at = _now()
+        self._db.commit()
+        self._db.refresh(item)
+
+    @staticmethod
+    def _set_label_fields(
+        item: PhotoQuarantineItem,
+        *,
+        label: str,
+        labeled_by: Optional[str],
+        note: Optional[str] = None,
+    ) -> None:
+        if label not in {"KEEP", "TRASH"}:
+            raise ValueError(f"Unsupported human label: {label}")
+        if labeled_by is None:
+            return
+        item.human_label = label
+        item.human_label_note = note
+        item.human_labeled_by = labeled_by
+        item.human_labeled_at = _now()
 
     def _load_item_photo_project(
         self, project_id: int, item_id: int
@@ -463,3 +618,44 @@ def _sha256(path: Path) -> str:
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _empty_confusion_counts() -> dict[str, int]:
+    return {
+        "labeled_total": 0,
+        "human_keep": 0,
+        "human_trash": 0,
+        "true_positive": 0,
+        "false_positive": 0,
+        "true_negative": 0,
+        "false_negative": 0,
+    }
+
+
+def _safe_ratio(numerator: int, denominator: int) -> Optional[float]:
+    return numerator / denominator if denominator else None
+
+
+def _is_verified_auto_candidate(first: dict, verification: dict) -> bool:
+    auto_move_categories = {
+        "accidental_capture",
+        "severe_blur",
+        "obscured_lens",
+        "blank_image",
+        "meaningless_test_image",
+    }
+
+    def is_candidate(result: dict) -> bool:
+        return (
+            result.get("decision") == "QUARANTINE"
+            and result.get("classification") in auto_move_categories
+            and float(result.get("confidence", 0)) >= 0.98
+            and not result.get("preservation_flags")
+            and result.get("has_record_value") is False
+        )
+
+    return (
+        is_candidate(first)
+        and is_candidate(verification)
+        and first.get("classification") == verification.get("classification")
+    )

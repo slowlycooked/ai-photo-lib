@@ -60,6 +60,10 @@ class PhotoQuarantineItemResponse(BaseModel):
     moved_at: Optional[datetime] = None
     restored_at: Optional[datetime] = None
     deleted_confirmed_at: Optional[datetime] = None
+    human_label: Optional[Literal["KEEP", "TRASH"]] = None
+    human_label_note: Optional[str] = None
+    human_labeled_by: Optional[str] = None
+    human_labeled_at: Optional[datetime] = None
     last_error: Optional[str] = None
     created_at: datetime
     updated_at: datetime
@@ -71,7 +75,7 @@ class PhotoQuarantineListResponse(BaseModel):
 
 
 class PhotoQuarantineBatchRequest(BaseModel):
-    action: Literal["KEEP", "MOVE", "RESTORE"]
+    action: Literal["KEEP", "MOVE", "RESTORE", "LABEL_KEEP", "LABEL_TRASH"]
     item_ids: list[int] = Field(min_length=1, max_length=100)
 
     @model_validator(mode="after")
@@ -94,3 +98,37 @@ class PhotoQuarantineBatchResponse(BaseModel):
     succeeded: int
     failed: int
     results: list[PhotoQuarantineBatchItemResponse]
+
+
+class PhotoQuarantineLabelRequest(BaseModel):
+    label: Literal["KEEP", "TRASH"]
+    note: Optional[str] = Field(default=None, max_length=2000)
+
+
+class PhotoQuarantineCalibrationCategory(BaseModel):
+    classification: str
+    labeled_total: int
+    human_keep: int
+    human_trash: int
+    true_positive: int
+    false_positive: int
+    true_negative: int
+    false_negative: int
+
+
+class PhotoQuarantineCalibrationResponse(BaseModel):
+    labeled_total: int
+    human_keep: int
+    human_trash: int
+    true_positive: int
+    false_positive: int
+    true_negative: int
+    false_negative: int
+    precision: Optional[float] = None
+    recall: Optional[float] = None
+    false_positive_rate: Optional[float] = None
+    target_sample_size: int
+    sample_target_met: bool
+    zero_false_positive_met: bool
+    ready_for_auto_move: bool
+    categories: list[PhotoQuarantineCalibrationCategory]

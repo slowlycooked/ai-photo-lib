@@ -147,10 +147,13 @@ def test_keep_records_human_decision_without_moving_file(quarantine_fixture) -> 
     engine, _library, trash, original, _digest = quarantine_fixture
     with Session(engine) as db:
         service = PhotoQuarantineService(db, root=trash)
-        kept = service.keep(project_id=1, item_id=100)
+        kept = service.keep(project_id=1, item_id=100, labeled_by="martin")
 
         assert kept.status == "kept"
         assert kept.decision == "KEEP"
+        assert kept.human_label == "KEEP"
+        assert kept.human_labeled_by == "martin"
+        assert kept.human_labeled_at is not None
         assert original.read_bytes() == b"test-photo-content"
         photo = db.query(Photo).filter(Photo.id == 10).one()
         assert photo.status == "indexed"
@@ -212,3 +215,58 @@ def test_batch_action_redacts_unexpected_io_failure(quarantine_fixture) -> None:
             100,
             "KEEP",
         )
+
+
+def test_calibration_report_flags_model_false_positive(quarantine_fixture) -> None:
+    engine, _library, trash, _original, _digest = quarantine_fixture
+    candidate = {
+        "decision": "QUARANTINE",
+        "classification": "accidental_capture",
+        "confidence": 0.99,
+        "preservation_flags": [],
+        "has_record_value": False,
+    }
+    with Session(engine) as db:
+        item = db.query(PhotoQuarantineItem).filter(PhotoQuarantineItem.id == 100).one()
+        item.first_result = candidate
+        item.verification_result = candidate.copy()
+        db.commit()
+
+        service = PhotoQuarantineService(db, root=trash)
+        service.label(
+            project_id=1,
+            item_id=100,
+            label="KEEP",
+            labeled_by="martin",
+            note="这是需要保留的施工记录",
+        )
+        report = service.calibration_report(project_id=1)
+
+        assert report["labeled_total"] == 1
+        assert report["human_keep"] == 1
+        assert report["false_positive"] == 1
+        assert report["precision"] == 0.0
+        assert report["false_positive_rate"] == 1.0
+        assert report["zero_false_positive_met"] is False
+        assert report["ready_for_auto_move"] is False
+        assert report["categories"] == [{
+            "classification": "accidental_capture",
+            "labeled_total": 1,
+            "human_keep": 1,
+            "human_trash": 0,
+            "true_positive": 0,
+            "false_positive": 1,
+            "true_negative": 0,
+            "false_negative": 0,
+        }]
+
+
+def test_restore_records_put_back_as_keep_feedback(quarantine_fixture) -> None:
+    engine, _library, trash, _original, _digest = quarantine_fixture
+    with Session(engine) as db:
+        service = PhotoQuarantineService(db, root=trash)
+        service.move(project_id=1, item_id=100)
+        restored = service.restore(project_id=1, item_id=100, labeled_by="martin")
+
+        assert restored.human_label == "KEEP"
+        assert restored.human_labeled_by == "martin"

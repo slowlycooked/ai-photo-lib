@@ -88,6 +88,10 @@ class PhotoQuarantineItem(Base):
     moved_at: Mapped[Optional[datetime]] = mapped_column(TIMESTAMP, nullable=True)
     restored_at: Mapped[Optional[datetime]] = mapped_column(TIMESTAMP, nullable=True)
     deleted_confirmed_at: Mapped[Optional[datetime]] = mapped_column(TIMESTAMP, nullable=True)
+    human_label: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    human_label_note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    human_labeled_by: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    human_labeled_at: Mapped[Optional[datetime]] = mapped_column(TIMESTAMP, nullable=True)
     last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP, server_default=func.now(), nullable=False
