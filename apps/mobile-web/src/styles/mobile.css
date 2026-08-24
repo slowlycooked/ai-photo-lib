@@ -52,6 +52,8 @@
     border-radius: 14px;
     border: 1px solid #d9dbd2;
     background: #ffffff;
+    content-visibility: auto;
+    contain-intrinsic-size: auto 220px;
   }
 
   .mobile-photo-viewer {

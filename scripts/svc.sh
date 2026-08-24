@@ -555,7 +555,6 @@ run_migrations() {
   py_bin="$(api_python_bin)"
 
   cd "$ROOT/apps/api"
-  "$py_bin" stamp_migrations.py >/dev/null 2>&1 || true
   "$py_bin" -m alembic upgrade head
 }
 

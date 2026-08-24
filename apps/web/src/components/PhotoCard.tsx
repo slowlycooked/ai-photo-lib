@@ -1,24 +1,42 @@
-import { useState } from "react";
+import { lazy, Suspense, useState } from "react";
 import { ImageIcon, MapPin } from "lucide-react";
 import type { Photo } from "@/api";
 import { api } from "@/api";
 import { formatLocationAddress, formatLocationSummary } from "@/lib/utils";
-import { PhotoDetailModal } from "./photo-card/PhotoDetailModal";
+
+const PhotoDetailModal = lazy(() =>
+  import("./photo-card/PhotoDetailModal").then((module) => ({
+    default: module.PhotoDetailModal,
+  })),
+);
 
 interface PhotoCardProps {
   photo: Photo;
+  priority?: boolean;
   selectMode?: boolean;
   selected?: boolean;
   onToggleSelect?: (photoId: number, checked: boolean) => void;
   onDeleted?: (photoId: number) => void;
 }
 
-export function PhotoCard({ photo, selectMode = false, selected = false, onToggleSelect, onDeleted }: PhotoCardProps) {
+export function PhotoCard({
+  photo,
+  priority = false,
+  selectMode = false,
+  selected = false,
+  onToggleSelect,
+  onDeleted,
+}: PhotoCardProps) {
   const [loaded, setLoaded] = useState(false);
   const [errored, setErrored] = useState(false);
+  const [retryNonce, setRetryNonce] = useState(0);
   const [showDetail, setShowDetail] = useState(false);
   const locationSummary = formatLocationSummary(photo, { short: true });
   const locationAddress = formatLocationAddress(photo);
+  const thumbnailUrl = api.projectPhotos.thumbnailUrl(photo.project_id, photo.id, photo.updated_at);
+  const retryThumbnailUrl = retryNonce
+    ? `${thumbnailUrl}${thumbnailUrl.includes("?") ? "&" : "?"}retry=${retryNonce}`
+    : thumbnailUrl;
   const gpsFallback =
     photo.gps_latitude != null && photo.gps_longitude != null
       ? `${photo.gps_latitude.toFixed(5)}, ${photo.gps_longitude.toFixed(5)}`
@@ -53,10 +71,19 @@ export function PhotoCard({ photo, selectMode = false, selected = false, onToggl
         )}
 
         {errored ? (
-          <div className="w-full h-32 flex flex-col items-center justify-center gap-1 bg-surface-card">
+          <button
+            type="button"
+            className="w-full h-32 flex flex-col items-center justify-center gap-1 bg-surface-card"
+            onClick={(event) => {
+              event.stopPropagation();
+              setLoaded(false);
+              setErrored(false);
+              setRetryNonce(Date.now());
+            }}
+          >
             <ImageIcon className="w-6 h-6 text-stone" />
-            <span className="text-caption-sm text-stone">无法加载</span>
-          </div>
+            <span className="text-caption-sm text-stone">无法加载，点击重试</span>
+          </button>
         ) : (
           <div
             className="relative w-full"
@@ -64,11 +91,13 @@ export function PhotoCard({ photo, selectMode = false, selected = false, onToggl
           >
             {!loaded && <div className="absolute inset-0 bg-secondary-bg animate-pulse" />}
             <img
-              src={api.projectPhotos.thumbnailUrl(photo.project_id, photo.id, photo.updated_at)}
+              src={retryThumbnailUrl}
               alt={photo.file_name}
               className="block w-full h-full object-cover"
               style={{ opacity: loaded ? 1 : 0, transition: "opacity 0.2s" }}
-              loading="lazy"
+              loading={priority ? "eager" : "lazy"}
+              fetchPriority={priority ? "high" : "auto"}
+              decoding="async"
               onLoad={() => setLoaded(true)}
               onError={() => setErrored(true)}
             />
@@ -107,11 +136,19 @@ export function PhotoCard({ photo, selectMode = false, selected = false, onToggl
       </div>
 
       {showDetail && (
-        <PhotoDetailModal
-          photo={photo}
-          onClose={() => setShowDetail(false)}
-          onDeleted={onDeleted}
-        />
+        <Suspense
+          fallback={
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 text-white">
+              <span className="text-body-sm">正在加载照片详情…</span>
+            </div>
+          }
+        >
+          <PhotoDetailModal
+            photo={photo}
+            onClose={() => setShowDetail(false)}
+            onDeleted={onDeleted}
+          />
+        </Suspense>
       )}
     </>
   );

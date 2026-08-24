@@ -89,7 +89,9 @@ class ProjectPhotoAssetService:
         return PhotoFileAsset(
             path=photo.thumbnail_path,
             media_type="image/jpeg",
-            headers={"Cache-Control": "no-cache, must-revalidate"},
+            headers={
+                "Cache-Control": "private, max-age=86400, stale-while-revalidate=604800"
+            },
         )
 
     def get_original_asset(self, *, project: Project, photo: Photo) -> PhotoFileAsset:

@@ -5,6 +5,9 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import Mock, patch
+
+from fastapi.responses import FileResponse
 
 # Required before importing app.config.Settings at module import time.
 os.environ.setdefault("DATABASE_URL", "sqlite:///ignored.db")
@@ -16,8 +19,13 @@ os.environ.setdefault("OPENAI_MODEL", "test-model")
 os.environ.setdefault("OPENAI_VISION_MODEL", "test-model")
 
 from app.services.project_photo_asset_service import (  # noqa: E402
+    PhotoFileAsset,
     PhotoPathOwnershipError,
     ProjectPhotoAssetService,
+)
+from app.routers.project_photos import (  # noqa: E402
+    _photo_file_response,
+    get_project_photo_thumbnail,
 )
 
 
@@ -100,6 +108,71 @@ class ProjectPhotoAssetServiceTest(unittest.TestCase):
                 project=project,
                 photo=self._photo(file_path=photo_path),
             )
+
+    def test_thumbnail_asset_is_browser_cacheable(self) -> None:
+        photo_path = self._library / "inside.jpg"
+        thumb_path = self._thumbs / "thumb.jpg"
+        photo_path.write_bytes(b"original")
+        thumb_path.write_bytes(b"thumbnail")
+
+        asset = ProjectPhotoAssetService().get_thumbnail_asset(
+            project=self.project,
+            photo=self._photo(file_path=photo_path, thumbnail_path=thumb_path),
+        )
+
+        self.assertEqual(
+            asset.headers["Cache-Control"],
+            "private, max-age=86400, stale-while-revalidate=604800",
+        )
+
+    def test_photo_file_response_streams_from_disk(self) -> None:
+        photo_path = self._library / "inside.jpg"
+        photo_path.write_bytes(b"jpeg")
+
+        with patch.object(Path, "read_bytes", side_effect=AssertionError("must not buffer file")):
+            response = _photo_file_response(
+                PhotoFileAsset(
+                    path=str(photo_path),
+                    media_type="image/jpeg",
+                    headers={"Cache-Control": "private, max-age=60"},
+                ),
+                label="Thumbnail",
+            )
+
+        self.assertIsInstance(response, FileResponse)
+        self.assertEqual(Path(response.path), photo_path)
+
+    def test_thumbnail_route_releases_db_before_building_file_response(self) -> None:
+        asset = PhotoFileAsset(
+            path=str(self._library / "inside.jpg"),
+            media_type="image/jpeg",
+            headers={},
+        )
+        db = Mock()
+
+        def assert_db_closed(response_asset, *, label):
+            db.close.assert_called_once_with()
+            self.assertIs(response_asset, asset)
+            self.assertEqual(label, "Thumbnail")
+            return "response"
+
+        with (
+            patch(
+                "app.routers.project_photos.ProjectPhotoAssetService.get_thumbnail_asset",
+                return_value=asset,
+            ),
+            patch(
+                "app.routers.project_photos._photo_file_response",
+                side_effect=assert_db_closed,
+            ),
+        ):
+            response = get_project_photo_thumbnail(
+                project=self.project,
+                photo=self._photo(file_path=self._library / "inside.jpg"),
+                db=db,
+            )
+
+        self.assertEqual(response, "response")
 
 
 if __name__ == "__main__":

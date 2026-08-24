@@ -6,10 +6,12 @@ export function PhotoThumbGrid({
   projectId,
   photos,
   photoIds,
+  priorityPhotoIds,
 }: {
   projectId: number;
   photos: Photo[];
   photoIds: number[];
+  priorityPhotoIds?: ReadonlySet<number>;
 }) {
   return (
     <MobileMasonryGrid
@@ -26,7 +28,9 @@ export function PhotoThumbGrid({
           <img
             src={api.photos.thumbnailUrl(projectId, photo.id, photo.updated_at)}
             alt={photo.file_name}
-            loading="lazy"
+            loading={priorityPhotoIds?.has(photo.id) ? "eager" : "lazy"}
+            fetchPriority={priorityPhotoIds?.has(photo.id) ? "high" : "auto"}
+            decoding="async"
             className="block h-full w-full object-cover"
           />
         </Link>

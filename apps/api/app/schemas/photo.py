@@ -60,6 +60,8 @@ class PhotoListResponse(BaseModel):
     page: int
     page_size: int
     items: List[PhotoResponse]
+    next_cursor: Optional[str] = None
+    has_more: Optional[bool] = None
 
 
 class PhotoDeleteResponse(BaseModel):

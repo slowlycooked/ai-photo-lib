@@ -7,12 +7,12 @@ export function useMobilePhotos(projectId: number | null) {
   return useInfiniteQuery({
     queryKey: ["mobile-photos", projectId],
     enabled: projectId != null,
-    initialPageParam: 1,
+    initialPageParam: null as string | null,
     queryFn: ({ pageParam }) =>
-      api.photos.list(projectId!, pageParam as number, PAGE_SIZE),
-    getNextPageParam: (lastPage) => {
-      const loaded = lastPage.page * lastPage.page_size;
-      return loaded < lastPage.total ? lastPage.page + 1 : undefined;
-    },
+      api.photos.list(projectId!, 1, PAGE_SIZE, "cursor", pageParam),
+    getNextPageParam: (lastPage) =>
+      lastPage.has_more && lastPage.next_cursor
+        ? lastPage.next_cursor
+        : undefined,
   });
 }

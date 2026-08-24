@@ -82,6 +82,10 @@ export function TimelineGrid({ projectId, folderId, folderScope = "subtree" }: T
   }, [data]);
   const total = data?.pages[0]?.total ?? 0;
   const isInitialLoading = isLoading && allPhotos.length === 0;
+  const priorityPhotoIds = useMemo(
+    () => new Set(allPhotos.slice(0, 8).map((photo) => photo.id)),
+    [allPhotos],
+  );
 
   useEffect(() => {
     setSelectedPhotoIds([]);
@@ -339,6 +343,7 @@ export function TimelineGrid({ projectId, folderId, folderScope = "subtree" }: T
               renderItem={(photo) => (
                 <PhotoCard
                   photo={photo}
+                  priority={priorityPhotoIds.has(photo.id)}
                   selectMode={canDeletePhoto}
                   selected={selectedPhotoIds.includes(photo.id)}
                   onToggleSelect={togglePhotoSelection}

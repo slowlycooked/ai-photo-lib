@@ -73,3 +73,28 @@ class Photo(Base):
         TIMESTAMP, server_default=func.now(), nullable=False
     )
     deleted_at: Mapped[Optional[datetime]] = mapped_column(TIMESTAMP, nullable=True)
+
+
+_active_library_predicate = sa.and_(
+    Photo.deleted_at.is_(None),
+    Photo.status != "quarantined",
+)
+
+Index(
+    "ix_photos_library_browse",
+    Photo.project_id,
+    Photo.taken_at.desc().nullslast(),
+    Photo.created_at.desc(),
+    Photo.id.desc(),
+    postgresql_where=_active_library_predicate,
+).ddl_if(dialect="postgresql")
+
+Index(
+    "ix_photos_folder_library_browse",
+    Photo.project_id,
+    Photo.folder_id,
+    Photo.taken_at.desc().nullslast(),
+    Photo.created_at.desc(),
+    Photo.id.desc(),
+    postgresql_where=_active_library_predicate,
+).ddl_if(dialect="postgresql")

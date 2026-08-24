@@ -1,12 +1,36 @@
+import { lazy, Suspense } from "react";
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { BottomNav } from "@/components/BottomNav";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { ProjectProvider } from "@/contexts/ProjectContext";
-import { LoginPage } from "@/pages/LoginPage";
-import { MobileAccountPage } from "@/pages/MobileAccountPage";
 import { MobileHomePage } from "@/pages/MobileHomePage";
-import { MobilePhotoViewerPage } from "@/pages/MobilePhotoViewerPage";
-import { MobileSearchPage } from "@/pages/MobileSearchPage";
+
+const LoginPage = lazy(() =>
+  import("@/pages/LoginPage").then((module) => ({ default: module.LoginPage })),
+);
+const MobileAccountPage = lazy(() =>
+  import("@/pages/MobileAccountPage").then((module) => ({
+    default: module.MobileAccountPage,
+  })),
+);
+const MobilePhotoViewerPage = lazy(() =>
+  import("@/pages/MobilePhotoViewerPage").then((module) => ({
+    default: module.MobilePhotoViewerPage,
+  })),
+);
+const MobileSearchPage = lazy(() =>
+  import("@/pages/MobileSearchPage").then((module) => ({
+    default: module.MobileSearchPage,
+  })),
+);
+
+function RouteLoading() {
+  return (
+    <div className="min-h-[40vh] flex items-center justify-center text-sm text-mobileMute">
+      正在加载页面…
+    </div>
+  );
+}
 
 const configuredBasename = import.meta.env.VITE_ROUTER_BASENAME;
 
@@ -45,27 +69,31 @@ function AppRoutes() {
 
   if (auth.status === "anonymous") {
     return (
-      <Routes>
-        <Route path="/login" element={<LoginPage />} />
-        <Route
-          path="*"
-          element={<Navigate to="/login" replace state={{ from: location.pathname + location.search }} />}
-        />
-      </Routes>
+      <Suspense fallback={<RouteLoading />}>
+        <Routes>
+          <Route path="/login" element={<LoginPage />} />
+          <Route
+            path="*"
+            element={<Navigate to="/login" replace state={{ from: location.pathname + location.search }} />}
+          />
+        </Routes>
+      </Suspense>
     );
   }
 
   return (
     <ProjectProvider>
-      <Routes>
-        <Route path="/" element={<Navigate to="/photos" replace />} />
-        <Route path="/login" element={<Navigate to="/photos" replace />} />
-        <Route path="/photos" element={<MobileHomePage />} />
-        <Route path="/photos/:photoId" element={<MobilePhotoViewerPage />} />
-        <Route path="/search" element={<MobileSearchPage />} />
-        <Route path="/me" element={<MobileAccountPage />} />
-        <Route path="*" element={<Navigate to="/photos" replace />} />
-      </Routes>
+      <Suspense fallback={<RouteLoading />}>
+        <Routes>
+          <Route path="/" element={<Navigate to="/photos" replace />} />
+          <Route path="/login" element={<Navigate to="/photos" replace />} />
+          <Route path="/photos" element={<MobileHomePage />} />
+          <Route path="/photos/:photoId" element={<MobilePhotoViewerPage />} />
+          <Route path="/search" element={<MobileSearchPage />} />
+          <Route path="/me" element={<MobileAccountPage />} />
+          <Route path="*" element={<Navigate to="/photos" replace />} />
+        </Routes>
+      </Suspense>
       <BottomNav />
     </ProjectProvider>
   );

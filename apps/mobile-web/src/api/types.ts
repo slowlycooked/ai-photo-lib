@@ -62,6 +62,8 @@ export interface PhotoListResponse {
   page: number;
   page_size: number;
   items: Photo[];
+  next_cursor?: string | null;
+  has_more?: boolean | null;
 }
 
 export interface SearchResultItem {

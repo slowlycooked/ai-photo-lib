@@ -7,6 +7,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { ApiError, api, type AuthSession } from "@/api";
 
 type AuthStatus = "loading" | "authenticated" | "anonymous";
@@ -26,6 +27,7 @@ const AuthContext = createContext<AuthContextValue>({
 });
 
 export function AuthProvider({ children }: { children: ReactNode }) {
+  const queryClient = useQueryClient();
   const [status, setStatus] = useState<AuthStatus>("loading");
   const [session, setSession] = useState<AuthSession | null>(null);
 
@@ -41,6 +43,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       })
       .catch(() => {
         if (cancelled) return;
+        queryClient.clear();
         setSession(null);
         setStatus("anonymous");
       });
@@ -48,22 +51,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [queryClient]);
 
   useEffect(() => {
     const handleExpired = () => {
+      queryClient.clear();
       setSession(null);
       setStatus("anonymous");
     };
     window.addEventListener("auth:expired", handleExpired);
     return () => window.removeEventListener("auth:expired", handleExpired);
-  }, []);
+  }, [queryClient]);
 
   const login = useCallback(async (username: string, password: string) => {
     const nextSession = await api.auth.login(username, password);
+    queryClient.clear();
     setSession(nextSession);
     setStatus("authenticated");
-  }, []);
+  }, [queryClient]);
 
   const logout = useCallback(async () => {
     try {
@@ -73,10 +78,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         throw error;
       }
     } finally {
+      queryClient.clear();
       setSession(null);
       setStatus("anonymous");
     }
-  }, []);
+  }, [queryClient]);
 
   const value = useMemo(
     () => ({ status, session, login, logout }),

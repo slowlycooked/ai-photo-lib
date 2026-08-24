@@ -3,10 +3,10 @@ from __future__ import annotations
 from datetime import date
 import logging
 from pathlib import Path
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import Response
+from fastapi.responses import FileResponse, Response
 from sqlalchemy.orm import Session
 
 from ..api.deps import require_project, require_project_manager, require_project_photo
@@ -29,7 +29,10 @@ from ..services.project_photo_asset_service import (
     PhotoPreviewConversionError,
     ProjectPhotoAssetService,
 )
-from ..services.project_photos_query_service import ProjectPhotosQueryService
+from ..services.project_photos_query_service import (
+    PhotoCursorError,
+    ProjectPhotosQueryService,
+)
 
 router = APIRouter(prefix="/projects", tags=["projects-photos"])
 logger = logging.getLogger(__name__)
@@ -38,14 +41,20 @@ logger = logging.getLogger(__name__)
 def _photo_file_response(asset: PhotoFileAsset, *, label: str) -> Response:
     path = Path(asset.path)
     try:
-        content = path.read_bytes()
+        with path.open("rb"):
+            pass
     except PermissionError as exc:
         logger.warning("%s_not_readable path=%s error=%s", label, path, exc)
         raise HTTPException(status_code=403, detail=f"{label} file is not readable") from exc
     except OSError as exc:
         logger.warning("%s_read_failed path=%s error=%s", label, path, exc)
         raise HTTPException(status_code=404, detail=f"{label} file not found") from exc
-    return Response(content=content, media_type=asset.media_type, headers=asset.headers)
+    return FileResponse(
+        path=path,
+        media_type=asset.media_type,
+        filename=asset.filename,
+        headers=asset.headers,
+    )
 
 
 @router.get("/{project_id}/photos", response_model=PhotoListResponse)
@@ -57,10 +66,36 @@ def list_project_photos(
     date_to: Optional[date] = Query(None),
     folder_id: Optional[int] = None,
     folder_scope: str = "subtree",
+    pagination: Literal["offset", "cursor"] = "offset",
+    cursor: Optional[str] = None,
     project: Project = Depends(require_project),
     db: Session = Depends(get_db),
 ):
-    """List photos for a specific project with optional filters."""
+    """List photos with legacy offset or filter-bound opaque cursor pagination."""
+    if cursor and pagination != "cursor":
+        raise HTTPException(status_code=422, detail="cursor requires pagination=cursor")
+    if pagination == "cursor":
+        try:
+            result = ProjectPhotosQueryService(db).list_photos_cursor(
+                project_id=project_id,
+                cursor=cursor,
+                page_size=page_size,
+                date_from=date_from,
+                date_to=date_to,
+                folder_id=folder_id,
+                folder_scope=folder_scope,
+            )
+        except PhotoCursorError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return PhotoListResponse(
+            total=result.total,
+            page=result.page,
+            page_size=result.page_size,
+            items=result.items,
+            next_cursor=result.next_cursor,
+            has_more=result.has_more,
+        )
+
     total, photos = ProjectPhotosQueryService(db).list_photos(
         project_id=project_id,
         page=page,
@@ -112,6 +147,10 @@ def get_project_photo_thumbnail(
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    # FileResponse opens and streams the file after this handler returns.
+    # Release the SQLAlchemy connection before potentially slow NAS I/O so a
+    # page full of thumbnails cannot exhaust the connection pool.
+    db.close()
     return _photo_file_response(asset, label="Thumbnail")
 
 

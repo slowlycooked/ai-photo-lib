@@ -19,6 +19,8 @@ export const projectPhotosApi = {
     dateTo?: string | null,
     folderId?: number | null,
     folderScope: FolderScope = "subtree",
+    pagination: "offset" | "cursor" = "offset",
+    cursor?: string | null,
   ) =>
     request<PhotoListResponse>(
       `/projects/${projectId}/photos${qs({
@@ -28,6 +30,8 @@ export const projectPhotosApi = {
         date_to: dateTo,
         folder_id: folderId,
         folder_scope: folderScope,
+        pagination,
+        cursor,
       })}`,
     ),
 

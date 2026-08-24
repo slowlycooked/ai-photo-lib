@@ -27,6 +27,10 @@ export function MobileHomePage() {
     [query.data],
   );
   const photoIds = useMemo(() => photos.map((photo) => photo.id), [photos]);
+  const priorityPhotoIds = useMemo(
+    () => new Set(photos.slice(0, 6).map((photo) => photo.id)),
+    [photos],
+  );
 
   const grouped = useMemo(() => {
     const map = new Map<string, Photo[]>();
@@ -69,7 +73,12 @@ export function MobileHomePage() {
               {month}
             </h2>
             {currentProjectId != null && (
-              <PhotoThumbGrid projectId={currentProjectId} photos={monthPhotos} photoIds={photoIds} />
+              <PhotoThumbGrid
+                projectId={currentProjectId}
+                photos={monthPhotos}
+                photoIds={photoIds}
+                priorityPhotoIds={priorityPhotoIds}
+              />
             )}
           </section>
         ))}

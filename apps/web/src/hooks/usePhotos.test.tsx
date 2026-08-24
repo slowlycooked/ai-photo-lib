@@ -31,16 +31,20 @@ describe("usePhotos", () => {
     photosMock.mockReset();
   });
 
-  it("uses requested page params to avoid repeated page fetches", async () => {
-    photosMock.mockImplementation((_projectId: number, page: number, pageSize: number) =>
-      Promise.resolve({
+  it("uses each returned cursor once when fetching more photos", async () => {
+    photosMock.mockImplementation((...args: unknown[]) => {
+      const pageSize = args[2] as number;
+      const cursor = args[8] as string | null;
+      const logicalPage = cursor === null ? 1 : cursor === "cursor-2" ? 2 : 3;
+      return Promise.resolve({
         total: 500,
-        // Simulate a backend that incorrectly echoes page=1 in every response.
-        page: 1,
+        page: logicalPage,
         page_size: pageSize,
-        items: buildItems(page, pageSize),
-      }),
-    );
+        items: buildItems(logicalPage, pageSize),
+        next_cursor: logicalPage < 3 ? `cursor-${logicalPage + 1}` : null,
+        has_more: logicalPage < 3,
+      });
+    });
 
     const { result } = renderHook(() => usePhotos({ projectId: 1 }), {
       wrapper: createQueryClientWrapper().wrapper,
@@ -61,19 +65,24 @@ describe("usePhotos", () => {
       expect(result.current.data?.pages.length).toBe(3);
     });
 
-    const requestedPages = photosMock.mock.calls.map((call) => call[1]);
-    expect(requestedPages).toEqual([1, 2, 3]);
+    expect(photosMock.mock.calls.map((call) => call[7])).toEqual(["cursor", "cursor", "cursor"]);
+    expect(photosMock.mock.calls.map((call) => call[8])).toEqual([null, "cursor-2", "cursor-3"]);
   });
 
-  it("stops requesting next pages when last page is shorter than page_size", async () => {
-    photosMock.mockImplementation((_projectId: number, page: number, pageSize: number) =>
-      Promise.resolve({
+  it("stops requesting next pages when the backend clears has_more", async () => {
+    photosMock.mockImplementation((...args: unknown[]) => {
+      const pageSize = args[2] as number;
+      const cursor = args[8] as string | null;
+      const logicalPage = cursor === null ? 1 : 2;
+      return Promise.resolve({
         total: 70,
-        page,
+        page: logicalPage,
         page_size: pageSize,
-        items: page === 1 ? buildItems(page, 50) : buildItems(page, 20),
-      }),
-    );
+        items: logicalPage === 1 ? buildItems(1, 50) : buildItems(2, 20),
+        next_cursor: logicalPage === 1 ? "cursor-2" : null,
+        has_more: logicalPage === 1,
+      });
+    });
 
     const { result } = renderHook(() => usePhotos({ projectId: 1 }), {
       wrapper: createQueryClientWrapper().wrapper,
@@ -92,7 +101,6 @@ describe("usePhotos", () => {
       expect(result.current.hasNextPage).toBe(false);
     });
 
-    const requestedPages = photosMock.mock.calls.map((call) => call[1]);
-    expect(requestedPages).toEqual([1, 2]);
+    expect(photosMock.mock.calls.map((call) => call[8])).toEqual([null, "cursor-2"]);
   });
 });

@@ -15,31 +15,31 @@ interface UsePhotosOptions {
 export function usePhotos({ projectId, dateFrom, dateTo, folderId, folderScope = "subtree" }: UsePhotosOptions = {}) {
   return useInfiniteQuery({
     queryKey: queryKeys.photos(projectId ?? null, dateFrom, dateTo, folderId, folderScope),
-    queryFn: ({ pageParam = 1 }) =>
+    queryFn: ({ pageParam }) =>
       projectId != null
-        ? api.projectPhotos.list(projectId, pageParam as number, PAGE_SIZE, dateFrom, dateTo, folderId, folderScope)
-        : Promise.resolve({ total: 0, page: 1, page_size: PAGE_SIZE, items: [] }),
-    initialPageParam: 1,
+        ? api.projectPhotos.list(
+            projectId,
+            1,
+            PAGE_SIZE,
+            dateFrom,
+            dateTo,
+            folderId,
+            folderScope,
+            "cursor",
+            pageParam,
+          )
+        : Promise.resolve({
+            total: 0,
+            page: 1,
+            page_size: PAGE_SIZE,
+            items: [],
+            next_cursor: null,
+            has_more: false,
+          }),
+    initialPageParam: null as string | null,
     enabled: projectId != null,
-    getNextPageParam: (last, allPages, _lastPageParam, allPageParams) => {
-      if (last.items.length < last.page_size) {
-        return undefined;
-      }
-
-      const loadedUniqueCount = new Set(allPages.flatMap((page) => page.items.map((item) => item.id))).size;
-      if (loadedUniqueCount >= last.total) {
-        return undefined;
-      }
-
-      const requestedPages = allPageParams
-        .map((value) => Number(value))
-        .filter((value) => Number.isInteger(value) && value > 0);
-      const maxRequestedPage = requestedPages.length > 0 ? Math.max(...requestedPages) : 1;
-      const nextPage = maxRequestedPage + 1;
-
-      // Never request the same page twice for a single query key.
-      return requestedPages.includes(nextPage) ? undefined : nextPage;
-    },
+    getNextPageParam: (last) =>
+      last.has_more && last.next_cursor ? last.next_cursor : undefined,
     staleTime: 30_000,
   });
 }

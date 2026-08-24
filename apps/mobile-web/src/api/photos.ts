@@ -2,9 +2,20 @@ import { BASE, qs, request } from "./client";
 import type { PhotoDetail, PhotoListResponse } from "./types";
 
 export const photosApi = {
-  list: (projectId: number, page = 1, pageSize = 50) =>
+  list: (
+    projectId: number,
+    page = 1,
+    pageSize = 50,
+    pagination: "offset" | "cursor" = "offset",
+    cursor?: string | null,
+  ) =>
     request<PhotoListResponse>(
-      `/projects/${projectId}/photos${qs({ page, page_size: pageSize })}`,
+      `/projects/${projectId}/photos${qs({
+        page,
+        page_size: pageSize,
+        pagination,
+        cursor,
+      })}`,
     ),
 
   get: (projectId: number, photoId: number) =>

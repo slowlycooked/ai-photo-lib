@@ -17,7 +17,10 @@ os.environ.setdefault("OPENAI_VISION_MODEL", "test-model")
 
 from app.models.photo import Photo  # noqa: E402
 from app.models.project import Project  # noqa: E402
-from app.services.project_photos_query_service import ProjectPhotosQueryService  # noqa: E402
+from app.services.project_photos_query_service import (  # noqa: E402
+    PhotoCursorError,
+    ProjectPhotosQueryService,
+)
 
 
 def _build_session():
@@ -62,7 +65,7 @@ def test_list_photos_uses_id_desc_as_stable_tie_breaker() -> None:
                     project_id=1,
                     file_path=f"/tmp/photos/{photo_id}.jpg",
                     file_name=f"{photo_id}.jpg",
-                    taken_at=same_taken_at,
+                    taken_at=same_taken_at if photo_id > 2 else None,
                     created_at=same_created_at,
                     updated_at=same_created_at,
                 )
@@ -140,3 +143,136 @@ def test_list_photos_clamps_page_before_building_offset() -> None:
 
         assert total == 3
         assert [photo.id for photo in photos] == [3, 2]
+
+
+def test_cursor_pagination_returns_stable_non_overlapping_pages() -> None:
+    SessionLocal = _build_session()
+
+    with SessionLocal() as db:
+        db.add(
+            Project(
+                id=1,
+                name="default",
+                photo_library_path="/tmp/photos",
+                thumbnail_path="/tmp/thumbs",
+                is_default=True,
+            )
+        )
+        same_taken_at = datetime(2026, 1, 1, 12, 0, 0)
+        same_created_at = datetime(2026, 1, 2, 8, 30, 0)
+        for photo_id in range(1, 7):
+            db.add(
+                Photo(
+                    id=photo_id,
+                    project_id=1,
+                    file_path=f"/tmp/photos/{photo_id}.jpg",
+                    file_name=f"{photo_id}.jpg",
+                    taken_at=same_taken_at if photo_id > 2 else None,
+                    created_at=same_created_at,
+                    updated_at=same_created_at,
+                )
+            )
+        db.commit()
+
+        service = ProjectPhotosQueryService(db)
+        statements: list[str] = []
+
+        def record_statement(_conn, _cursor, statement, _params, _context, _executemany):
+            statements.append(statement.lower())
+
+        sa.event.listen(db.get_bind(), "before_cursor_execute", record_statement)
+        first = service.list_photos_cursor(
+            project_id=1,
+            cursor=None,
+            page_size=2,
+            date_from=None,
+            date_to=None,
+            folder_id=None,
+            folder_scope="subtree",
+        )
+        assert any("count(" in statement for statement in statements)
+        statements.clear()
+        second = service.list_photos_cursor(
+            project_id=1,
+            cursor=first.next_cursor,
+            page_size=2,
+            date_from=None,
+            date_to=None,
+            folder_id=None,
+            folder_scope="subtree",
+        )
+        assert all("count(" not in statement for statement in statements)
+        third = service.list_photos_cursor(
+            project_id=1,
+            cursor=second.next_cursor,
+            page_size=2,
+            date_from=None,
+            date_to=None,
+            folder_id=None,
+            folder_scope="subtree",
+        )
+
+        assert [photo.id for photo in first.items] == [6, 5]
+        assert [photo.id for photo in second.items] == [4, 3]
+        assert [photo.id for photo in third.items] == [2, 1]
+        assert [first.page, second.page, third.page] == [1, 2, 3]
+        assert [first.total, second.total, third.total] == [6, 6, 6]
+        assert first.has_more is True
+        assert second.has_more is True
+        assert third.has_more is False
+        assert third.next_cursor is None
+
+
+def test_cursor_pagination_rejects_filter_mismatch() -> None:
+    SessionLocal = _build_session()
+
+    with SessionLocal() as db:
+        db.add(
+            Project(
+                id=1,
+                name="default",
+                photo_library_path="/tmp/photos",
+                thumbnail_path="/tmp/thumbs",
+                is_default=True,
+            )
+        )
+        created_at = datetime(2026, 1, 2, 8, 30, 0)
+        for photo_id in range(1, 4):
+            db.add(
+                Photo(
+                    id=photo_id,
+                    project_id=1,
+                    file_path=f"/tmp/photos/{photo_id}.jpg",
+                    file_name=f"{photo_id}.jpg",
+                    taken_at=created_at,
+                    created_at=created_at,
+                    updated_at=created_at,
+                )
+            )
+        db.commit()
+
+        service = ProjectPhotosQueryService(db)
+        first = service.list_photos_cursor(
+            project_id=1,
+            cursor=None,
+            page_size=2,
+            date_from=None,
+            date_to=None,
+            folder_id=None,
+            folder_scope="subtree",
+        )
+
+        try:
+            service.list_photos_cursor(
+                project_id=1,
+                cursor=first.next_cursor,
+                page_size=3,
+                date_from=None,
+                date_to=None,
+                folder_id=None,
+                folder_scope="subtree",
+            )
+        except PhotoCursorError as exc:
+            assert "does not match" in str(exc)
+        else:
+            raise AssertionError("Expected a mismatched cursor to be rejected")
