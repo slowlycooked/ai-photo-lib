@@ -3,7 +3,7 @@ from __future__ import annotations
 import csv
 import io
 from pathlib import Path
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse, StreamingResponse
@@ -122,6 +122,7 @@ def update_photo_quarantine_settings(
 )
 def list_photo_quarantine_items(
     status: Optional[str] = None,
+    human_label: Optional[Literal["KEEP", "TRASH", "UNLABELED"]] = None,
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     project: Project = Depends(require_project),
@@ -130,6 +131,7 @@ def list_photo_quarantine_items(
     total, items = PhotoQuarantineService(db).list_items(
         project_id=project.id,
         status=status,
+        human_label=human_label,
         limit=limit,
         offset=offset,
     )

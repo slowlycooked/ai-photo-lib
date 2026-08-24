@@ -21,9 +21,15 @@ export const photoQuarantineApi = {
       body: JSON.stringify(body),
     }),
 
-  list: (projectId: number, status?: string, limit = 200, offset = 0) =>
+  list: (
+    projectId: number,
+    status?: string,
+    limit = 200,
+    offset = 0,
+    humanLabel?: "KEEP" | "TRASH" | "UNLABELED",
+  ) =>
     request<PhotoQuarantineListResponse>(
-      `/projects/${projectId}/photo-quarantine/items${qs({ status, limit, offset })}`,
+      `/projects/${projectId}/photo-quarantine/items${qs({ status, human_label: humanLabel, limit, offset })}`,
     ),
 
   getCalibration: (projectId: number) =>

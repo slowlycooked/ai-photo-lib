@@ -73,6 +73,7 @@ export function PhotoQuarantinePage() {
   const projectExists = selectedProjectId != null && projects.some((project) => project.id === selectedProjectId);
   const canManage = canManageProjects(auth.session);
   const [statusFilter, setStatusFilter] = useState<string>(REVIEW_STATUSES);
+  const [labelFilter, setLabelFilter] = useState<"" | "KEEP" | "TRASH" | "UNLABELED">("");
   const [page, setPage] = useState(0);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [form, setForm] = useState<ProjectPhotoQuarantineSettingsUpdate | null>(null);
@@ -90,8 +91,19 @@ export function PhotoQuarantinePage() {
     enabled: projectExists,
   });
   const itemsQuery = useQuery({
-    queryKey: queryKeys.photoQuarantineItems(selectedProjectId, statusFilter, page * PAGE_SIZE),
-    queryFn: () => api.photoQuarantine.list(selectedProjectId!, statusFilter, PAGE_SIZE, page * PAGE_SIZE),
+    queryKey: queryKeys.photoQuarantineItems(
+      selectedProjectId,
+      statusFilter,
+      page * PAGE_SIZE,
+      labelFilter,
+    ),
+    queryFn: () => api.photoQuarantine.list(
+      selectedProjectId!,
+      statusFilter,
+      PAGE_SIZE,
+      page * PAGE_SIZE,
+      labelFilter || undefined,
+    ),
     enabled: projectExists,
     refetchInterval: 30_000,
   });
@@ -130,7 +142,7 @@ export function PhotoQuarantinePage() {
   useEffect(() => {
     setPage(0);
     setSelectedIds(new Set());
-  }, [statusFilter, selectedProjectId]);
+  }, [statusFilter, labelFilter, selectedProjectId]);
 
   const refreshItems = () => {
     queryClient.invalidateQueries({ queryKey: ["photo-quarantine-items", selectedProjectId] });
@@ -193,6 +205,10 @@ export function PhotoQuarantinePage() {
   });
 
   const items = itemsQuery.data?.items ?? [];
+  const selectedItems = useMemo(
+    () => items.filter((item) => selectedIds.has(item.id)),
+    [items, selectedIds],
+  );
   const restorableSelected = useMemo(
     () => items.filter((item) => selectedIds.has(item.id) && RESTORABLE_STATUSES.has(item.status)),
     [items, selectedIds],
@@ -341,13 +357,16 @@ export function PhotoQuarantinePage() {
             <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className="rounded-md border border-hairline bg-canvas px-3 py-2 text-body-sm">
               {STATUS_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
             </select>
+            <select value={labelFilter} onChange={(event) => setLabelFilter(event.target.value as typeof labelFilter)} className="rounded-md border border-hairline bg-canvas px-3 py-2 text-body-sm" aria-label="人工标签筛选">
+              <option value="">全部标签</option><option value="UNLABELED">未标注</option><option value="KEEP">应保留</option><option value="TRASH">垃圾</option>
+            </select>
             <span className="text-caption-sm text-mute">共 {itemsQuery.data?.total ?? 0} 项</span>
             <button type="button" onClick={() => itemsQuery.refetch()} className="text-mute hover:text-ink" aria-label="刷新"><RefreshCw className="w-4 h-4" /></button>
           </div>
           <div className="flex flex-wrap gap-2">
             {canManage && reviewSelected.length > 0 && <button type="button" onClick={() => batchMutation.mutate({ action: "KEEP", ids: reviewSelected.map((item) => item.id) })} disabled={batchMutation.isPending} className="px-3 py-2 rounded-md border border-hairline text-btn-sm font-bold hover:bg-surface-card disabled:opacity-50">批量保留（{reviewSelected.length}）</button>}
-            {canManage && reviewSelected.length > 0 && <button type="button" onClick={() => batchMutation.mutate({ action: "LABEL_KEEP", ids: reviewSelected.map((item) => item.id) })} disabled={batchMutation.isPending} className="px-3 py-2 rounded-md border border-hairline text-btn-sm font-bold hover:bg-surface-card disabled:opacity-50">仅标记应保留（{reviewSelected.length}）</button>}
-            {canManage && reviewSelected.length > 0 && <button type="button" onClick={() => batchMutation.mutate({ action: "LABEL_TRASH", ids: reviewSelected.map((item) => item.id) })} disabled={batchMutation.isPending} className="px-3 py-2 rounded-md border border-hairline text-btn-sm font-bold hover:bg-surface-card disabled:opacity-50">仅标记垃圾（{reviewSelected.length}）</button>}
+            {canManage && selectedItems.length > 0 && <button type="button" onClick={() => batchMutation.mutate({ action: "LABEL_KEEP", ids: selectedItems.map((item) => item.id) })} disabled={batchMutation.isPending} className="px-3 py-2 rounded-md border border-hairline text-btn-sm font-bold hover:bg-surface-card disabled:opacity-50">仅标记应保留（{selectedItems.length}）</button>}
+            {canManage && selectedItems.length > 0 && <button type="button" onClick={() => batchMutation.mutate({ action: "LABEL_TRASH", ids: selectedItems.map((item) => item.id) })} disabled={batchMutation.isPending} className="px-3 py-2 rounded-md border border-hairline text-btn-sm font-bold hover:bg-surface-card disabled:opacity-50">仅标记垃圾（{selectedItems.length}）</button>}
             {canManage && reviewSelected.length > 0 && <button type="button" onClick={() => batchMutation.mutate({ action: "MOVE", ids: reviewSelected.map((item) => item.id) })} disabled={batchMutation.isPending} className="px-3 py-2 rounded-md bg-primary text-white text-btn-sm font-bold disabled:opacity-50">批量移至待删除区（{reviewSelected.length}）</button>}
             {canManage && restorableSelected.length > 0 && <button type="button" onClick={() => batchMutation.mutate({ action: "RESTORE", ids: restorableSelected.map((item) => item.id) })} disabled={batchMutation.isPending} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-hairline text-btn-sm font-bold hover:bg-surface-card disabled:opacity-50"><ArchiveRestore className="w-4 h-4" />批量放回（{restorableSelected.length}）</button>}
           </div>
@@ -363,7 +382,7 @@ export function PhotoQuarantinePage() {
               <article key={item.id} className="overflow-hidden rounded-lg border border-hairline bg-canvas">
                 <div className="relative aspect-video bg-surface-card">
                   <img src={`${BASE}/projects/${selectedProjectId}/photo-quarantine/items/${item.id}/thumbnail`} alt="待删除候选图片" className="h-full w-full object-contain" loading="lazy" />
-                  {canManage && (item.status === "review" || RESTORABLE_STATUSES.has(item.status)) && <input type="checkbox" className="absolute top-3 left-3 w-4 h-4" aria-label="选择审核项" checked={selectedIds.has(item.id)} onChange={(event) => setSelectedIds((current) => { const next = new Set(current); event.target.checked ? next.add(item.id) : next.delete(item.id); return next; })} />}
+                  {canManage && item.status !== "deleted_confirmed" && <input type="checkbox" className="absolute top-3 left-3 w-4 h-4" aria-label="选择审核项" checked={selectedIds.has(item.id)} onChange={(event) => setSelectedIds((current) => { const next = new Set(current); event.target.checked ? next.add(item.id) : next.delete(item.id); return next; })} />}
                   <span className="absolute top-2 right-2 rounded-full bg-black/70 px-2 py-1 text-[11px] text-white">{STATUS_LABELS[item.status] ?? item.status}</span>
                 </div>
                 <div className="p-4 space-y-3">
@@ -380,8 +399,8 @@ export function PhotoQuarantinePage() {
                     <div className="flex flex-wrap gap-2">
                       {item.status === "review" && <button type="button" onClick={() => itemMutation.mutate({ item, action: "move" })} disabled={itemMutation.isPending} className="px-3 py-1.5 rounded-md bg-primary text-white text-btn-sm font-bold disabled:opacity-50">移至待删除区</button>}
                       {item.status === "review" && <button type="button" onClick={() => itemMutation.mutate({ item, action: "keep" })} disabled={itemMutation.isPending} className="px-3 py-1.5 rounded-md border border-hairline text-btn-sm font-bold hover:bg-surface-card disabled:opacity-50">保留此图</button>}
-                      {item.status === "review" && <button type="button" onClick={() => itemMutation.mutate({ item, action: "labelKeep" })} disabled={itemMutation.isPending} className="px-3 py-1.5 rounded-md border border-hairline text-btn-sm text-mute hover:text-ink disabled:opacity-50">仅标记应保留</button>}
-                      {item.status === "review" && <button type="button" onClick={() => itemMutation.mutate({ item, action: "labelTrash" })} disabled={itemMutation.isPending} className="px-3 py-1.5 rounded-md border border-hairline text-btn-sm text-mute hover:text-ink disabled:opacity-50">仅标记垃圾</button>}
+                      {item.status !== "deleted_confirmed" && <button type="button" onClick={() => itemMutation.mutate({ item, action: "labelKeep" })} disabled={itemMutation.isPending} className="px-3 py-1.5 rounded-md border border-hairline text-btn-sm text-mute hover:text-ink disabled:opacity-50">仅标记应保留</button>}
+                      {item.status !== "deleted_confirmed" && <button type="button" onClick={() => itemMutation.mutate({ item, action: "labelTrash" })} disabled={itemMutation.isPending} className="px-3 py-1.5 rounded-md border border-hairline text-btn-sm text-mute hover:text-ink disabled:opacity-50">仅标记垃圾</button>}
                       {RESTORABLE_STATUSES.has(item.status) && <button type="button" onClick={() => itemMutation.mutate({ item, action: "restore" })} disabled={itemMutation.isPending} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-md border border-hairline text-btn-sm font-bold hover:bg-surface-card disabled:opacity-50"><ArchiveRestore className="w-3.5 h-3.5" />放回原处</button>}
                       {item.status === "quarantined" && <button type="button" onClick={() => { if (window.confirm("仅当你已在文件系统中人工删除该文件时才确认。继续？")) itemMutation.mutate({ item, action: "confirm" }); }} disabled={itemMutation.isPending} className="px-3 py-1.5 rounded-md border border-hairline text-btn-sm text-mute hover:text-ink disabled:opacity-50">确认已人工删除</button>}
                     </div>

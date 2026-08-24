@@ -165,7 +165,7 @@ describe("PhotoQuarantinePage", () => {
 
     await user.click(await screen.findByRole("button", { name: "下一页" }));
 
-    await waitFor(() => expect(listMock).toHaveBeenCalledWith(1, expect.any(String), 24, 24));
+    await waitFor(() => expect(listMock).toHaveBeenCalledWith(1, expect.any(String), 24, 24, undefined));
     expect(await screen.findByText("第 2 / 2 页")).toBeInTheDocument();
   });
 
@@ -214,5 +214,20 @@ describe("PhotoQuarantinePage", () => {
 
     await waitFor(() => expect(labelMock).toHaveBeenCalledWith(1, 7, "KEEP"));
     expect(moveMock).not.toHaveBeenCalled();
+  });
+
+  it("requests only unlabelled calibration items", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.selectOptions(await screen.findByLabelText("人工标签筛选"), "UNLABELED");
+
+    await waitFor(() => expect(listMock).toHaveBeenLastCalledWith(
+      1,
+      expect.any(String),
+      24,
+      0,
+      "UNLABELED",
+    ));
   });
 });

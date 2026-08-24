@@ -270,3 +270,22 @@ def test_restore_records_put_back_as_keep_feedback(quarantine_fixture) -> None:
 
         assert restored.human_label == "KEEP"
         assert restored.human_labeled_by == "martin"
+
+
+def test_list_items_can_select_unlabeled_calibration_sample(quarantine_fixture) -> None:
+    engine, _library, trash, _original, _digest = quarantine_fixture
+    with Session(engine) as db:
+        service = PhotoQuarantineService(db, root=trash)
+        total, items = service.list_items(project_id=1, human_label="UNLABELED")
+        assert total == 1
+        assert [item.id for item in items] == [100]
+
+        service.label(
+            project_id=1,
+            item_id=100,
+            label="KEEP",
+            labeled_by="martin",
+        )
+        total, items = service.list_items(project_id=1, human_label="UNLABELED")
+        assert total == 0
+        assert items == []
