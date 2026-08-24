@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -13,6 +14,9 @@ from ..config import settings
 from ..models.photo import Photo
 from ..models.photo_quarantine import PhotoQuarantineItem, ProjectPhotoQuarantineSettings
 from ..models.project import Project
+
+
+logger = logging.getLogger(__name__)
 
 
 class PhotoQuarantineError(RuntimeError):
@@ -338,6 +342,21 @@ class PhotoQuarantineService:
                         item_id=item_id,
                         error_code="invalid_item",
                         message=str(exc),
+                    )
+                )
+            except Exception:  # noqa: BLE001 - a batch must report partial completion
+                self._db.rollback()
+                logger.exception(
+                    "photo_quarantine.batch_item_failed project_id=%d item_id=%d action=%s",
+                    project_id,
+                    item_id,
+                    action,
+                )
+                results.append(
+                    QuarantineBatchItemResult(
+                        item_id=item_id,
+                        error_code="operation_failed",
+                        message="Operation failed; check server logs",
                     )
                 )
         return QuarantineBatchResult(results=results)

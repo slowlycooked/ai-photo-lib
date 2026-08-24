@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from sqlalchemy import create_engine
@@ -188,3 +189,26 @@ def test_batch_action_cannot_mutate_another_project_item(quarantine_fixture) -> 
         item = db.query(PhotoQuarantineItem).filter(PhotoQuarantineItem.id == 100).one()
         assert item.status == "review"
         assert original.exists()
+
+
+def test_batch_action_redacts_unexpected_io_failure(quarantine_fixture) -> None:
+    engine, _library, trash, _original, _digest = quarantine_fixture
+    with Session(engine) as db:
+        service = PhotoQuarantineService(db, root=trash)
+
+        def fail_keep(**_kwargs):
+            raise OSError("private NAS path details")
+
+        service.keep = fail_keep  # type: ignore[method-assign]
+        with patch("app.services.photo_quarantine_service.logger.exception") as log_exception:
+            result = service.batch_action(project_id=1, item_ids=[100], action="KEEP")
+
+        assert result.failed == 1
+        assert result.results[0].error_code == "operation_failed"
+        assert result.results[0].message == "Operation failed; check server logs"
+        log_exception.assert_called_once_with(
+            "photo_quarantine.batch_item_failed project_id=%d item_id=%d action=%s",
+            1,
+            100,
+            "KEEP",
+        )
