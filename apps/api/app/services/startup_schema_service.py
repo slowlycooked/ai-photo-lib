@@ -76,6 +76,11 @@ REQUIRED_INDEXES: dict[str, tuple[str, ...]] = {
     ),
 }
 
+REQUIRED_PARTIAL_UNIQUE_INDEXES = {
+    ("project_tasks", index_name)
+    for index_name in REQUIRED_INDEXES["project_tasks"]
+}
+
 VECTOR_DIMENSIONS: dict[str, dict[str, int]] = {
     "photo_embeddings": {
         "caption_embedding": DB_EMBEDDING_DIMENSION,
@@ -198,7 +203,7 @@ def collect_startup_schema_issues(engine: Engine) -> list[str]:
                 missing_indexes.append(f"{table_name}.{index_name}")
                 continue
             definition = _read_index_definition(engine, table_name, index_name)
-            if definition:
+            if definition and (table_name, index_name) in REQUIRED_PARTIAL_UNIQUE_INDEXES:
                 normalized = definition.upper()
                 if "UNIQUE" not in normalized or "WHERE" not in normalized:
                     invalid_indexes.append(f"{table_name}.{index_name}")

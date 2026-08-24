@@ -207,6 +207,38 @@ class StartupSchemaServiceTest(unittest.TestCase):
             issues,
         )
 
+    def test_accepts_required_non_unique_lookup_index(self):
+        engine = self._engine()
+        self._bootstrap(engine, revision=_alembic_head_revision())
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "CREATE TABLE photo_quarantine_items ("
+                    "id INTEGER PRIMARY KEY, "
+                    "project_id INTEGER, "
+                    "status TEXT, "
+                    "created_at TEXT"
+                    ")"
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX ix_photo_quarantine_items_project_status_created "
+                    "ON photo_quarantine_items (project_id, status, created_at)"
+                )
+            )
+
+        issues = collect_startup_schema_issues(engine)
+
+        self.assertFalse(
+            any(
+                "photo_quarantine_items.ix_photo_quarantine_items_project_status_created"
+                in issue
+                for issue in issues
+            ),
+            issues,
+        )
+
     def test_collects_alembic_revision_not_head(self):
         engine = self._engine()
         self._bootstrap(engine, revision="026_add_semantic_concepts")
