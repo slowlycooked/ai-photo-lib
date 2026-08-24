@@ -1,6 +1,16 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArchiveRestore, Loader2, Play, RefreshCw, Save, ShieldCheck, Trash2 } from "lucide-react";
+import {
+  ArchiveRestore,
+  BarChart3,
+  Download,
+  Loader2,
+  Play,
+  RefreshCw,
+  Save,
+  ShieldCheck,
+  Trash2,
+} from "lucide-react";
 import { Navigate, useParams } from "react-router-dom";
 import {
   api,
@@ -85,6 +95,11 @@ export function PhotoQuarantinePage() {
     enabled: projectExists,
     refetchInterval: 30_000,
   });
+  const calibrationQuery = useQuery({
+    queryKey: queryKeys.photoQuarantineCalibration(selectedProjectId),
+    queryFn: () => api.photoQuarantine.getCalibration(selectedProjectId!),
+    enabled: projectExists,
+  });
   const taskQuery = useQuery({
     queryKey: ["photo-quarantine-latest-task", selectedProjectId],
     queryFn: () => api.projectTasks.list(selectedProjectId!, {
@@ -120,6 +135,9 @@ export function PhotoQuarantinePage() {
   const refreshItems = () => {
     queryClient.invalidateQueries({ queryKey: ["photo-quarantine-items", selectedProjectId] });
     queryClient.invalidateQueries({ queryKey: queryKeys.photosBase(selectedProjectId) });
+    queryClient.invalidateQueries({
+      queryKey: queryKeys.photoQuarantineCalibration(selectedProjectId),
+    });
   };
 
   const saveMutation = useMutation({
@@ -140,10 +158,12 @@ export function PhotoQuarantinePage() {
     onError: (error: Error) => setMessage(`启动失败：${error.message}`),
   });
   const itemMutation = useMutation({
-    mutationFn: ({ item, action }: { item: PhotoQuarantineItem; action: "move" | "restore" | "confirm" | "keep" }) => {
+    mutationFn: ({ item, action }: { item: PhotoQuarantineItem; action: "move" | "restore" | "confirm" | "keep" | "labelKeep" | "labelTrash" }) => {
       if (action === "move") return api.photoQuarantine.move(selectedProjectId!, item.id);
       if (action === "restore") return api.photoQuarantine.restore(selectedProjectId!, item.id);
       if (action === "keep") return api.photoQuarantine.keep(selectedProjectId!, item.id);
+      if (action === "labelKeep") return api.photoQuarantine.label(selectedProjectId!, item.id, "KEEP");
+      if (action === "labelTrash") return api.photoQuarantine.label(selectedProjectId!, item.id, "TRASH");
       return api.photoQuarantine.confirmDeleted(selectedProjectId!, item.id);
     },
     onSuccess: (_, variables) => {
@@ -153,10 +173,18 @@ export function PhotoQuarantinePage() {
     onError: (error: Error) => setMessage(`操作失败：${error.message}`),
   });
   const batchMutation = useMutation({
-    mutationFn: ({ action, ids }: { action: "KEEP" | "MOVE" | "RESTORE"; ids: number[] }) =>
+    mutationFn: ({ action, ids }: { action: "KEEP" | "MOVE" | "RESTORE" | "LABEL_KEEP" | "LABEL_TRASH"; ids: number[] }) =>
       api.photoQuarantine.batch(selectedProjectId!, action, ids),
     onSuccess: (result, variables) => {
-      const verb = variables.action === "RESTORE" ? "放回" : variables.action === "MOVE" ? "移入待删除区" : "保留";
+      const verb = variables.action === "RESTORE"
+        ? "放回"
+        : variables.action === "MOVE"
+          ? "移入待删除区"
+          : variables.action === "LABEL_TRASH"
+            ? "标记为垃圾"
+            : variables.action === "LABEL_KEEP"
+              ? "标记为应保留"
+              : "保留";
       setMessage(`已${verb} ${result.succeeded} 张${result.failed ? `，${result.failed} 张失败，请逐项检查` : ""}`);
       setSelectedIds(new Set());
       refreshItems();
@@ -175,6 +203,7 @@ export function PhotoQuarantinePage() {
   );
   const latestTask = taskQuery.data?.items[0];
   const taskProgress = latestTask?.progress_payload ?? latestTask?.result_payload;
+  const calibration = calibrationQuery.data;
 
   if (selectedProjectId == null) {
     return <main className="max-w-6xl mx-auto px-6 py-8 text-mute">请先选择一个项目。</main>;
@@ -214,6 +243,61 @@ export function PhotoQuarantinePage() {
           {latestTask.error_message ? ` · ${latestTask.error_message}` : ""}
         </div>
       )}
+
+      <section className="rounded-lg border border-hairline bg-canvas p-5 space-y-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 className="font-bold text-ink flex items-center gap-2">
+              <BarChart3 className="w-4 h-4 text-primary" /> 校准报告
+            </h2>
+            <p className="mt-1 text-caption-sm text-mute">
+              用人工 KEEP/TRASH 标签核验双重识别结果；放回照片会自动记为 KEEP 误判反馈。
+            </p>
+          </div>
+          <a
+            href={`${BASE}/projects/${selectedProjectId}/photo-quarantine/calibration.csv`}
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-hairline text-btn-sm font-bold hover:bg-surface-card"
+          >
+            <Download className="w-4 h-4" /> 导出 CSV
+          </a>
+        </div>
+        {calibrationQuery.isLoading ? (
+          <div className="text-body-sm text-mute">正在统计人工标签…</div>
+        ) : calibrationQuery.isError || !calibration ? (
+          <div className="text-body-sm text-danger">校准报告加载失败。</div>
+        ) : (
+          <>
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+              <MetricCard label="已标注" value={`${calibration.labeled_total} / ${calibration.target_sample_size}`} />
+              <MetricCard label="误删风险项" value={String(calibration.false_positive)} danger={calibration.false_positive > 0} />
+              <MetricCard label="垃圾判定精确率" value={formatPercent(calibration.precision)} />
+              <MetricCard label="垃圾召回率" value={formatPercent(calibration.recall)} />
+            </div>
+            <div className={`rounded-md border px-4 py-3 text-body-sm ${calibration.ready_for_auto_move ? "border-success/40 bg-success/5 text-ink" : "border-hairline bg-surface-card text-mute"}`}>
+              {calibration.ready_for_auto_move
+                ? "校准门槛已满足。仍需人工确认后才能关闭校准模式。"
+                : `尚未达到自动移动门槛：至少 ${calibration.target_sample_size} 张，KEEP/TRASH 各不少于 ${calibration.minimum_per_label} 张，并且误删风险项必须为 0。`}
+            </div>
+            {calibration.categories.length > 0 && (
+              <div className="overflow-x-auto">
+                <table className="w-full text-body-sm">
+                  <thead className="text-left text-mute"><tr><th className="py-2">类别</th><th>样本</th><th>应保留</th><th>垃圾</th><th>误删风险</th><th>漏删</th></tr></thead>
+                  <tbody>
+                    {calibration.categories.map((category) => (
+                      <tr key={category.classification} className="border-t border-hairline">
+                        <td className="py-2 pr-3 text-ink">{CLASS_LABELS[category.classification] ?? category.classification}</td>
+                        <td>{category.labeled_total}</td><td>{category.human_keep}</td><td>{category.human_trash}</td>
+                        <td className={category.false_positive > 0 ? "text-danger font-bold" : ""}>{category.false_positive}</td>
+                        <td>{category.false_negative}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </>
+        )}
+      </section>
 
       <section className="rounded-lg border border-hairline bg-canvas p-5 space-y-4">
         <div className="flex items-center gap-2">
@@ -262,6 +346,8 @@ export function PhotoQuarantinePage() {
           </div>
           <div className="flex flex-wrap gap-2">
             {canManage && reviewSelected.length > 0 && <button type="button" onClick={() => batchMutation.mutate({ action: "KEEP", ids: reviewSelected.map((item) => item.id) })} disabled={batchMutation.isPending} className="px-3 py-2 rounded-md border border-hairline text-btn-sm font-bold hover:bg-surface-card disabled:opacity-50">批量保留（{reviewSelected.length}）</button>}
+            {canManage && reviewSelected.length > 0 && <button type="button" onClick={() => batchMutation.mutate({ action: "LABEL_KEEP", ids: reviewSelected.map((item) => item.id) })} disabled={batchMutation.isPending} className="px-3 py-2 rounded-md border border-hairline text-btn-sm font-bold hover:bg-surface-card disabled:opacity-50">仅标记应保留（{reviewSelected.length}）</button>}
+            {canManage && reviewSelected.length > 0 && <button type="button" onClick={() => batchMutation.mutate({ action: "LABEL_TRASH", ids: reviewSelected.map((item) => item.id) })} disabled={batchMutation.isPending} className="px-3 py-2 rounded-md border border-hairline text-btn-sm font-bold hover:bg-surface-card disabled:opacity-50">仅标记垃圾（{reviewSelected.length}）</button>}
             {canManage && reviewSelected.length > 0 && <button type="button" onClick={() => batchMutation.mutate({ action: "MOVE", ids: reviewSelected.map((item) => item.id) })} disabled={batchMutation.isPending} className="px-3 py-2 rounded-md bg-primary text-white text-btn-sm font-bold disabled:opacity-50">批量移至待删除区（{reviewSelected.length}）</button>}
             {canManage && restorableSelected.length > 0 && <button type="button" onClick={() => batchMutation.mutate({ action: "RESTORE", ids: restorableSelected.map((item) => item.id) })} disabled={batchMutation.isPending} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-hairline text-btn-sm font-bold hover:bg-surface-card disabled:opacity-50"><ArchiveRestore className="w-4 h-4" />批量放回（{restorableSelected.length}）</button>}
           </div>
@@ -287,12 +373,15 @@ export function PhotoQuarantinePage() {
                   </div>
                   <p className="text-body-sm text-ink">{item.reason}</p>
                   {item.preservation_flags.length > 0 && <p className="text-caption-sm text-danger">保留信号：{item.preservation_flags.join("、")}</p>}
+                  {item.human_label && <p className="text-caption-sm font-bold text-primary">人工标签：{item.human_label === "KEEP" ? "应保留" : "垃圾"}{item.human_labeled_by ? ` · ${item.human_labeled_by}` : ""}</p>}
                   {item.last_error && <p className="text-caption-sm text-danger break-all">{item.last_error}</p>}
                   <p className="text-[11px] text-mute break-all" title={item.original_path}>{item.original_path}</p>
                   {canManage && (
                     <div className="flex flex-wrap gap-2">
                       {item.status === "review" && <button type="button" onClick={() => itemMutation.mutate({ item, action: "move" })} disabled={itemMutation.isPending} className="px-3 py-1.5 rounded-md bg-primary text-white text-btn-sm font-bold disabled:opacity-50">移至待删除区</button>}
                       {item.status === "review" && <button type="button" onClick={() => itemMutation.mutate({ item, action: "keep" })} disabled={itemMutation.isPending} className="px-3 py-1.5 rounded-md border border-hairline text-btn-sm font-bold hover:bg-surface-card disabled:opacity-50">保留此图</button>}
+                      {item.status === "review" && <button type="button" onClick={() => itemMutation.mutate({ item, action: "labelKeep" })} disabled={itemMutation.isPending} className="px-3 py-1.5 rounded-md border border-hairline text-btn-sm text-mute hover:text-ink disabled:opacity-50">仅标记应保留</button>}
+                      {item.status === "review" && <button type="button" onClick={() => itemMutation.mutate({ item, action: "labelTrash" })} disabled={itemMutation.isPending} className="px-3 py-1.5 rounded-md border border-hairline text-btn-sm text-mute hover:text-ink disabled:opacity-50">仅标记垃圾</button>}
                       {RESTORABLE_STATUSES.has(item.status) && <button type="button" onClick={() => itemMutation.mutate({ item, action: "restore" })} disabled={itemMutation.isPending} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-md border border-hairline text-btn-sm font-bold hover:bg-surface-card disabled:opacity-50"><ArchiveRestore className="w-3.5 h-3.5" />放回原处</button>}
                       {item.status === "quarantined" && <button type="button" onClick={() => { if (window.confirm("仅当你已在文件系统中人工删除该文件时才确认。继续？")) itemMutation.mutate({ item, action: "confirm" }); }} disabled={itemMutation.isPending} className="px-3 py-1.5 rounded-md border border-hairline text-btn-sm text-mute hover:text-ink disabled:opacity-50">确认已人工删除</button>}
                     </div>
@@ -312,4 +401,17 @@ export function PhotoQuarantinePage() {
       </section>
     </main>
   );
+}
+
+function MetricCard({ label, value, danger = false }: { label: string; value: string; danger?: boolean }) {
+  return (
+    <div className="rounded-md border border-hairline bg-surface-card p-3">
+      <div className="text-caption-sm text-mute">{label}</div>
+      <div className={`mt-1 text-lg font-bold ${danger ? "text-danger" : "text-ink"}`}>{value}</div>
+    </div>
+  );
+}
+
+function formatPercent(value: number | null): string {
+  return value == null ? "暂无" : `${(value * 100).toFixed(1)}%`;
 }

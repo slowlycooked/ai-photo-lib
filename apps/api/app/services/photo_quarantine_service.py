@@ -394,7 +394,12 @@ class PhotoQuarantineService:
             totals["false_positive"], totals["human_keep"]
         )
         target_sample_size = 300
+        minimum_per_label = 100
         sample_target_met = totals["labeled_total"] >= target_sample_size
+        class_balance_met = (
+            totals["human_keep"] >= minimum_per_label
+            and totals["human_trash"] >= minimum_per_label
+        )
         zero_false_positive_met = totals["false_positive"] == 0
         return {
             **totals,
@@ -402,9 +407,13 @@ class PhotoQuarantineService:
             "recall": recall,
             "false_positive_rate": false_positive_rate,
             "target_sample_size": target_sample_size,
+            "minimum_per_label": minimum_per_label,
             "sample_target_met": sample_target_met,
+            "class_balance_met": class_balance_met,
             "zero_false_positive_met": zero_false_positive_met,
-            "ready_for_auto_move": sample_target_met and zero_false_positive_met,
+            "ready_for_auto_move": (
+                sample_target_met and class_balance_met and zero_false_positive_met
+            ),
             "categories": [
                 {"classification": classification, **counts}
                 for classification, counts in sorted(categories.items())

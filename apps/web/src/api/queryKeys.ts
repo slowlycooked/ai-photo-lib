@@ -24,6 +24,8 @@ export const queryKeys = {
     ["photo-quarantine-settings", projectId] as const,
   photoQuarantineItems: (projectId: number | null, status?: string, offset = 0) =>
     ["photo-quarantine-items", projectId, status ?? null, offset] as const,
+  photoQuarantineCalibration: (projectId: number | null) =>
+    ["photo-quarantine-calibration", projectId] as const,
   projectTaskFailures: (projectId: number | null, taskId: number | null, limit = 20, offset = 0) =>
     ["project-task-failures", projectId, taskId, limit, offset] as const,
   photos: (

@@ -128,7 +128,9 @@ class PhotoQuarantineCalibrationResponse(BaseModel):
     recall: Optional[float] = None
     false_positive_rate: Optional[float] = None
     target_sample_size: int
+    minimum_per_label: int
     sample_target_met: bool
+    class_balance_met: bool
     zero_false_positive_met: bool
     ready_for_auto_move: bool
     categories: list[PhotoQuarantineCalibrationCategory]

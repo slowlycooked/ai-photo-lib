@@ -54,7 +54,9 @@ class _FakeQuarantineService:
             "recall": None,
             "false_positive_rate": 1.0,
             "target_sample_size": 300,
+            "minimum_per_label": 100,
             "sample_target_met": False,
+            "class_balance_met": False,
             "zero_false_positive_met": False,
             "ready_for_auto_move": False,
             "categories": [{

@@ -46,6 +46,8 @@ export type {
   PhotoQuarantineBatchAction,
   PhotoQuarantineBatchItemResult,
   PhotoQuarantineBatchResponse,
+  PhotoQuarantineCalibrationCategory,
+  PhotoQuarantineCalibrationResponse,
   PhotoQuarantineListResponse,
   PersonDetail,
   PersonActionResponse,

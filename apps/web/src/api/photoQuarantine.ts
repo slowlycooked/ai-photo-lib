@@ -2,6 +2,7 @@ import { request, qs } from "./client";
 import type {
   PhotoQuarantineBatchAction,
   PhotoQuarantineBatchResponse,
+  PhotoQuarantineCalibrationResponse,
   PhotoQuarantineItem,
   PhotoQuarantineListResponse,
   ProjectPhotoQuarantineSettings,
@@ -23,6 +24,21 @@ export const photoQuarantineApi = {
   list: (projectId: number, status?: string, limit = 200, offset = 0) =>
     request<PhotoQuarantineListResponse>(
       `/projects/${projectId}/photo-quarantine/items${qs({ status, limit, offset })}`,
+    ),
+
+  getCalibration: (projectId: number) =>
+    request<PhotoQuarantineCalibrationResponse>(
+      `/projects/${projectId}/photo-quarantine/calibration`,
+    ),
+
+  label: (projectId: number, itemId: number, label: "KEEP" | "TRASH", note?: string) =>
+    request<PhotoQuarantineItem>(
+      `/projects/${projectId}/photo-quarantine/items/${itemId}/label`,
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ label, note }),
+      },
     ),
 
   startRun: (projectId: number) =>

@@ -11,6 +11,8 @@ const listMock = vi.fn();
 const restoreMock = vi.fn();
 const moveMock = vi.fn();
 const batchMock = vi.fn();
+const calibrationMock = vi.fn();
+const labelMock = vi.fn();
 const taskListMock = vi.fn();
 const setCurrentProjectIdMock = vi.fn();
 
@@ -27,6 +29,8 @@ vi.mock("@/api", async () => {
         restore: (...args: unknown[]) => restoreMock(...args),
         move: (...args: unknown[]) => moveMock(...args),
         batch: (...args: unknown[]) => batchMock(...args),
+        getCalibration: (...args: unknown[]) => calibrationMock(...args),
+        label: (...args: unknown[]) => labelMock(...args),
       },
       projectTasks: {
         ...actual.api.projectTasks,
@@ -106,6 +110,26 @@ describe("PhotoQuarantinePage", () => {
     restoreMock.mockResolvedValue({ ...item, status: "restored" });
     moveMock.mockResolvedValue({ ...item, status: "quarantined" });
     batchMock.mockResolvedValue({ requested: 1, succeeded: 1, failed: 0, results: [] });
+    calibrationMock.mockResolvedValue({
+      labeled_total: 42,
+      human_keep: 22,
+      human_trash: 20,
+      true_positive: 18,
+      false_positive: 1,
+      true_negative: 21,
+      false_negative: 2,
+      precision: 18 / 19,
+      recall: 0.9,
+      false_positive_rate: 1 / 22,
+      target_sample_size: 300,
+      minimum_per_label: 100,
+      sample_target_met: false,
+      class_balance_met: false,
+      zero_false_positive_met: false,
+      ready_for_auto_move: false,
+      categories: [],
+    });
+    labelMock.mockResolvedValue({ ...item, human_label: "KEEP" });
     taskListMock.mockResolvedValue({ total: 0, items: [] });
   });
 
@@ -174,5 +198,21 @@ describe("PhotoQuarantinePage", () => {
     await user.click(await screen.findByRole("button", { name: "移至待删除区" }));
 
     await waitFor(() => expect(moveMock).toHaveBeenCalledWith(1, 7));
+  });
+
+  it("shows calibration risk and labels without moving a review item", async () => {
+    const user = userEvent.setup();
+    listMock.mockResolvedValue({
+      total: 1,
+      items: [{ ...item, status: "review", human_label: null }],
+    });
+    renderPage();
+
+    expect(await screen.findByText("42 / 300")).toBeInTheDocument();
+    expect(screen.getByText("误删风险项").nextElementSibling).toHaveTextContent("1");
+    await user.click(await screen.findByRole("button", { name: "仅标记应保留" }));
+
+    await waitFor(() => expect(labelMock).toHaveBeenCalledWith(1, 7, "KEEP"));
+    expect(moveMock).not.toHaveBeenCalled();
   });
 });

@@ -1127,6 +1127,10 @@ export interface PhotoQuarantineItem {
   moved_at: string | null;
   restored_at: string | null;
   deleted_confirmed_at: string | null;
+  human_label: "KEEP" | "TRASH" | null;
+  human_label_note: string | null;
+  human_labeled_by: string | null;
+  human_labeled_at: string | null;
   last_error: string | null;
   created_at: string;
   updated_at: string;
@@ -1137,7 +1141,12 @@ export interface PhotoQuarantineListResponse {
   items: PhotoQuarantineItem[];
 }
 
-export type PhotoQuarantineBatchAction = "KEEP" | "MOVE" | "RESTORE";
+export type PhotoQuarantineBatchAction =
+  | "KEEP"
+  | "MOVE"
+  | "RESTORE"
+  | "LABEL_KEEP"
+  | "LABEL_TRASH";
 
 export interface PhotoQuarantineBatchItemResult {
   item_id: number;
@@ -1152,4 +1161,35 @@ export interface PhotoQuarantineBatchResponse {
   succeeded: number;
   failed: number;
   results: PhotoQuarantineBatchItemResult[];
+}
+
+export interface PhotoQuarantineCalibrationCategory {
+  classification: string;
+  labeled_total: number;
+  human_keep: number;
+  human_trash: number;
+  true_positive: number;
+  false_positive: number;
+  true_negative: number;
+  false_negative: number;
+}
+
+export interface PhotoQuarantineCalibrationResponse {
+  labeled_total: number;
+  human_keep: number;
+  human_trash: number;
+  true_positive: number;
+  false_positive: number;
+  true_negative: number;
+  false_negative: number;
+  precision: number | null;
+  recall: number | null;
+  false_positive_rate: number | null;
+  target_sample_size: number;
+  minimum_per_label: number;
+  sample_target_met: boolean;
+  class_balance_met: boolean;
+  zero_false_positive_met: boolean;
+  ready_for_auto_move: boolean;
+  categories: PhotoQuarantineCalibrationCategory[];
 }
