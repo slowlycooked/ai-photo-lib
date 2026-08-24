@@ -101,6 +101,8 @@ export interface PhotoListResponse {
   page: number;
   page_size: number;
   items: Photo[];
+  next_cursor?: string | null;
+  has_more?: boolean | null;
 }
 
 export interface PhotoDeleteResponse {
@@ -1133,4 +1135,21 @@ export interface PhotoQuarantineItem {
 export interface PhotoQuarantineListResponse {
   total: number;
   items: PhotoQuarantineItem[];
+}
+
+export type PhotoQuarantineBatchAction = "KEEP" | "MOVE" | "RESTORE";
+
+export interface PhotoQuarantineBatchItemResult {
+  item_id: number;
+  succeeded: boolean;
+  item: PhotoQuarantineItem | null;
+  error_code: string | null;
+  message: string | null;
+}
+
+export interface PhotoQuarantineBatchResponse {
+  requested: number;
+  succeeded: number;
+  failed: number;
+  results: PhotoQuarantineBatchItemResult[];
 }
