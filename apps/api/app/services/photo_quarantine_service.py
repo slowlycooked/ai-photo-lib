@@ -257,6 +257,27 @@ class PhotoQuarantineService:
         self._db.refresh(item)
         return item
 
+    def keep(self, *, project_id: int, item_id: int) -> PhotoQuarantineItem:
+        """Record a human keep decision without moving or deleting the photo."""
+        item, photo, _project = self._load_item_photo_project(project_id, item_id)
+        if item.status == "kept":
+            return item
+        if item.status not in {"review", "analysis_failed", "move_failed"}:
+            raise PhotoQuarantineConflict(
+                f"Item status {item.status!r} cannot be marked as kept"
+            )
+        if photo.status == "quarantined" or photo.deleted_at is not None:
+            raise PhotoQuarantineConflict(
+                "Photo is already quarantined and must be restored instead"
+            )
+        item.status = "kept"
+        item.decision = "KEEP"
+        item.last_error = None
+        item.updated_at = _now()
+        self._db.commit()
+        self._db.refresh(item)
+        return item
+
     def _load_item_photo_project(
         self, project_id: int, item_id: int
     ) -> tuple[PhotoQuarantineItem, Photo, Project]:

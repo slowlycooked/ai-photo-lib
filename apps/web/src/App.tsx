@@ -9,6 +9,7 @@ import { SettingsPage } from "@/pages/SettingsPage";
 import { ProjectAISettingsPage } from "@/pages/ProjectAISettingsPage";
 import { PeoplePage } from "@/pages/PeoplePage";
 import { PeopleReviewPage } from "@/pages/PeopleReviewPage";
+import { PhotoQuarantinePage } from "@/pages/PhotoQuarantinePage";
 import { LoginPage } from "@/pages/LoginPage";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { ProjectProvider } from "@/contexts/ProjectContext";
@@ -108,6 +109,7 @@ function AppRoutes() {
           />
           <Route path="/projects/:projectId/people" element={<PeoplePage />} />
           <Route path="/projects/:projectId/people/review" element={<PeopleReviewPage />} />
+          <Route path="/projects/:projectId/photo-quarantine" element={<PhotoQuarantinePage />} />
         </Routes>
       </div>
     </ProjectProvider>

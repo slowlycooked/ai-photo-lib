@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse
@@ -75,7 +76,7 @@ def update_photo_quarantine_settings(
     response_model=PhotoQuarantineListResponse,
 )
 def list_photo_quarantine_items(
-    status: str | None = None,
+    status: Optional[str] = None,
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     project: Project = Depends(require_project),
@@ -139,6 +140,25 @@ def confirm_photo_quarantine_item_deleted(
 ):
     try:
         return PhotoQuarantineService(db).confirm_deleted(
+            project_id=project.id, item_id=item_id
+        )
+    except PhotoQuarantineConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except PhotoQuarantineError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.post(
+    "/{project_id}/photo-quarantine/items/{item_id}/keep",
+    response_model=PhotoQuarantineItemResponse,
+)
+def keep_photo_quarantine_item(
+    item_id: int,
+    project: Project = Depends(require_project_manager),
+    db: Session = Depends(get_db),
+):
+    try:
+        return PhotoQuarantineService(db).keep(
             project_id=project.id, item_id=item_id
         )
     except PhotoQuarantineConflict as exc:

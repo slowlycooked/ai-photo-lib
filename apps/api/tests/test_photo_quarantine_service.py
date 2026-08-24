@@ -140,3 +140,17 @@ def test_confirm_deleted_refuses_to_delete_existing_file(quarantine_fixture) -> 
         confirmed = service.confirm_deleted(project_id=1, item_id=100)
         assert confirmed.status == "deleted_confirmed"
         assert confirmed.deleted_confirmed_at is not None
+
+
+def test_keep_records_human_decision_without_moving_file(quarantine_fixture) -> None:
+    engine, _library, trash, original, _digest = quarantine_fixture
+    with Session(engine) as db:
+        service = PhotoQuarantineService(db, root=trash)
+        kept = service.keep(project_id=1, item_id=100)
+
+        assert kept.status == "kept"
+        assert kept.decision == "KEEP"
+        assert original.read_bytes() == b"test-photo-content"
+        photo = db.query(Photo).filter(Photo.id == 10).one()
+        assert photo.status == "indexed"
+        assert photo.deleted_at is None

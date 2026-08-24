@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Camera, Search, X, Images, Tag, ListTodo, Settings, Users, LogOut } from "lucide-react";
+import { Camera, Search, X, Images, Tag, ListTodo, Settings, Users, LogOut, Trash2 } from "lucide-react";
 import { NavLink, useNavigate, useSearchParams, useLocation } from "react-router-dom";
 import { ProjectSelector } from "./ProjectSelector";
 import { useProjectContext } from "@/contexts/ProjectContext";
@@ -23,6 +23,13 @@ export function Header() {
       { to: "/tags", label: "标签", icon: Tag },
       { to: "/tasks", label: "任务", icon: ListTodo },
       ];
+      if (currentProjectId != null) {
+        items.push({
+          to: `/projects/${currentProjectId}/photo-quarantine`,
+          label: "待删除",
+          icon: Trash2,
+        });
+      }
       if (auth.session?.role === "admin") {
         items.push({ to: "/settings", label: "设置", icon: Settings });
       } else if (auth.session?.role === "project_manager" && currentProjectId != null) {

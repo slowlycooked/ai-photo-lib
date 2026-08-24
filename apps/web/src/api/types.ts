@@ -1083,3 +1083,54 @@ export interface QueryPlannerTestResponse {
   planner_debug: Record<string, unknown>;
   parsed_query_plan: Record<string, unknown>;
 }
+
+// ─── Photo Quarantine ─────────────────────────────────────────────────
+
+export interface ProjectPhotoQuarantineSettings {
+  id: number;
+  project_id: number;
+  enabled: boolean;
+  dry_run: boolean;
+  start_hour: number;
+  end_hour: number;
+  timezone: string;
+  model_name: string;
+  retention_days: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export type ProjectPhotoQuarantineSettingsUpdate = Omit<
+  ProjectPhotoQuarantineSettings,
+  "id" | "project_id" | "created_at" | "updated_at"
+>;
+
+export interface PhotoQuarantineItem {
+  id: number;
+  project_id: number;
+  photo_id: number;
+  status: string;
+  decision: string;
+  classification: string;
+  confidence: number;
+  reason: string;
+  preservation_flags: string[];
+  first_result: Record<string, unknown>;
+  verification_result: Record<string, unknown> | null;
+  model_name: string;
+  prompt_version: string;
+  original_path: string;
+  quarantine_path: string | null;
+  content_hash: string | null;
+  moved_at: string | null;
+  restored_at: string | null;
+  deleted_confirmed_at: string | null;
+  last_error: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PhotoQuarantineListResponse {
+  total: number;
+  items: PhotoQuarantineItem[];
+}

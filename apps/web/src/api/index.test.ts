@@ -12,6 +12,7 @@ import {
   projectSearchApi,
   projectSettingsApi,
   projectTasksApi,
+  photoQuarantineApi,
 } from "@/api";
 
 describe("api namespace exports", () => {
@@ -26,6 +27,7 @@ describe("api namespace exports", () => {
     expect(api.projectSearch).toBe(projectSearchApi);
     expect(api.projectSettings).toBe(projectSettingsApi);
     expect(api.projectTasks).toBe(projectTasksApi);
+    expect(api.photoQuarantine).toBe(photoQuarantineApi);
     expect("projects" in api).toBe(false);
   });
 });

@@ -42,6 +42,8 @@ export type {
   PhotoBatchDeleteResponse,
   PhotoDetail,
   PhotoListResponse,
+  PhotoQuarantineItem,
+  PhotoQuarantineListResponse,
   PersonDetail,
   PersonActionResponse,
   PersonBatchActionResponse,
@@ -73,6 +75,8 @@ export type {
   QueryPlannerTestResponse,
   ProjectQueryPlannerSettings,
   ProjectQueryPlannerSettingsUpdate,
+  ProjectPhotoQuarantineSettings,
+  ProjectPhotoQuarantineSettingsUpdate,
   ProjectSearchSettings,
   ProjectSearchSettingsUpdate,
   ProjectTask,
@@ -136,6 +140,7 @@ export { projectScansApi } from "./projectScans";
 export { projectSearchApi } from "./projectSearch";
 export { projectSettingsApi } from "./projectSettings";
 export { projectTasksApi } from "./projectTasks";
+export { photoQuarantineApi } from "./photoQuarantine";
 export { settingsApi } from "./settings";
 export { adminApi } from "./admin";
 
@@ -152,6 +157,7 @@ import { projectScansApi } from "./projectScans";
 import { projectSearchApi } from "./projectSearch";
 import { projectSettingsApi } from "./projectSettings";
 import { projectTasksApi } from "./projectTasks";
+import { photoQuarantineApi } from "./photoQuarantine";
 import { settingsApi } from "./settings";
 
 /**
@@ -182,6 +188,7 @@ export const api = {
   projectSearch: projectSearchApi,
   projectSettings: projectSettingsApi,
   projectTasks: projectTasksApi,
+  photoQuarantine: photoQuarantineApi,
   folders: foldersApi,
   settings: settingsApi,
   admin: adminApi,
