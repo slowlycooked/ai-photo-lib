@@ -153,10 +153,10 @@ export function PhotoQuarantinePage() {
     onError: (error: Error) => setMessage(`操作失败：${error.message}`),
   });
   const batchMutation = useMutation({
-    mutationFn: ({ action, ids }: { action: "KEEP" | "RESTORE"; ids: number[] }) =>
+    mutationFn: ({ action, ids }: { action: "KEEP" | "MOVE" | "RESTORE"; ids: number[] }) =>
       api.photoQuarantine.batch(selectedProjectId!, action, ids),
     onSuccess: (result, variables) => {
-      const verb = variables.action === "RESTORE" ? "放回" : "保留";
+      const verb = variables.action === "RESTORE" ? "放回" : variables.action === "MOVE" ? "移入待删除区" : "保留";
       setMessage(`已${verb} ${result.succeeded} 张${result.failed ? `，${result.failed} 张失败，请逐项检查` : ""}`);
       setSelectedIds(new Set());
       refreshItems();
@@ -262,6 +262,7 @@ export function PhotoQuarantinePage() {
           </div>
           <div className="flex flex-wrap gap-2">
             {canManage && reviewSelected.length > 0 && <button type="button" onClick={() => batchMutation.mutate({ action: "KEEP", ids: reviewSelected.map((item) => item.id) })} disabled={batchMutation.isPending} className="px-3 py-2 rounded-md border border-hairline text-btn-sm font-bold hover:bg-surface-card disabled:opacity-50">批量保留（{reviewSelected.length}）</button>}
+            {canManage && reviewSelected.length > 0 && <button type="button" onClick={() => batchMutation.mutate({ action: "MOVE", ids: reviewSelected.map((item) => item.id) })} disabled={batchMutation.isPending} className="px-3 py-2 rounded-md bg-primary text-white text-btn-sm font-bold disabled:opacity-50">批量移至待删除区（{reviewSelected.length}）</button>}
             {canManage && restorableSelected.length > 0 && <button type="button" onClick={() => batchMutation.mutate({ action: "RESTORE", ids: restorableSelected.map((item) => item.id) })} disabled={batchMutation.isPending} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-hairline text-btn-sm font-bold hover:bg-surface-card disabled:opacity-50"><ArchiveRestore className="w-4 h-4" />批量放回（{restorableSelected.length}）</button>}
           </div>
         </div>
@@ -290,7 +291,7 @@ export function PhotoQuarantinePage() {
                   <p className="text-[11px] text-mute break-all" title={item.original_path}>{item.original_path}</p>
                   {canManage && (
                     <div className="flex flex-wrap gap-2">
-                      {item.status === "review" && item.decision === "QUARANTINE" && <button type="button" onClick={() => itemMutation.mutate({ item, action: "move" })} disabled={itemMutation.isPending} className="px-3 py-1.5 rounded-md bg-primary text-white text-btn-sm font-bold disabled:opacity-50">移至待删除区</button>}
+                      {item.status === "review" && <button type="button" onClick={() => itemMutation.mutate({ item, action: "move" })} disabled={itemMutation.isPending} className="px-3 py-1.5 rounded-md bg-primary text-white text-btn-sm font-bold disabled:opacity-50">移至待删除区</button>}
                       {item.status === "review" && <button type="button" onClick={() => itemMutation.mutate({ item, action: "keep" })} disabled={itemMutation.isPending} className="px-3 py-1.5 rounded-md border border-hairline text-btn-sm font-bold hover:bg-surface-card disabled:opacity-50">保留此图</button>}
                       {RESTORABLE_STATUSES.has(item.status) && <button type="button" onClick={() => itemMutation.mutate({ item, action: "restore" })} disabled={itemMutation.isPending} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-md border border-hairline text-btn-sm font-bold hover:bg-surface-card disabled:opacity-50"><ArchiveRestore className="w-3.5 h-3.5" />放回原处</button>}
                       {item.status === "quarantined" && <button type="button" onClick={() => { if (window.confirm("仅当你已在文件系统中人工删除该文件时才确认。继续？")) itemMutation.mutate({ item, action: "confirm" }); }} disabled={itemMutation.isPending} className="px-3 py-1.5 rounded-md border border-hairline text-btn-sm text-mute hover:text-ink disabled:opacity-50">确认已人工删除</button>}

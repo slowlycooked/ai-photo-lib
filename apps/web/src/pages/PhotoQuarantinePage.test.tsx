@@ -9,6 +9,7 @@ import { PhotoQuarantinePage } from "@/pages/PhotoQuarantinePage";
 const getSettingsMock = vi.fn();
 const listMock = vi.fn();
 const restoreMock = vi.fn();
+const moveMock = vi.fn();
 const batchMock = vi.fn();
 const taskListMock = vi.fn();
 const setCurrentProjectIdMock = vi.fn();
@@ -24,6 +25,7 @@ vi.mock("@/api", async () => {
         getSettings: (...args: unknown[]) => getSettingsMock(...args),
         list: (...args: unknown[]) => listMock(...args),
         restore: (...args: unknown[]) => restoreMock(...args),
+        move: (...args: unknown[]) => moveMock(...args),
         batch: (...args: unknown[]) => batchMock(...args),
       },
       projectTasks: {
@@ -102,6 +104,7 @@ describe("PhotoQuarantinePage", () => {
     });
     listMock.mockResolvedValue({ total: 1, items: [item] });
     restoreMock.mockResolvedValue({ ...item, status: "restored" });
+    moveMock.mockResolvedValue({ ...item, status: "quarantined" });
     batchMock.mockResolvedValue({ requested: 1, succeeded: 1, failed: 0, results: [] });
     taskListMock.mockResolvedValue({ total: 0, items: [] });
   });
@@ -158,5 +161,18 @@ describe("PhotoQuarantinePage", () => {
     renderPage();
 
     expect(await screen.findByText(/最近分析任务：running · 已分析 12 张 · 待审核 3 张/)).toBeInTheDocument();
+  });
+
+  it("lets a human move review-only screenshots to quarantine", async () => {
+    const user = userEvent.setup();
+    listMock.mockResolvedValue({
+      total: 1,
+      items: [{ ...item, status: "review", decision: "REVIEW", classification: "screenshot" }],
+    });
+    renderPage();
+
+    await user.click(await screen.findByRole("button", { name: "移至待删除区" }));
+
+    await waitFor(() => expect(moveMock).toHaveBeenCalledWith(1, 7));
   });
 });
