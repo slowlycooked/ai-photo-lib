@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Loader2, Tag, AlertCircle } from "lucide-react";
 import { api, type TagCount } from "@/api";
@@ -12,6 +13,8 @@ const SECTIONS = [
   { key: "quality_tags" as const, label: "质量标签", color: "bg-amber-50 text-amber-700 hover:bg-amber-100" },
   { key: "search_keywords" as const, label: "搜索关键词", color: "bg-primary/10 text-primary hover:bg-primary/20" },
 ] as const;
+
+const INITIAL_TAGS_PER_SECTION = 30;
 
 function TagChip({
   tag,
@@ -53,7 +56,11 @@ function TagSection({
   sectionKey: SectionKey;
   onTagClick: (field: SectionKey, tag: string) => void;
 }) {
+  const [expanded, setExpanded] = useState(false);
   if (tags.length === 0) return null;
+  const visibleTags = expanded ? tags : tags.slice(0, INITIAL_TAGS_PER_SECTION);
+  const hiddenCount = tags.length - visibleTags.length;
+
   return (
     <section className="space-y-3">
       <div className="flex items-center gap-2">
@@ -62,7 +69,7 @@ function TagSection({
         <span className="text-caption-sm text-mute">{tags.length} 个</span>
       </div>
       <div className="flex flex-wrap gap-2">
-        {tags.map(({ tag, count }) => (
+        {visibleTags.map(({ tag, count }) => (
           <TagChip
             key={tag}
             tag={tag}
@@ -72,6 +79,15 @@ function TagSection({
           />
         ))}
       </div>
+      {tags.length > INITIAL_TAGS_PER_SECTION && (
+        <button
+          type="button"
+          onClick={() => setExpanded((value) => !value)}
+          className="text-body-sm font-medium text-primary hover:text-primary/80 transition-colors"
+        >
+          {expanded ? "收起" : `展开其余 ${hiddenCount} 个`}
+        </button>
+      )}
     </section>
   );
 }
@@ -83,7 +99,8 @@ export function TagsPage() {
     queryKey: queryKeys.tags(currentProjectId),
     queryFn: () => currentProjectId !== null ? api.projectSearch.tags(currentProjectId) : Promise.resolve(null),
     enabled: currentProjectId !== null,
-    staleTime: 60_000,
+    staleTime: 5 * 60_000,
+    gcTime: 30 * 60_000,
   });
 
   const handleTagClick = (field: SectionKey, tag: string) => {
@@ -134,7 +151,7 @@ export function TagsPage() {
       {data &&
         SECTIONS.map(({ key, label, color }) => (
           <TagSection
-            key={key}
+            key={`${currentProjectId}:${key}`}
             title={label}
             tags={data[key]}
             color={color}
