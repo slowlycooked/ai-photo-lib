@@ -15,6 +15,7 @@ import { Navigate, useParams } from "react-router-dom";
 import {
   api,
   type PhotoQuarantineItem,
+  type PhotoQuarantineListResponse,
   type ProjectPhotoQuarantineSettingsUpdate,
 } from "@/api";
 import { BASE } from "@/api/client";
@@ -167,6 +168,20 @@ export function PhotoQuarantinePage() {
     });
   };
 
+  const updateCachedItems = (updatedItems: PhotoQuarantineItem[]) => {
+    if (updatedItems.length === 0) return;
+    const updatedById = new Map(updatedItems.map((item) => [item.id, item]));
+    queryClient.setQueriesData<PhotoQuarantineListResponse>(
+      { queryKey: ["photo-quarantine-items", selectedProjectId] },
+      (current) => current
+        ? {
+          ...current,
+          items: current.items.map((item) => updatedById.get(item.id) ?? item),
+        }
+        : current,
+    );
+  };
+
   const saveMutation = useMutation({
     mutationFn: () => api.photoQuarantine.updateSettings(selectedProjectId!, form!),
     onSuccess: (data) => {
@@ -191,7 +206,8 @@ export function PhotoQuarantinePage() {
       if (action === "keep") return api.photoQuarantine.keep(selectedProjectId!, item.id);
       return api.photoQuarantine.confirmDeleted(selectedProjectId!, item.id);
     },
-    onSuccess: (_, variables) => {
+    onSuccess: (updatedItem, variables) => {
+      updateCachedItems([updatedItem]);
       const successMessage = variables.action === "restore"
         ? "照片已安全放回原位置，并记为应保留"
         : variables.action === "requestDelete"
@@ -208,6 +224,9 @@ export function PhotoQuarantinePage() {
     mutationFn: ({ action, ids }: { action: "KEEP" | "REQUEST_DELETE" | "RESTORE"; ids: number[] }) =>
       api.photoQuarantine.batch(selectedProjectId!, action, ids),
     onSuccess: (result, variables) => {
+      updateCachedItems(
+        result.results.flatMap((entry) => entry.item ? [entry.item] : []),
+      );
       const verb = variables.action === "RESTORE"
         ? "放回"
         : variables.action === "REQUEST_DELETE"
@@ -409,9 +428,10 @@ export function PhotoQuarantinePage() {
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
             {items.map((item) => (
-              <article key={item.id} className="overflow-hidden rounded-lg border border-hairline bg-canvas">
+              <article key={item.id} className={`overflow-hidden rounded-lg border bg-canvas ${item.status === "delete_queued" ? "border-danger/50" : "border-hairline"}`}>
                 <div className="relative aspect-video bg-surface-card">
-                  <img src={`${BASE}/projects/${selectedProjectId}/photo-quarantine/items/${item.id}/thumbnail`} alt="待删除候选图片" className="h-full w-full object-contain" loading="lazy" />
+                  <img src={`${BASE}/projects/${selectedProjectId}/photo-quarantine/items/${item.id}/thumbnail`} alt="待删除候选图片" className={`h-full w-full object-contain transition ${item.status === "delete_queued" ? "grayscale opacity-45" : ""}`} loading="lazy" />
+                  {item.status === "delete_queued" && <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/45 text-white" aria-label="已提交删除，等待后台处理"><Trash2 className="mb-2 h-7 w-7" /><span className="text-body-sm font-bold">已提交删除</span><span className="mt-1 text-caption-sm">等待 NAS 后台处理</span></div>}
                   {canManage && (APPROVAL_STATUSES.has(item.status) || RESTORABLE_STATUSES.has(item.status)) && <input type="checkbox" className="absolute top-3 left-3 w-4 h-4" aria-label="选择审核项" checked={selectedIds.has(item.id)} onChange={(event) => setSelectedIds((current) => { const next = new Set(current); event.target.checked ? next.add(item.id) : next.delete(item.id); return next; })} />}
                   <span className="absolute top-2 right-2 rounded-full bg-black/70 px-2 py-1 text-[11px] text-white">{STATUS_LABELS[item.status] ?? item.status}</span>
                 </div>

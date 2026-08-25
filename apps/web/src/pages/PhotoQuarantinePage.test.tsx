@@ -249,6 +249,35 @@ describe("PhotoQuarantinePage", () => {
     await waitFor(() => expect(requestDeleteMock).toHaveBeenCalledWith(1, 7));
   });
 
+  it("immediately marks the preview after deletion is submitted", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    listMock
+      .mockResolvedValueOnce({
+        total: 1,
+        items: [{ ...item, status: "review", decision: "REVIEW" }],
+      })
+      .mockImplementation(() => new Promise(() => undefined));
+    renderPage();
+
+    await user.click(await screen.findByRole("button", { name: "提交删除" }));
+
+    expect(await screen.findByText("已提交删除")).toBeInTheDocument();
+    expect(screen.getByLabelText("已提交删除，等待后台处理")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "提交删除" })).not.toBeInTheDocument();
+  });
+
+  it("renders queued deletion items with a prominent preview overlay", async () => {
+    listMock.mockResolvedValue({
+      total: 1,
+      items: [{ ...item, status: "delete_queued", quarantine_path: null }],
+    });
+    renderPage();
+
+    expect(await screen.findByText("已提交删除")).toBeInTheDocument();
+    expect(screen.getByText("等待 NAS 后台处理")).toBeInTheDocument();
+  });
+
   it("uses approval actions as the human labels", async () => {
     const user = userEvent.setup();
     listMock.mockResolvedValue({
