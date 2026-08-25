@@ -22,12 +22,12 @@ export function PhotoBrowseLayout({
   const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
 
   return (
-    <div className="flex h-full gap-4">
+    <div className="flex w-full items-start gap-4">
       {/* 左侧：文件夹树 */}
       <div
         className={`transition-all duration-200 ${
           sidebarCollapsed ? "w-12" : "w-64"
-        } flex-shrink-0 border-r border-gray-200 overflow-hidden`}
+        } sticky top-20 max-h-[calc(100vh-5rem)] self-start flex-shrink-0 overflow-y-auto border-r border-gray-200`}
       >
         <FolderTreeSidebar
           projectId={projectId}
@@ -41,7 +41,7 @@ export function PhotoBrowseLayout({
       </div>
 
       {/* 右侧：照片和时间线 */}
-      <div className="flex-1 overflow-hidden">
+      <div className="min-w-0 flex-1 overflow-hidden">
         {children}
       </div>
     </div>

@@ -26,7 +26,7 @@ export function TimelineRail({ projectId, folderId, folderScope = "subtree", act
 
   return (
     <nav
-      className="hidden xl:flex flex-col gap-0.5 sticky top-20 max-h-[calc(100vh-5rem)] overflow-y-auto pr-1 pb-4 text-right min-w-[80px]"
+      className="sticky top-20 hidden max-h-[calc(100vh-5rem)] min-w-[80px] shrink-0 self-start flex-col gap-0.5 overflow-y-auto pb-4 pr-1 text-right xl:flex"
       aria-label="时间线"
     >
       {years.map((year) => {

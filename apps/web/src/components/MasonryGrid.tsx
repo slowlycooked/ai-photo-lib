@@ -1,4 +1,4 @@
-import { type CSSProperties, type Key, type ReactNode, useEffect, useMemo, useState } from "react";
+import { type CSSProperties, type Key, type ReactNode, type RefObject, useEffect, useMemo, useRef, useState } from "react";
 
 const DEFAULT_ITEM_HEIGHT = 1;
 const ITEM_GAP_HEIGHT = 0.04;
@@ -11,7 +11,7 @@ interface MasonryGridProps<TItem> {
   className?: string;
 }
 
-function getColumnCount(width: number) {
+export function getMasonryColumnCount(width: number) {
   if (width >= 1280) {
     return 5;
   }
@@ -24,25 +24,25 @@ function getColumnCount(width: number) {
   return 2;
 }
 
-function getInitialColumnCount() {
-  if (typeof window === "undefined") {
-    return 2;
-  }
-  return getColumnCount(window.innerWidth);
-}
-
-function useMasonryColumnCount() {
-  const [columnCount, setColumnCount] = useState(getInitialColumnCount);
+function useMasonryColumnCount(containerRef: RefObject<HTMLDivElement>) {
+  const [columnCount, setColumnCount] = useState(2);
 
   useEffect(() => {
     const updateColumnCount = () => {
-      setColumnCount(getColumnCount(window.innerWidth));
+      const width = containerRef.current?.getBoundingClientRect().width ?? window.innerWidth;
+      setColumnCount(getMasonryColumnCount(width));
     };
 
     updateColumnCount();
+    if (typeof ResizeObserver !== "undefined" && containerRef.current) {
+      const observer = new ResizeObserver(updateColumnCount);
+      observer.observe(containerRef.current);
+      return () => observer.disconnect();
+    }
+
     window.addEventListener("resize", updateColumnCount);
     return () => window.removeEventListener("resize", updateColumnCount);
-  }, []);
+  }, [containerRef]);
 
   return columnCount;
 }
@@ -75,7 +75,8 @@ export function MasonryGrid<TItem>({
   renderItem,
   className,
 }: MasonryGridProps<TItem>) {
-  const columnCount = useMasonryColumnCount();
+  const containerRef = useRef<HTMLDivElement>(null);
+  const columnCount = useMasonryColumnCount(containerRef);
   const columns = useMemo(
     () => assignMasonryColumns(items, columnCount, getItemHeight),
     [columnCount, getItemHeight, items],
@@ -83,7 +84,7 @@ export function MasonryGrid<TItem>({
   const style = { "--masonry-columns": columnCount } as CSSProperties;
 
   return (
-    <div className={["masonry-grid", className].filter(Boolean).join(" ")} style={style}>
+    <div ref={containerRef} className={["masonry-grid", className].filter(Boolean).join(" ")} style={style}>
       {columns.map((column, columnIndex) => (
         <div key={columnIndex} className="masonry-column">
           {column.map((item) => (
