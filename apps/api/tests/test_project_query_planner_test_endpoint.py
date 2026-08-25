@@ -19,8 +19,10 @@ os.environ.setdefault("OPENAI_MODEL", "test-model")
 os.environ.setdefault("OPENAI_VISION_MODEL", "test-model")
 os.environ.setdefault("AUTH_ENABLED", "0")
 
+from app.api.deps import require_project_manager  # noqa: E402
 from app.database import get_db  # noqa: E402
 from app.main import app  # noqa: E402
+from app.models.project import Project  # noqa: E402
 
 
 SCHEMA_SQL = """
@@ -63,6 +65,7 @@ CREATE TABLE project_search_settings (
 CREATE TABLE project_query_planner_settings (
   id INTEGER PRIMARY KEY,
   project_id INTEGER NOT NULL UNIQUE,
+  ai_service_profile_id INTEGER,
   enabled BOOLEAN NOT NULL DEFAULT 0,
   provider TEXT NOT NULL DEFAULT 'llama-server',
   endpoint_url TEXT,
@@ -73,7 +76,7 @@ CREATE TABLE project_query_planner_settings (
   max_tokens INTEGER NOT NULL DEFAULT 220,
   timeout_seconds INTEGER NOT NULL DEFAULT 3,
   json_parse_strategy TEXT NOT NULL DEFAULT 'strict_json_then_extract',
-  planner_version TEXT NOT NULL DEFAULT 'llm_query_planner_v1',
+  planner_version TEXT NOT NULL DEFAULT 'llm_query_planner_v2',
   prompt_template TEXT,
   system_prompt TEXT,
   fallback_mode TEXT NOT NULL DEFAULT 'rule_fallback',
@@ -105,9 +108,9 @@ INSERT INTO project_query_planner_settings (
   json_parse_strategy, planner_version, prompt_template, system_prompt, fallback_mode
 )
 VALUES (
-  1, 1, 1, 'llama-server', 'http://127.0.0.1:18084/v1/chat/completions', 'test', 'qwen3-4b-query-planner',
+  1, 1, 1, 'llama-server', 'http://127.0.0.1:18084/v1/chat/completions', 'test', 'Qwen3-8B-Query-Planner',
   0, 0.1, 220, 3,
-  'strict_json_then_extract', 'llm_query_planner_v1', '', '', 'rule_fallback'
+  'strict_json_then_extract', 'llm_query_planner_v2', '', '', 'rule_fallback'
 );
 """
 
@@ -147,7 +150,24 @@ class ProjectQueryPlannerTestEndpointE2ETest(unittest.TestCase):
             finally:
                 db.close()
 
+        def override_require_project_manager(project_id: int) -> Project:
+            db = self._SessionLocal()
+            try:
+                project = (
+                    db.query(Project)
+                    .filter(Project.id == project_id, Project.deleted_at.is_(None))
+                    .first()
+                )
+                if project is None:
+                    raise RuntimeError("Project not found")
+                return project
+            finally:
+                db.close()
+
         app.dependency_overrides[get_db] = override_get_db
+        app.dependency_overrides[require_project_manager] = (
+            override_require_project_manager
+        )
         self.client = TestClient(app)
 
     def tearDown(self) -> None:
@@ -159,65 +179,40 @@ class ProjectQueryPlannerTestEndpointE2ETest(unittest.TestCase):
     def test_query_planner_test_endpoint_success(self) -> None:
         llm_json = """
         {
-          "intent": "semantic_photo_search",
-          "search_mode": "hybrid",
-          "normalized_query": "动物",
-          "semantic_query_text": "查找包含动物主体的照片",
-          "terms": {
-            "exact": ["动物"],
-            "expanded": ["宠物", "猫", "狗"],
-            "support": [],
-            "broad": [],
-            "negative": ["玩具动物"]
-          },
-          "facets": {
-            "object": ["动物"],
-            "scene": [],
-            "activity": [],
-            "people": [],
-            "weather": [],
-            "time": [],
-            "location": []
-          },
+          "version": "2",
+          "intent": "photo_search",
           "filters": {
-            "people_count_min": null,
-            "people_count_max": null,
-            "has_people": null,
-            "has_animals": true,
-            "indoor_outdoor": null,
-            "weather": null,
-            "time_of_day": null
-          },
-          "metadata_filters": {
-            "year": null,
-            "month": null,
-            "date_from": null,
-            "date_to": null,
-            "season": null,
+            "time_ranges": [],
+            "locations": [],
+            "people": [],
+            "camera": [],
             "has_gps": null,
-            "camera_make": null,
-            "camera_model": null,
-            "iso_min": null,
-            "iso_max": null,
-            "place_terms": [],
-            "metadata_only": false,
-            "matched_metadata_terms": []
+            "media_types": ["photo"],
+            "albums": []
           },
-          "concept_terms": ["动物"],
-          "semantic_tags": ["动物"],
-          "core_facets": ["object"],
-          "core_facet_evidence": {
-            "positive_terms": ["动物"],
-            "negative_terms": ["玩具"]
+          "lexical": {
+            "required": ["动物"],
+            "preferred": ["宠物", "猫", "狗"],
+            "excluded": ["玩具动物"]
           },
-          "query_constraints": {
-            "requires_visual_evidence": true,
-            "allow_weak_only_match": false,
-            "min_evidence_level": "C",
-            "query_core_facets": ["object"]
+          "semantic": {
+            "concepts": ["动物"],
+            "queries": ["查找包含动物主体的照片"]
           },
-          "confidence": 0.91,
-          "fallback_reason": ""
+          "visual": {
+            "objects": ["动物"],
+            "scenes": [],
+            "activities": [],
+            "attributes": []
+          },
+          "ranking": {
+            "sort": [{"field": "relevance", "order": "desc"}]
+          },
+          "unresolved": {
+            "people": [],
+            "locations": []
+          },
+          "confidence": 0.91
         }
         """
         with patch(
@@ -233,7 +228,8 @@ class ProjectQueryPlannerTestEndpointE2ETest(unittest.TestCase):
         body = res.json()
         self.assertEqual(body["query"], "动物")
         self.assertFalse(body["planner_debug"].get("used_fallback"))
-        self.assertEqual(body["parsed_query_plan"]["intent"], "animal_search")
+        self.assertEqual(body["planner_debug"].get("planner_contract_version"), "2")
+        self.assertEqual(body["parsed_query_plan"]["intent"], "semantic_photo_search")
         self.assertIn("动物", body["parsed_query_plan"]["exact_terms"])
 
     def test_query_planner_test_endpoint_fallback_on_planner_error(self) -> None:
@@ -252,58 +248,43 @@ class ProjectQueryPlannerTestEndpointE2ETest(unittest.TestCase):
         self.assertTrue(str(body["planner_debug"].get("fallback_reason", "")).startswith("planner_error:"))
         self.assertIn("intent", body["parsed_query_plan"])
 
-    def test_query_planner_test_endpoint_normalizes_empty_list_scalars(self) -> None:
+    def test_query_planner_test_endpoint_accepts_v2_optional_scalars(self) -> None:
         llm_json = """
         {
-          "intent": "search",
-          "search_mode": "semantic",
-          "normalized_query": "动物",
-          "semantic_query_text": "关于动物的图像内容",
-          "terms": {
-            "exact": ["动物"],
-            "expanded": ["宠物", "野生动物"],
-            "support": [],
-            "broad": [],
-            "negative": []
-          },
-          "facets": {
-            "object": ["动物"],
-            "scene": [],
-            "activity": [],
-            "people": [],
-            "weather": [],
-            "time": [],
-            "location": []
-          },
+          "version": "2",
+          "intent": "photo_search",
           "filters": {
-            "has_animals": true,
-            "weather": [],
-            "time_of_day": []
+            "time_ranges": [],
+            "locations": [],
+            "people": [],
+            "camera": [],
+            "has_gps": null,
+            "media_types": [],
+            "albums": []
           },
-          "metadata_filters": {
-            "year": [],
-            "month": [],
-            "season": [],
-            "camera_make": [],
-            "camera_model": [],
-            "place_terms": [],
-            "matched_metadata_terms": []
+          "lexical": {
+            "required": ["动物"],
+            "preferred": ["宠物", "野生动物"],
+            "excluded": []
           },
-          "concept_terms": ["动物"],
-          "semantic_tags": ["动物"],
-          "core_facets": ["object"],
-          "core_facet_evidence": {
-            "positive_terms": ["动物"],
-            "negative_terms": []
+          "semantic": {
+            "concepts": ["动物"],
+            "queries": ["关于动物的图像内容"]
           },
-          "query_constraints": {
-            "requires_visual_evidence": true,
-            "allow_weak_only_match": false,
-            "min_evidence_level": "high",
-            "query_core_facets": ["object"]
+          "visual": {
+            "objects": ["动物"],
+            "scenes": [],
+            "activities": [],
+            "attributes": []
           },
-          "confidence": 0.95,
-          "fallback_reason": ""
+          "ranking": {
+            "sort": []
+          },
+          "unresolved": {
+            "people": [],
+            "locations": []
+          },
+          "confidence": 0.95
         }
         """
         with patch(
@@ -318,13 +299,8 @@ class ProjectQueryPlannerTestEndpointE2ETest(unittest.TestCase):
         self.assertEqual(res.status_code, 200)
         body = res.json()
         self.assertFalse(body["planner_debug"].get("used_fallback"))
-        self.assertEqual(body["parsed_query_plan"]["filters"].get("weather"), None)
-        self.assertEqual(body["parsed_query_plan"]["filters"].get("time_of_day"), None)
-        self.assertEqual(body["parsed_query_plan"]["metadata_filters"].get("year"), None)
-        self.assertEqual(body["parsed_query_plan"]["metadata_filters"].get("month"), None)
-        self.assertEqual(body["parsed_query_plan"]["metadata_filters"].get("season"), None)
-        self.assertEqual(body["parsed_query_plan"]["metadata_filters"].get("camera_make"), None)
-        self.assertEqual(body["parsed_query_plan"]["metadata_filters"].get("camera_model"), None)
+        self.assertEqual(body["planner_debug"].get("planner_contract_version"), "2")
+        self.assertIsNone(body["parsed_query_plan"]["metadata_filters"].get("has_gps"))
 
     def test_query_planner_test_endpoint_fallback_on_missing_config(self) -> None:
         with self._engine.begin() as conn:
