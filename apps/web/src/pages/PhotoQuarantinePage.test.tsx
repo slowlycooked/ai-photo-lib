@@ -204,6 +204,48 @@ describe("PhotoQuarantinePage", () => {
     ));
   });
 
+  it("removes batch-approved deletions from the default pending view", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const reviewItems = [
+      { ...item, id: 7, status: "review" },
+      { ...item, id: 8, photo_id: 80, status: "analysis_failed" },
+    ];
+    listMock
+      .mockResolvedValueOnce({ total: 2, items: reviewItems })
+      .mockImplementation(() => new Promise(() => undefined));
+    batchMock.mockResolvedValue({
+      requested: 2,
+      succeeded: 2,
+      failed: 0,
+      results: reviewItems.map((reviewItem) => ({
+        item_id: reviewItem.id,
+        succeeded: true,
+        item: { ...reviewItem, status: "delete_queued", human_label: "TRASH" },
+        error_code: null,
+        message: null,
+      })),
+    });
+    renderPage();
+
+    await user.click(await screen.findByRole("button", { name: "全选当前页（2）" }));
+    await user.click(screen.getByRole("button", { name: "批量提交删除（2）" }));
+
+    expect(await screen.findByText("当前筛选条件下没有图片。")).toBeInTheDocument();
+    expect(screen.getByText("共 0 项")).toBeInTheDocument();
+  });
+
+  it("defaults to statuses that still need human handling", async () => {
+    renderPage();
+
+    await waitFor(() => expect(listMock).toHaveBeenCalled());
+    const defaultStatuses = String(listMock.mock.calls[0][1]);
+    expect(defaultStatuses).toContain("review");
+    expect(defaultStatuses).toContain("analysis_failed");
+    expect(defaultStatuses).not.toContain("delete_queued");
+    expect(defaultStatuses).not.toContain("quarantined");
+  });
+
   it("requests the next server page instead of loading every item", async () => {
     const user = userEvent.setup();
     listMock.mockImplementation((_projectId, _status, _limit, offset) =>
@@ -249,7 +291,7 @@ describe("PhotoQuarantinePage", () => {
     await waitFor(() => expect(requestDeleteMock).toHaveBeenCalledWith(1, 7));
   });
 
-  it("immediately marks the preview after deletion is submitted", async () => {
+  it("immediately removes a submitted deletion from the default pending view", async () => {
     const user = userEvent.setup();
     vi.spyOn(window, "confirm").mockReturnValue(true);
     listMock
@@ -262,8 +304,8 @@ describe("PhotoQuarantinePage", () => {
 
     await user.click(await screen.findByRole("button", { name: "提交删除" }));
 
-    expect(await screen.findByText("已提交删除")).toBeInTheDocument();
-    expect(screen.getByLabelText("已提交删除，等待后台处理")).toBeInTheDocument();
+    expect(await screen.findByText("当前筛选条件下没有图片。")).toBeInTheDocument();
+    expect(screen.getByText("共 0 项")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "提交删除" })).not.toBeInTheDocument();
   });
 

@@ -24,7 +24,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useProjectContext } from "@/contexts/ProjectContext";
 import { canManageProjects } from "@/lib/permissions";
 
-const REVIEW_STATUSES = "review,delete_queued,quarantined,restore_conflict,restore_failed,queue_failed,move_failed,analysis_failed";
+const PENDING_STATUSES = "review,restore_conflict,restore_failed,queue_failed,move_failed,analysis_failed";
 const RESTORABLE_STATUSES = new Set(["quarantined", "restore_conflict", "restore_failed"]);
 const APPROVAL_STATUSES = new Set([
   "review",
@@ -37,7 +37,7 @@ const APPROVAL_STATUSES = new Set([
 const PAGE_SIZE = 24;
 
 const STATUS_OPTIONS = [
-  { value: REVIEW_STATUSES, label: "待处理" },
+  { value: PENDING_STATUSES, label: "待处理" },
   { value: "review", label: "待审核" },
   { value: "delete_queued", label: "后台删除队列" },
   { value: "quarantined", label: "已移入待删除区" },
@@ -84,7 +84,7 @@ export function PhotoQuarantinePage() {
   const selectedProjectId = Number.isFinite(routeProjectId) ? routeProjectId : currentProjectId;
   const projectExists = selectedProjectId != null && projects.some((project) => project.id === selectedProjectId);
   const canManage = canManageProjects(auth.session);
-  const [statusFilter, setStatusFilter] = useState<string>(REVIEW_STATUSES);
+  const [statusFilter, setStatusFilter] = useState<string>(PENDING_STATUSES);
   const [labelFilter, setLabelFilter] = useState<"" | "KEEP" | "TRASH" | "UNLABELED">("");
   const [page, setPage] = useState(0);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
@@ -171,13 +171,33 @@ export function PhotoQuarantinePage() {
   const updateCachedItems = (updatedItems: PhotoQuarantineItem[]) => {
     if (updatedItems.length === 0) return;
     const updatedById = new Map(updatedItems.map((item) => [item.id, item]));
-    queryClient.setQueriesData<PhotoQuarantineListResponse>(
-      { queryKey: ["photo-quarantine-items", selectedProjectId] },
+    const visibleStatuses = new Set(
+      statusFilter.split(",").map((status) => status.trim()).filter(Boolean),
+    );
+    const matchesActiveFilter = (item: PhotoQuarantineItem) => {
+      if (!visibleStatuses.has(item.status)) return false;
+      if (labelFilter === "UNLABELED") return item.human_label == null;
+      if (labelFilter) return item.human_label === labelFilter;
+      return true;
+    };
+    queryClient.setQueryData<PhotoQuarantineListResponse>(
+      queryKeys.photoQuarantineItems(
+        selectedProjectId,
+        statusFilter,
+        page * PAGE_SIZE,
+        labelFilter,
+      ),
       (current) => current
-        ? {
-          ...current,
-          items: current.items.map((item) => updatedById.get(item.id) ?? item),
-        }
+        ? (() => {
+          const nextItems = current.items
+            .map((item) => updatedById.get(item.id) ?? item)
+            .filter(matchesActiveFilter);
+          return {
+            ...current,
+            total: Math.max(0, current.total - (current.items.length - nextItems.length)),
+            items: nextItems,
+          };
+        })()
         : current,
     );
   };
