@@ -537,7 +537,7 @@ start_postgres() {
     return 0
   fi
 
-  log_error "postgres 不可用（.env 配置端口: $POSTGRES_PORT）"
+  log_error "postgres 不可用（.env 配置端口: ${POSTGRES_PORT}）"
   log_error "svc.sh 不负责启动数据库，请先自行启动 .env 对应的 PostgreSQL 实例"
   return 1
 }
@@ -546,7 +546,7 @@ stop_postgres() {
   if postgres_is_ready; then
     log_warn "检测到 PostgreSQL 正在端口 $POSTGRES_PORT 运行；svc.sh 不执行数据库停止操作。"
   else
-    log_warn "postgres 当前不可用（.env 配置端口: $POSTGRES_PORT）"
+    log_warn "postgres 当前不可用（.env 配置端口: ${POSTGRES_PORT}）"
   fi
 }
 
