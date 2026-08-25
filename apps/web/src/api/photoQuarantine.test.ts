@@ -23,4 +23,20 @@ describe("photoQuarantineApi", () => {
       }),
     );
   });
+
+  it("starts an idempotent deletion reconciliation", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ checked: 3, confirmed: 2, remaining: 1, failed: 0 }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await photoQuarantineApi.reconcile(3);
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/projects/3/photo-quarantine/reconciliations",
+      expect.objectContaining({ method: "POST" }),
+    );
+  });
 });

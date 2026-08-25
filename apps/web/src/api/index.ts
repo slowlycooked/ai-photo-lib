@@ -49,6 +49,7 @@ export type {
   PhotoQuarantineCalibrationCategory,
   PhotoQuarantineCalibrationResponse,
   PhotoQuarantineListResponse,
+  PhotoQuarantineReconciliationResponse,
   PersonDetail,
   PersonActionResponse,
   PersonBatchActionResponse,

@@ -8,6 +8,7 @@ import { PhotoQuarantinePage } from "@/pages/PhotoQuarantinePage";
 
 const getSettingsMock = vi.fn();
 const listMock = vi.fn();
+const reconcileMock = vi.fn();
 const restoreMock = vi.fn();
 const requestDeleteMock = vi.fn();
 const keepMock = vi.fn();
@@ -28,6 +29,7 @@ vi.mock("@/api", async () => {
         ...actual.api.photoQuarantine,
         getSettings: (...args: unknown[]) => getSettingsMock(...args),
         list: (...args: unknown[]) => listMock(...args),
+        reconcile: (...args: unknown[]) => reconcileMock(...args),
         restore: (...args: unknown[]) => restoreMock(...args),
         requestDelete: (...args: unknown[]) => requestDeleteMock(...args),
         keep: (...args: unknown[]) => keepMock(...args),
@@ -111,6 +113,7 @@ describe("PhotoQuarantinePage", () => {
       updated_at: "2026-08-24T00:00:00Z",
     });
     listMock.mockResolvedValue({ total: 1, items: [item] });
+    reconcileMock.mockResolvedValue({ checked: 1, confirmed: 0, remaining: 1, failed: 0 });
     restoreMock.mockResolvedValue({ ...item, status: "restored" });
     requestDeleteMock.mockResolvedValue({ ...item, status: "delete_queued", quarantine_path: null });
     keepMock.mockResolvedValue({ ...item, status: "kept", human_label: "KEEP" });
@@ -355,6 +358,26 @@ describe("PhotoQuarantinePage", () => {
     expect(defaultStatuses).toContain("analysis_failed");
     expect(defaultStatuses).not.toContain("delete_queued");
     expect(defaultStatuses).not.toContain("quarantined");
+  });
+
+  it("automatically reconciles backend deletions when the page loads", async () => {
+    renderPage();
+
+    await waitFor(() => expect(reconcileMock).toHaveBeenCalledWith(1));
+  });
+
+  it("removes automatically confirmed deletions from the visible list", async () => {
+    reconcileMock.mockResolvedValue({ checked: 1, confirmed: 1, remaining: 0, failed: 0 });
+    listMock
+      .mockResolvedValueOnce({
+        total: 1,
+        items: [{ ...item, status: "delete_queued", quarantine_path: null }],
+      })
+      .mockResolvedValue({ total: 0, items: [] });
+    renderPage();
+
+    expect(await screen.findByText("已自动核验并清理 1 张后台已删除的图片记录")).toBeInTheDocument();
+    expect(await screen.findByText("当前筛选条件下没有图片。")).toBeInTheDocument();
   });
 
   it("requests the next server page instead of loading every item", async () => {

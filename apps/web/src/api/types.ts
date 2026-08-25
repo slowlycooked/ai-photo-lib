@@ -1164,6 +1164,13 @@ export interface PhotoQuarantineBatchResponse {
   results: PhotoQuarantineBatchItemResult[];
 }
 
+export interface PhotoQuarantineReconciliationResponse {
+  checked: number;
+  confirmed: number;
+  remaining: number;
+  failed: number;
+}
+
 export interface PhotoQuarantineCalibrationCategory {
   classification: string;
   labeled_total: number;

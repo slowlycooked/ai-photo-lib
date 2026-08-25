@@ -5,6 +5,7 @@ import type {
   PhotoQuarantineCalibrationResponse,
   PhotoQuarantineItem,
   PhotoQuarantineListResponse,
+  PhotoQuarantineReconciliationResponse,
   ProjectPhotoQuarantineSettings,
   ProjectPhotoQuarantineSettingsUpdate,
   ProjectTask,
@@ -30,6 +31,12 @@ export const photoQuarantineApi = {
   ) =>
     request<PhotoQuarantineListResponse>(
       `/projects/${projectId}/photo-quarantine/items${qs({ status, human_label: humanLabel, limit, offset })}`,
+    ),
+
+  reconcile: (projectId: number) =>
+    request<PhotoQuarantineReconciliationResponse>(
+      `/projects/${projectId}/photo-quarantine/reconciliations`,
+      { method: "POST" },
     ),
 
   getCalibration: (projectId: number) =>

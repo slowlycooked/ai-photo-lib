@@ -40,7 +40,7 @@ const PAGE_SIZE = 24;
 
 const STATUS_OPTIONS = [
   { value: PENDING_STATUSES, label: "待处理" },
-  { value: "delete_queued,quarantined,deleted_confirmed", label: "已提交删除" },
+  { value: "delete_queued,quarantined", label: "已提交删除" },
   { value: "kept,restored", label: "已保留" },
   { value: "analysis_failed,queue_failed,move_failed,restore_conflict,restore_failed", label: "异常" },
 ] as const;
@@ -283,6 +283,23 @@ export function PhotoQuarantinePage() {
     },
     onError: (error: Error) => setMessage(`批量操作失败：${error.message}`),
   });
+  const reconcileMutation = useMutation({
+    mutationFn: () => api.photoQuarantine.reconcile(selectedProjectId!),
+    onSuccess: (result) => {
+      if (result.confirmed > 0) {
+        setMessage(`已自动核验并清理 ${result.confirmed} 张后台已删除的图片记录`);
+        refreshItems();
+      } else if (result.failed > 0) {
+        setMessage(`有 ${result.failed} 张图片暂时无法核验，已保留原状态`);
+      }
+    },
+    onError: (error: Error) => setMessage(`自动核验失败：${error.message}`),
+  });
+  const reconcileItems = reconcileMutation.mutate;
+
+  useEffect(() => {
+    if (projectExists) reconcileItems();
+  }, [projectExists, selectedProjectId, reconcileItems]);
 
   const items = itemsQuery.data?.items ?? [];
   const batchSelectableItems = useMemo(
@@ -475,7 +492,7 @@ export function PhotoQuarantinePage() {
               <option value="">全部标签</option><option value="UNLABELED">未标注</option><option value="KEEP">应保留</option><option value="TRASH">垃圾</option>
             </select>
             <span className="text-caption-sm text-mute">共 {itemsQuery.data?.total ?? 0} 项</span>
-            <button type="button" onClick={() => itemsQuery.refetch()} className="text-mute hover:text-ink" aria-label="刷新"><RefreshCw className="w-4 h-4" /></button>
+            <button type="button" onClick={() => reconcileItems()} disabled={reconcileMutation.isPending} className="text-mute hover:text-ink disabled:opacity-50" aria-label="刷新"><RefreshCw className={`w-4 h-4 ${reconcileMutation.isPending ? "animate-spin" : ""}`} /></button>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             {canManage && batchSelectableItems.length > 0 && <button type="button" onClick={toggleSelectCurrentPage} aria-pressed={allOnPageSelected} className="px-3 py-2 rounded-md border border-hairline text-btn-sm font-bold hover:bg-surface-card">{allOnPageSelected ? "取消全选" : `全选当前页（${batchSelectableItems.length}）`}</button>}
