@@ -272,6 +272,51 @@ def test_qwen_v2_low_confidence_uses_raw_semantic_without_rule_merge() -> None:
     assert plan.intent == "semantic_photo_search"
 
 
+def test_qwen_v2_metadata_only_normalizes_range_without_semantic_fallback() -> None:
+    settings = replace(
+        _v1_defaults(),
+        query_planner_enabled=True,
+        query_planner_endpoint_url="http://127.0.0.1:18084/v1/chat/completions",
+        query_planner_model_name="qwen3-8b-query-planner",
+        query_planner_planner_version="v2",
+    )
+    llm_json = """
+    {
+      "version": "2",
+      "intent": "photo_search",
+      "filters": {
+        "time_ranges": [{"start": "2024-05-01", "end": "2024-05-31"}],
+        "locations": [{"name": "杭州", "required": true}]
+      },
+      "semantic": {"queries": ["杭州"]}
+    }
+    """
+
+    with patch(
+        "app.services.search.query_planner.llm_query_planner.call_chat_completion",
+        return_value=llm_json,
+    ):
+        plan = resolve_query_plan_llm_first(
+            "2024年5月 杭州",
+            project_id=1,
+            settings=settings,
+            understander=understand_query,
+            include_raw_output=True,
+        )
+
+    assert plan.metadata_filters["date_from"] == "2024-05-01"
+    assert plan.metadata_filters["date_to"] == "2024-06-01"
+    assert plan.metadata_filters["metadata_only"] is True
+    assert plan.planner_filters["time_ranges"] == [
+        {"start": "2024-05-01", "end": "2024-06-01"}
+    ]
+    assert plan.semantic_query_text == ""
+    assert plan.lexical_plan == {"required": [], "preferred": [], "excluded": []}
+    assert plan.semantic_plan == {"concepts": [], "queries": []}
+    assert plan.query_constraints["requires_visual_evidence"] is False
+    assert plan.planner_debug["semantic_source"] == "metadata_only"
+
+
 def test_qwen_v2_failure_uses_deterministic_metadata_and_raw_semantic() -> None:
     settings = replace(
         _v1_defaults(),

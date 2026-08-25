@@ -385,8 +385,23 @@ def planner_v2_output_to_query_plan(
         visual_objects + visual_scenes + visual_activities + visual_attributes
     )
 
+    deterministic_metadata = deterministic_plan.metadata_filters or {}
+    deterministic_metadata_only = bool(
+        deterministic_metadata.get("metadata_only")
+    )
     low_confidence = float(output.confidence or 0.0) < 0.6
-    if low_confidence:
+    if deterministic_metadata_only:
+        lexical_required = []
+        lexical_preferred = []
+        lexical_excluded = []
+        semantic_concepts = []
+        semantic_queries = []
+        visual_objects = []
+        visual_scenes = []
+        visual_activities = []
+        visual_attributes = []
+        visual_terms = []
+    elif low_confidence:
         lexical_required = []
         lexical_preferred = _fallback_exact_terms(query)
         semantic_concepts = []
@@ -399,6 +414,19 @@ def planner_v2_output_to_query_plan(
 
     planner_filters = output.filters.model_dump()
     required_time_ranges = [item for item in output.filters.time_ranges]
+    deterministic_date_from = deterministic_metadata.get("date_from")
+    deterministic_date_to = deterministic_metadata.get("date_to")
+    if (
+        len(required_time_ranges) == 1
+        and deterministic_date_from
+        and deterministic_date_to
+    ):
+        planner_filters["time_ranges"] = [
+            {
+                "start": deterministic_date_from,
+                "end": deterministic_date_to,
+            }
+        ]
     required_locations = [item for item in output.filters.locations if item.required]
     required_cameras = [item for item in output.filters.camera if item.required]
 
@@ -440,11 +468,19 @@ def planner_v2_output_to_query_plan(
     )
     metadata_filters = merge_metadata_filters(
         metadata_seed,
-        deterministic_plan.metadata_filters or {},
+        deterministic_metadata,
     )
+    for key in ("date_from", "date_to", "year", "month", "months"):
+        deterministic_value = deterministic_metadata.get(key)
+        if deterministic_value not in (None, "", [], {}):
+            metadata_filters[key] = deterministic_value
 
     semantic_query_text = " ".join(semantic_queries).strip()
-    semantic_source = "raw_query_fallback" if low_confidence else "qwen"
+    semantic_source = (
+        "metadata_only"
+        if deterministic_metadata_only
+        else ("raw_query_fallback" if low_confidence else "qwen")
+    )
     if not semantic_query_text and not metadata_filters.get("metadata_only"):
         semantic_query_text = query.strip()
         semantic_source = "raw_query_fallback"
@@ -488,7 +524,11 @@ def planner_v2_output_to_query_plan(
         {
             "planner_contract_version": "2",
             "semantic_source": semantic_source,
-            "semantic_fallback_reason": "low_confidence" if low_confidence else "",
+            "semantic_fallback_reason": (
+                ""
+                if deterministic_metadata_only
+                else ("low_confidence" if low_confidence else "")
+            ),
             "semantic_queries": semantic_queries,
             "filters": planner_filters,
             "lexical": effective_lexical_plan,
