@@ -155,7 +155,7 @@ describe("PhotoQuarantinePage", () => {
     });
   });
 
-  it("changes immediate analysis into a manual stop control", async () => {
+  it("keeps start and stop scan controls visible while their enabled state changes", async () => {
     const user = userEvent.setup();
     const activeTask = {
       id: 88,
@@ -172,10 +172,13 @@ describe("PhotoQuarantinePage", () => {
     startRunMock.mockResolvedValue(activeTask);
     renderPage();
 
-    await user.click(await screen.findByRole("button", { name: "立即分析" }));
+    const startButton = await screen.findByRole("button", { name: "启动扫描" });
+    expect(screen.getByRole("button", { name: "停止扫描" })).toBeDisabled();
+    await user.click(startButton);
 
     await waitFor(() => expect(startRunMock).toHaveBeenCalledWith(1));
-    await user.click(await screen.findByRole("button", { name: "停止分析" }));
+    expect(await screen.findByRole("button", { name: "启动扫描" })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "停止扫描" }));
 
     await waitFor(() => expect(cancelTaskMock).toHaveBeenCalledWith(1, 88));
     expect(await screen.findByRole("button", { name: "正在停止" })).toBeDisabled();
@@ -251,6 +254,46 @@ describe("PhotoQuarantinePage", () => {
       "REQUEST_DELETE",
       [7, 8],
     ));
+  });
+
+  it("keeps failed batch items selected and names the failure", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const reviewItems = [
+      { ...item, id: 7, original_path: "/photos/IMG_2561.jpg", status: "review" },
+      { ...item, id: 8, photo_id: 80, original_path: "/photos/DSC_2480.jpg", status: "analysis_failed" },
+    ];
+    listMock.mockResolvedValue({ total: 2, items: reviewItems });
+    batchMock.mockResolvedValue({
+      requested: 2,
+      succeeded: 1,
+      failed: 1,
+      results: [
+        {
+          item_id: 7,
+          succeeded: true,
+          item: { ...reviewItems[0], status: "delete_queued" },
+          error_code: null,
+          message: null,
+        },
+        {
+          item_id: 8,
+          succeeded: false,
+          item: null,
+          error_code: "invalid_item",
+          message: "Original file is missing",
+        },
+      ],
+    });
+    renderPage();
+
+    await user.click(await screen.findByRole("button", { name: "全选当前页（2）" }));
+    await user.click(screen.getByRole("button", { name: "批量提交删除（2）" }));
+
+    expect(await screen.findByText(/DSC_2480\.jpg（Original file is missing）/)).toBeInTheDocument();
+    const checkboxes = screen.getAllByRole("checkbox", { name: "选择审核项" });
+    expect(checkboxes[0]).not.toBeChecked();
+    expect(checkboxes[1]).toBeChecked();
   });
 
   it("can retry a queued item when its deletion manifest needs rebuilding", async () => {

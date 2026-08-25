@@ -269,8 +269,16 @@ export function PhotoQuarantinePage() {
         : variables.action === "REQUEST_DELETE"
           ? "批准删除并加入后台清单"
           : "批准保留";
-      setMessage(`已${verb} ${result.succeeded} 张${result.failed ? `，${result.failed} 张失败，请逐项检查` : ""}`);
-      setSelectedIds(new Set());
+      const failedEntries = result.results.filter((entry) => !entry.succeeded);
+      const failedIds = new Set(failedEntries.map((entry) => entry.item_id));
+      const fileNamesById = new Map(items.map((item) => [item.id, item.original_path.split("/").pop() ?? item.original_path]));
+      const failureDetails = failedEntries
+        .map((entry) => `${fileNamesById.get(entry.item_id) ?? `#${entry.item_id}`}（${entry.message ?? entry.error_code ?? "未知原因"}）`)
+        .join("；");
+      setMessage(
+        `已${verb} ${result.succeeded} 张${result.failed ? `，${result.failed} 张失败：${failureDetails}` : ""}`,
+      );
+      setSelectedIds(failedIds);
       refreshItems();
     },
     onError: (error: Error) => setMessage(`批量操作失败：${error.message}`),
@@ -330,31 +338,30 @@ export function PhotoQuarantinePage() {
             页面只写入删除清单，不会移动或删除原片；原片由 NAS 后台脚本统一处理。提交后如需反悔，请在脚本执行前停用该清单，或在执行后从 NAS 回收目录恢复。
           </p>
         </div>
-        {canManage && (
-          analysisActive ? (
-            <button
-              type="button"
-              onClick={() => stopMutation.mutate()}
-              disabled={stopMutation.isPending || cancelRequested}
-              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md bg-danger text-white text-btn-sm font-bold disabled:opacity-50"
-            >
-              {stopMutation.isPending || cancelRequested
-                ? <Loader2 className="w-4 h-4 animate-spin" />
-                : <Square className="w-4 h-4" />}
-              {stopMutation.isPending || cancelRequested ? "正在停止" : "停止分析"}
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={() => runMutation.mutate()}
-              disabled={runMutation.isPending}
-              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md bg-primary text-white text-btn-sm font-bold disabled:opacity-50"
-            >
-              {runMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
-              {runMutation.isPending ? "正在启动" : "立即分析"}
-            </button>
-          )
-        )}
+        <div className="flex shrink-0 flex-wrap items-center gap-2 rounded-lg border border-hairline bg-canvas p-2 shadow-sm">
+          <button
+            type="button"
+            onClick={() => runMutation.mutate()}
+            disabled={!canManage || analysisActive || runMutation.isPending}
+            title={!canManage ? "需要项目管理员权限" : analysisActive ? "扫描正在运行" : "启动待删除图片扫描"}
+            className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-2 text-btn-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {runMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
+            {runMutation.isPending ? "正在启动" : "启动扫描"}
+          </button>
+          <button
+            type="button"
+            onClick={() => stopMutation.mutate()}
+            disabled={!canManage || !analysisActive || stopMutation.isPending || cancelRequested}
+            title={!canManage ? "需要项目管理员权限" : !analysisActive ? "当前没有运行中的扫描" : "停止待删除图片扫描"}
+            className="inline-flex items-center gap-1.5 rounded-md bg-danger px-3 py-2 text-btn-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {stopMutation.isPending || cancelRequested
+              ? <Loader2 className="w-4 h-4 animate-spin" />
+              : <Square className="w-4 h-4" />}
+            {stopMutation.isPending || cancelRequested ? "正在停止" : "停止扫描"}
+          </button>
+        </div>
       </div>
 
       {message && <div className="rounded-md border border-hairline bg-canvas px-4 py-3 text-body-sm text-ink">{message}</div>}
