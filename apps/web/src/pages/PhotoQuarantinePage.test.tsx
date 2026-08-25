@@ -204,6 +204,25 @@ describe("PhotoQuarantinePage", () => {
     ));
   });
 
+  it("can retry a queued item when its deletion manifest needs rebuilding", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    listMock.mockResolvedValue({
+      total: 1,
+      items: [{ ...item, status: "delete_queued", quarantine_path: null }],
+    });
+    renderPage();
+
+    await user.click(await screen.findByRole("checkbox", { name: "选择审核项" }));
+    await user.click(screen.getByRole("button", { name: "批量重写删除清单（1）" }));
+
+    await waitFor(() => expect(batchMock).toHaveBeenCalledWith(
+      1,
+      "REQUEST_DELETE",
+      [7],
+    ));
+  });
+
   it("removes batch-approved deletions from the default pending view", async () => {
     const user = userEvent.setup();
     vi.spyOn(window, "confirm").mockReturnValue(true);

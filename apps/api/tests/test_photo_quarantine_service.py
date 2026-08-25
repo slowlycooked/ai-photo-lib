@@ -169,6 +169,30 @@ def test_batch_request_delete_uses_approval_semantics(quarantine_fixture) -> Non
         assert result.results[0].item.human_label == "TRASH"
         assert original.exists()
 
+        manifest = original.parents[2] / "pending-original-trash.jsonl"
+        entries = [json.loads(line) for line in manifest.read_text().splitlines()]
+        assert [entry["photo_id"] for entry in entries] == [10]
+
+
+def test_repeated_delete_request_recreates_missing_manifest(quarantine_fixture) -> None:
+    engine, _library, trash, original, _digest = quarantine_fixture
+    manifest = original.parents[2] / "pending-original-trash.jsonl"
+
+    with Session(engine) as db:
+        service = PhotoQuarantineService(db, root=trash)
+        service.request_delete(project_id=1, item_id=100, labeled_by="martin")
+        manifest.unlink()
+
+        repeated = service.request_delete(
+            project_id=1,
+            item_id=100,
+            labeled_by="martin",
+        )
+
+        assert repeated.item.status == "delete_queued"
+        entries = [json.loads(line) for line in manifest.read_text().splitlines()]
+        assert [entry["photo_id"] for entry in entries] == [10]
+
 
 def test_restore_never_overwrites_occupied_original_path(quarantine_fixture) -> None:
     engine, _library, trash, original, _digest = quarantine_fixture

@@ -152,7 +152,22 @@ class PhotoQuarantineService:
         labeled_by: Optional[str] = None,
     ) -> QuarantineMoveResult:
         item, photo, project = self._load_item_photo_project(project_id, item_id)
-        if item.status in {"delete_queued", "quarantined"}:
+        if item.status == "delete_queued":
+            source = self._validated_original_path(
+                project,
+                item.original_path,
+                must_exist=False,
+            )
+            if source.exists():
+                queue_original_trash_request(
+                    self._db,
+                    project_id=project_id,
+                    photo=photo,
+                )
+            if labeled_by:
+                self._save_label(item, label="TRASH", labeled_by=labeled_by)
+            return QuarantineMoveResult(item=item, moved=False)
+        if item.status == "quarantined":
             if labeled_by:
                 self._save_label(item, label="TRASH", labeled_by=labeled_by)
             return QuarantineMoveResult(item=item, moved=False)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -109,9 +110,25 @@ def queue_original_trash_request(db: Session, *, project_id: int, photo: Photo) 
         "taken_at": photo.taken_at.isoformat() if photo.taken_at else None,
     }
 
-    with manifest_path.open("a", encoding="utf-8") as fh:
+    with manifest_path.open("a+", encoding="utf-8") as fh:
+        fh.seek(0)
+        for line in fh:
+            try:
+                existing = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if (
+                existing.get("action") == payload["action"]
+                and existing.get("project_id") == project_id
+                and existing.get("photo_id") == photo.id
+            ):
+                return True
+
+        fh.seek(0, os.SEEK_END)
         fh.write(json.dumps(payload, ensure_ascii=False, sort_keys=True))
         fh.write("\n")
+        fh.flush()
+        os.fsync(fh.fileno())
 
     return True
 
