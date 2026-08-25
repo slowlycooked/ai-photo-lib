@@ -18,6 +18,7 @@ from app.models.photo_quarantine import PhotoQuarantineItem
 from app.models.project import Project
 from app.services.photo_quarantine_service import (
     PhotoQuarantineConflict,
+    PhotoQuarantineError,
     PhotoQuarantineService,
 )
 
@@ -172,6 +173,49 @@ def test_batch_request_delete_uses_approval_semantics(quarantine_fixture) -> Non
         manifest = original.parents[2] / "pending-original-trash.jsonl"
         entries = [json.loads(line) for line in manifest.read_text().splitlines()]
         assert [entry["photo_id"] for entry in entries] == [10]
+
+
+def test_batch_request_delete_reports_unwritable_nas_manifest(quarantine_fixture) -> None:
+    engine, _library, trash, _original, _digest = quarantine_fixture
+    with Session(engine) as db:
+        with patch(
+            "app.services.photo_quarantine_service.queue_original_trash_request",
+            side_effect=PermissionError("read-only share"),
+        ):
+            result = PhotoQuarantineService(db, root=trash).batch_action(
+                project_id=1,
+                item_ids=[100],
+                action="REQUEST_DELETE",
+                labeled_by="martin",
+            )
+
+        assert result.succeeded == 0
+        assert result.failed == 1
+        assert result.results[0].error_code == "invalid_item"
+        assert result.results[0].message == (
+            "NAS 删除清单不可写；请恢复 ai-photo-data 共享目录的写权限后重试"
+        )
+        item = db.query(PhotoQuarantineItem).filter(PhotoQuarantineItem.id == 100).one()
+        assert item.status == "queue_failed"
+        assert item.last_error == "read-only share"
+
+
+def test_single_delete_request_reports_unwritable_nas_manifest(quarantine_fixture) -> None:
+    engine, _library, trash, _original, _digest = quarantine_fixture
+    with Session(engine) as db:
+        with patch(
+            "app.services.photo_quarantine_service.queue_original_trash_request",
+            side_effect=PermissionError("read-only share"),
+        ):
+            with pytest.raises(
+                PhotoQuarantineError,
+                match="ai-photo-data 共享目录的写权限",
+            ):
+                PhotoQuarantineService(db, root=trash).request_delete(
+                    project_id=1,
+                    item_id=100,
+                    labeled_by="martin",
+                )
 
 
 def test_repeated_delete_request_recreates_missing_manifest(quarantine_fixture) -> None:

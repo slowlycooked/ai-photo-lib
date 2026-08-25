@@ -204,7 +204,9 @@ class PhotoQuarantineService:
             item.last_error = str(exc)
             item.updated_at = _now()
             self._db.commit()
-            raise
+            raise PhotoQuarantineError(
+                "NAS 删除清单不可写；请恢复 ai-photo-data 共享目录的写权限后重试"
+            ) from exc
 
         queued_item = self._finalize_delete_queue(item.id, source_hash)
         if labeled_by:
