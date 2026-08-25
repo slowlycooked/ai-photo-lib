@@ -50,6 +50,8 @@ class PhotoQuarantineItemResponse(BaseModel):
     confidence: float
     reason: str
     preservation_flags: list
+    content_rating: Literal["SAFE", "SENSITIVE", "ADULT"] = "SAFE"
+    sensitive_content_flags: list[str] = Field(default_factory=list)
     first_result: dict
     verification_result: Optional[dict] = None
     model_name: str

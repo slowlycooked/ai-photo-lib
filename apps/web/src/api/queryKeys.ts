@@ -27,7 +27,15 @@ export const queryKeys = {
     status?: string,
     offset = 0,
     humanLabel?: string,
-  ) => ["photo-quarantine-items", projectId, status ?? null, humanLabel ?? null, offset] as const,
+    classification?: string,
+  ) => [
+    "photo-quarantine-items",
+    projectId,
+    status ?? null,
+    humanLabel ?? null,
+    classification ?? null,
+    offset,
+  ] as const,
   photoQuarantineCalibration: (projectId: number | null) =>
     ["photo-quarantine-calibration", projectId] as const,
   projectTaskFailures: (projectId: number | null, taskId: number | null, limit = 20, offset = 0) =>

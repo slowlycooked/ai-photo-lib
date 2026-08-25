@@ -21,12 +21,29 @@ function formatDate(iso: string | null): string {
   return d.toLocaleDateString("zh-CN", { year: "numeric", month: "short", day: "numeric" });
 }
 
+function formatExifDecimal(value: string | null, maximumFractionDigits = 2): string | null {
+  if (!value) return null;
+
+  const [numeratorText, denominatorText, ...rest] = value.split("/");
+  const numerator = Number(numeratorText);
+  const denominator = denominatorText == null ? 1 : Number(denominatorText);
+  if (rest.length > 0 || !Number.isFinite(numerator) || !Number.isFinite(denominator) || denominator === 0) {
+    return value;
+  }
+
+  return (numerator / denominator).toLocaleString("zh-CN", {
+    maximumFractionDigits,
+    useGrouping: false,
+  });
+}
+
 export function PhotoMetadataSection({ photo, detail }: PhotoMetadataSectionProps) {
   const locationSummary = formatLocationSummary(detail, { short: true });
   const locationAddress = formatLocationAddress(detail);
 
   return (
-    <>
+    <div className="space-y-3">
+      <h3 className="text-caption-sm font-semibold uppercase tracking-wide text-mute">照片信息</h3>
       <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-body-sm">
         <InfoRow icon={<Calendar className="w-3.5 h-3.5" />} label="拍摄时间" value={formatDate(photo.taken_at)} />
         <InfoRow
@@ -61,7 +78,9 @@ export function PhotoMetadataSection({ photo, detail }: PhotoMetadataSectionProp
             </div>
           )}
 
-          <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-body-sm">
+          <div className="space-y-2">
+            <h3 className="text-caption-sm font-semibold uppercase tracking-wide text-mute">EXIF 信息</h3>
+            <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-body-sm">
             {detail.gps_latitude != null && detail.gps_longitude != null && (
               <InfoRow
                 icon={<MapPin className="w-3.5 h-3.5" />}
@@ -98,16 +117,17 @@ export function PhotoMetadataSection({ photo, detail }: PhotoMetadataSectionProp
                 icon={<Aperture className="w-3.5 h-3.5" />}
                 label="曝光"
                 value={[
-                  detail.aperture ? `f/${detail.aperture}` : null,
+                  detail.aperture ? `f/${formatExifDecimal(detail.aperture)}` : null,
                   detail.exposure_time ? `${detail.exposure_time}s` : null,
                   detail.iso ? `ISO ${detail.iso}` : null,
-                  detail.focal_length ? `${detail.focal_length}mm` : null,
+                  detail.focal_length ? `${formatExifDecimal(detail.focal_length)}mm` : null,
                 ].filter(Boolean).join("  ")}
               />
             )}
+            </div>
           </div>
         </div>
       )}
-    </>
+    </div>
   );
 }

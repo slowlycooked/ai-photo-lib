@@ -60,6 +60,7 @@ const STATUS_LABELS: Record<string, string> = {
 };
 
 const CLASS_LABELS: Record<string, string> = {
+  suspected_duplicate: "疑似重复",
   accidental_capture: "误触拍摄",
   severe_blur: "严重模糊",
   obscured_lens: "镜头遮挡",
@@ -67,6 +68,35 @@ const CLASS_LABELS: Record<string, string> = {
   meaningless_test: "无意义测试图",
   screenshot: "屏幕截图",
   construction_clutter: "工地杂物",
+};
+
+const CLASS_FILTER_OPTIONS = [
+  { value: "", label: "全部类别" },
+  { value: "suspected_duplicate", label: "疑似重复" },
+  { value: "accidental_capture", label: "误触拍摄" },
+  { value: "severe_blur", label: "严重模糊" },
+  { value: "obscured_lens", label: "镜头遮挡" },
+  { value: "blank_image", label: "空白图片" },
+  { value: "meaningless_test_image", label: "无意义测试图" },
+  { value: "screenshot", label: "屏幕截图" },
+  { value: "construction_clutter", label: "工地杂物" },
+  { value: "valuable", label: "有保留价值" },
+  { value: "uncertain", label: "不确定" },
+  { value: "other", label: "其他" },
+] as const;
+
+const SENSITIVE_CONTENT_LABELS: Record<string, string> = {
+  explicit_sexual_content: "露骨色情",
+  sexual_content: "色情内容",
+  nudity: "裸露",
+  suggestive_content: "性暗示",
+  graphic_violence: "重度暴力",
+  violence: "暴力",
+  gore: "血腥",
+  self_harm: "自残",
+  drug_use: "药物使用",
+  disturbing_content: "令人不适",
+  other_adult_content: "其他成人内容",
 };
 
 function fieldClass() {
@@ -84,6 +114,7 @@ export function PhotoQuarantinePage() {
   const canManage = canManageProjects(auth.session);
   const [statusFilter, setStatusFilter] = useState<string>(PENDING_STATUSES);
   const [labelFilter, setLabelFilter] = useState<"" | "KEEP" | "TRASH" | "UNLABELED">("");
+  const [classificationFilter, setClassificationFilter] = useState("");
   const [page, setPage] = useState(0);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [form, setForm] = useState<ProjectPhotoQuarantineSettingsUpdate | null>(null);
@@ -106,6 +137,7 @@ export function PhotoQuarantinePage() {
       statusFilter,
       page * PAGE_SIZE,
       labelFilter,
+      classificationFilter,
     ),
     queryFn: () => api.photoQuarantine.list(
       selectedProjectId!,
@@ -113,6 +145,7 @@ export function PhotoQuarantinePage() {
       PAGE_SIZE,
       page * PAGE_SIZE,
       labelFilter || undefined,
+      classificationFilter || undefined,
     ),
     enabled: projectExists,
     refetchInterval: 30_000,
@@ -155,7 +188,7 @@ export function PhotoQuarantinePage() {
   useEffect(() => {
     setPage(0);
     setSelectedIds(new Set());
-  }, [statusFilter, labelFilter, selectedProjectId]);
+  }, [statusFilter, labelFilter, classificationFilter, selectedProjectId]);
 
   useEffect(() => {
     setSelectedIds(new Set());
@@ -177,6 +210,7 @@ export function PhotoQuarantinePage() {
     );
     const matchesActiveFilter = (item: PhotoQuarantineItem) => {
       if (!visibleStatuses.has(item.status)) return false;
+      if (classificationFilter && item.classification !== classificationFilter) return false;
       if (labelFilter === "UNLABELED") return item.human_label == null;
       if (labelFilter) return item.human_label === labelFilter;
       return true;
@@ -187,6 +221,7 @@ export function PhotoQuarantinePage() {
         statusFilter,
         page * PAGE_SIZE,
         labelFilter,
+        classificationFilter,
       ),
       (current) => current
         ? (() => {
@@ -352,7 +387,7 @@ export function PhotoQuarantinePage() {
             <Trash2 className="w-5 h-5" /> 待删除图片审核
           </h1>
           <p className="mt-1 text-body-sm text-mute">
-            页面只写入删除清单，不会移动或删除原片；原片由 NAS 后台脚本统一处理。提交后如需反悔，请在脚本执行前停用该清单，或在执行后从 NAS 回收目录恢复。
+            扫描会同时识别色情、裸露、暴力、血腥等 18+ 或敏感内容，并强制交由人工复核。页面只写入删除清单，不会移动或删除原片；原片由 NAS 后台脚本统一处理。
           </p>
         </div>
         <div className="flex shrink-0 flex-wrap items-center gap-2 rounded-lg border border-hairline bg-canvas p-2 shadow-sm">
@@ -491,6 +526,9 @@ export function PhotoQuarantinePage() {
             <select value={labelFilter} onChange={(event) => setLabelFilter(event.target.value as typeof labelFilter)} className="rounded-md border border-hairline bg-canvas px-3 py-2 text-body-sm" aria-label="人工标签筛选">
               <option value="">全部标签</option><option value="UNLABELED">未标注</option><option value="KEEP">应保留</option><option value="TRASH">垃圾</option>
             </select>
+            <select value={classificationFilter} onChange={(event) => setClassificationFilter(event.target.value)} className="rounded-md border border-hairline bg-canvas px-3 py-2 text-body-sm" aria-label="类别筛选">
+              {CLASS_FILTER_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+            </select>
             <span className="text-caption-sm text-mute">共 {itemsQuery.data?.total ?? 0} 项</span>
             <button type="button" onClick={() => reconcileItems()} disabled={reconcileMutation.isPending} className="text-mute hover:text-ink disabled:opacity-50" aria-label="刷新"><RefreshCw className={`w-4 h-4 ${reconcileMutation.isPending ? "animate-spin" : ""}`} /></button>
           </div>
@@ -523,6 +561,14 @@ export function PhotoQuarantinePage() {
                     <div className="text-caption-sm text-mute">置信度 {(item.confidence * 100).toFixed(1)}% · {item.model_name}</div>
                   </div>
                   <p className="text-body-sm text-ink">{item.reason}</p>
+                  {item.content_rating && item.content_rating !== "SAFE" && (
+                    <p className="rounded-md border border-danger/30 bg-danger/5 px-3 py-2 text-caption-sm font-bold text-danger">
+                      {item.content_rating === "ADULT" ? "18+ 内容" : "敏感内容"}：
+                      {(item.sensitive_content_flags ?? [])
+                        .map((flag) => SENSITIVE_CONTENT_LABELS[flag] ?? flag)
+                        .join("、") || "需人工复核"}
+                    </p>
+                  )}
                   {item.preservation_flags.length > 0 && <p className="text-caption-sm text-danger">保留信号：{item.preservation_flags.join("、")}</p>}
                   {item.human_label && <p className="text-caption-sm font-bold text-primary">人工标签：{item.human_label === "KEEP" ? "应保留" : "垃圾"}{item.human_labeled_by ? ` · ${item.human_labeled_by}` : ""}</p>}
                   {item.last_error && <p className="text-caption-sm text-danger break-all">{item.last_error}</p>}

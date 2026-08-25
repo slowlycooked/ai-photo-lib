@@ -18,8 +18,14 @@ from app.services.photo_quarantine_service import (
 
 
 class _FakeQuarantineService:
+    last_list_args = None
+
     def __init__(self, _db) -> None:
         pass
+
+    def list_items(self, **kwargs):
+        self.__class__.last_list_args = kwargs
+        return 0, []
 
     def batch_action(
         self,
@@ -146,6 +152,17 @@ def test_batch_endpoint_returns_per_item_conflict(monkeypatch) -> None:
             "message": "Original path is occupied; no file was overwritten",
         }],
     }
+
+
+def test_list_endpoint_passes_classification_filter(monkeypatch) -> None:
+    response = _build_client(monkeypatch).get(
+        "/api/projects/1/photo-quarantine/items",
+        params={"classification": "suspected_duplicate"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"total": 0, "items": []}
+    assert _FakeQuarantineService.last_list_args["classification"] == "suspected_duplicate"
 
 
 def test_batch_endpoint_requires_project_manager(monkeypatch) -> None:

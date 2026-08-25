@@ -1,6 +1,13 @@
+import { useLayoutEffect } from "react";
 import { api, type Photo } from "@/api";
 import { MobileMasonryGrid } from "@/components/MobileMasonryGrid";
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
+
+const SCROLL_STORAGE_PREFIX = "ai-photo-lib:mobile:scroll:";
+
+function scrollStorageKey(returnTo: string) {
+  return `${SCROLL_STORAGE_PREFIX}${returnTo}`;
+}
 
 export function PhotoThumbGrid({
   projectId,
@@ -13,6 +20,23 @@ export function PhotoThumbGrid({
   photoIds: number[];
   priorityPhotoIds?: ReadonlySet<number>;
 }) {
+  const location = useLocation();
+  const returnTo = `${location.pathname}${location.search}`;
+
+  useLayoutEffect(() => {
+    const key = scrollStorageKey(returnTo);
+    const savedValue = sessionStorage.getItem(key);
+    if (savedValue == null) return;
+    const savedScrollY = Number(savedValue);
+    if (!Number.isFinite(savedScrollY)) return;
+
+    const frame = window.requestAnimationFrame(() => {
+      window.scrollTo({ top: savedScrollY, left: 0, behavior: "auto" });
+      sessionStorage.removeItem(key);
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [returnTo]);
+
   return (
     <MobileMasonryGrid
       items={photos}
@@ -21,7 +45,8 @@ export function PhotoThumbGrid({
       renderItem={(photo) => (
         <Link
           to={`/photos/${photo.id}`}
-          state={{ photoIds }}
+          state={{ photoIds, returnTo }}
+          onClick={() => sessionStorage.setItem(scrollStorageKey(returnTo), String(window.scrollY))}
           className="mobile-grid-item"
           style={{ aspectRatio: photo.width && photo.height ? `${photo.width}/${photo.height}` : "4/3" }}
         >

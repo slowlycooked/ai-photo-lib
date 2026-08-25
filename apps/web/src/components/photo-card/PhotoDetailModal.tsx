@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import type { Photo } from "@/api";
 import { useAuth } from "@/contexts/AuthContext";
 import { usePhotoDetailModalData } from "@/hooks/usePhotoDetailModalData";
@@ -35,14 +36,36 @@ export function PhotoDetailModal({ photo, onClose, onDeleted }: PhotoDetailModal
     setDeleteOriginal,
   } = usePhotoDetailModalData({ photo, onClose, onDeleted });
 
+  useEffect(() => {
+    const scrollY = window.scrollY;
+    const previousOverflow = document.body.style.overflow;
+    const previouslyFocused = document.activeElement;
+
+    document.body.style.overflow = "hidden";
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") onClose();
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      document.body.style.overflow = previousOverflow;
+      window.scrollTo({ top: scrollY, left: 0, behavior: "auto" });
+      if (previouslyFocused instanceof HTMLElement) {
+        previouslyFocused.focus({ preventScroll: true });
+      }
+    };
+  }, [onClose]);
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center p-4"
-      style={{ backgroundColor: "rgba(0,0,0,0.5)" }}
+      style={{ backgroundColor: "rgba(0,0,0,0.85)" }}
       onClick={onClose}
     >
       <div
-        className="bg-canvas rounded-lg shadow-2xl max-w-lg w-full overflow-hidden overflow-y-auto"
+        className="bg-canvas rounded-lg shadow-2xl max-w-5xl w-full overflow-hidden overflow-y-auto"
         style={{ maxHeight: "90vh" }}
         onClick={(e) => e.stopPropagation()}
       >

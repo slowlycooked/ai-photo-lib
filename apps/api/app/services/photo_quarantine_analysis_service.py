@@ -11,11 +11,16 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from ..models.photo import Photo
-from ..models.photo_quarantine import PhotoQuarantineItem, ProjectPhotoQuarantineSettings
+from ..models.photo_quarantine import (
+    CONTENT_RATINGS,
+    SENSITIVE_CONTENT_FLAGS,
+    PhotoQuarantineItem,
+    ProjectPhotoQuarantineSettings,
+)
 from .photo_quarantine_service import PhotoQuarantineService
 from .vlm_client import analyze_image
 
-PROMPT_VERSION = "photo-quarantine-v1"
+PROMPT_VERSION = "photo-quarantine-v3-duplicate-detection"
 AUTO_MOVE_CATEGORIES = frozenset(
     {
         "accidental_capture",
@@ -27,8 +32,9 @@ AUTO_MOVE_CATEGORIES = frozenset(
 )
 
 _SYSTEM_PROMPT = (
-    "你是私人照片库的保守清理审核器。只返回一个 JSON 对象，不输出推理过程。"
+    "你是私人照片库的保守清理与内容分级审核器。只返回一个 JSON 对象，不输出推理过程。"
     "误删的代价远高于漏删；只要存在生活、纪念、凭证、工作或记录价值，就必须 KEEP 或 REVIEW。"
+    "成人、裸露、色情、暴力或其他敏感内容只能标记并交由人工复核，绝不能仅因此判为可删除。"
 )
 
 _FIRST_PASS_PROMPT = """
@@ -39,14 +45,20 @@ _FIRST_PASS_PROMPT = """
 
 decision 只能是 KEEP、REVIEW、QUARANTINE。
 classification 只能使用：valuable、uncertain、accidental_capture、severe_blur、obscured_lens、blank_image、meaningless_test_image、screenshot、construction_clutter、other。
+同时独立识别可能的 18+ 或敏感内容：
+- content_rating 只能是 SAFE、SENSITIVE、ADULT；
+- sensitive_content_flags 只能从 explicit_sexual_content、sexual_content、nudity、suggestive_content、graphic_violence、violence、gore、self_harm、drug_use、disturbing_content、other_adult_content 中选择，可多选；
+- 裸露、色情、血腥、重度暴力等使用 ADULT；性暗示、非血腥暴力、自残、药物或令人不适内容至少使用 SENSITIVE；
+- 无法确认时宁可标记 SENSITIVE 并返回 REVIEW；任何 sensitive_content_flags 非空时 decision 必须是 REVIEW。
 返回：
-{"decision":"KEEP|REVIEW|QUARANTINE","classification":"...","confidence":0.0,"reason":"简短中文理由","preservation_flags":[],"has_record_value":false}
+{"decision":"KEEP|REVIEW|QUARANTINE","classification":"...","confidence":0.0,"reason":"简短中文理由","preservation_flags":[],"has_record_value":false,"content_rating":"SAFE|SENSITIVE|ADULT","sensitive_content_flags":[]}
 """.strip()
 
 _VERIFY_PROMPT = """
 这是误删防护复核。请从最保守角度重新判断图片是否可以安全移入待删除区。
 若存在人物、纪念、凭证、文字信息、二维码、聊天、地址、工作成果、施工进度、问题记录、事故、验收或任何不确定性，必须返回 KEEP 或 REVIEW。
 只有明显误触、严重模糊、镜头遮挡、空白图或无意义测试图才可返回 QUARANTINE。
+若检测到任何 18+ 或敏感内容，必须返回 REVIEW，并保留 content_rating 与 sensitive_content_flags。
 返回与上一轮相同字段的单个 JSON 对象。
 """.strip()
 
@@ -59,6 +71,13 @@ class AnalysisRunResult:
     quarantined: int
     errors: int
     window_closed: bool
+
+
+@dataclass(frozen=True)
+class DuplicateSource:
+    id: int
+    file_name: str
+    file_path: str
 
 
 class PhotoQuarantineAnalysisService:
@@ -94,6 +113,7 @@ class PhotoQuarantineAnalysisService:
                 "recent_errors": [],
             }
 
+        duplicate_sources = self._build_duplicate_source_map(project_id)
         while True:
             now = self._clock(timezone)
             if not ignore_window and not is_hour_in_window(
@@ -105,7 +125,11 @@ class PhotoQuarantineAnalysisService:
             if photo is None:
                 break
             try:
-                item = self._analyze_photo(photo, settings_row)
+                item = self._analyze_photo(
+                    photo,
+                    settings_row,
+                    duplicate_source=duplicate_sources.get(photo.id),
+                )
                 counters["analyzed"] += 1
                 if item.status == "kept":
                     counters["kept"] += 1
@@ -169,8 +193,19 @@ class PhotoQuarantineAnalysisService:
         )
 
     def _analyze_photo(
-        self, photo: Photo, settings_row: ProjectPhotoQuarantineSettings
+        self,
+        photo: Photo,
+        settings_row: ProjectPhotoQuarantineSettings,
+        *,
+        duplicate_source: Optional[DuplicateSource] = None,
     ) -> PhotoQuarantineItem:
+        if duplicate_source is not None:
+            return self._persist_duplicate_candidate(
+                photo=photo,
+                duplicate_source=duplicate_source,
+                model_name=settings_row.model_name,
+            )
+
         image_path = _analysis_image_path(photo)
         first = _parse_decision(
             self._analyzer(
@@ -187,7 +222,9 @@ class PhotoQuarantineAnalysisService:
 
         verification: Optional[dict] = None
         final_decision = str(first["decision"])
-        if _is_first_pass_auto_candidate(first):
+        if first["sensitive_content_flags"]:
+            final_decision = "REVIEW"
+        elif _is_first_pass_auto_candidate(first):
             verification = _parse_decision(
                 self._analyzer(
                     str(image_path),
@@ -218,7 +255,7 @@ class PhotoQuarantineAnalysisService:
         item.decision = final_decision
         item.classification = str(first["classification"])
         item.confidence = float(first["confidence"])
-        item.reason = str(first["reason"])
+        item.reason = _review_reason(first)
         item.preservation_flags = list(first["preservation_flags"])
         item.first_result = first
         item.verification_result = verification
@@ -235,6 +272,81 @@ class PhotoQuarantineAnalysisService:
                 project_id=photo.project_id,
                 item_id=item.id,
             ).item
+        return item
+
+    def _build_duplicate_source_map(
+        self, project_id: int
+    ) -> dict[int, DuplicateSource]:
+        rows = (
+            self._db.query(Photo.id, Photo.file_hash, Photo.file_name, Photo.file_path)
+            .filter(
+                Photo.project_id == project_id,
+                Photo.deleted_at.is_(None),
+                Photo.status != "quarantined",
+                Photo.file_hash.isnot(None),
+            )
+            .order_by(Photo.id.asc())
+            .all()
+        )
+        canonical_by_hash: dict[str, DuplicateSource] = {}
+        duplicates: dict[int, DuplicateSource] = {}
+        for photo_id, file_hash, file_name, file_path in rows:
+            source = canonical_by_hash.get(file_hash)
+            if source is None:
+                canonical_by_hash[file_hash] = DuplicateSource(
+                    id=photo_id,
+                    file_name=file_name,
+                    file_path=file_path,
+                )
+            else:
+                duplicates[photo_id] = source
+        return duplicates
+
+    def _persist_duplicate_candidate(
+        self,
+        *,
+        photo: Photo,
+        duplicate_source: DuplicateSource,
+        model_name: str,
+    ) -> PhotoQuarantineItem:
+        item = (
+            self._db.query(PhotoQuarantineItem)
+            .filter(
+                PhotoQuarantineItem.project_id == photo.project_id,
+                PhotoQuarantineItem.photo_id == photo.id,
+            )
+            .first()
+        )
+        if item is None:
+            item = PhotoQuarantineItem(project_id=photo.project_id, photo_id=photo.id)
+            self._db.add(item)
+        result = {
+            "decision": "REVIEW",
+            "classification": "suspected_duplicate",
+            "confidence": 1.0,
+            "reason": f"与 {duplicate_source.file_name} 的内容哈希一致",
+            "preservation_flags": [],
+            "has_record_value": False,
+            "content_rating": "SAFE",
+            "sensitive_content_flags": [],
+            "duplicate_photo_id": duplicate_source.id,
+            "duplicate_original_path": duplicate_source.file_path,
+        }
+        item.status = "review"
+        item.decision = "REVIEW"
+        item.classification = "suspected_duplicate"
+        item.confidence = 1.0
+        item.reason = str(result["reason"])
+        item.preservation_flags = []
+        item.first_result = result
+        item.verification_result = None
+        item.model_name = model_name
+        item.prompt_version = PROMPT_VERSION
+        item.original_path = photo.file_path
+        item.content_hash = photo.file_hash
+        item.last_error = None
+        self._db.commit()
+        self._db.refresh(item)
         return item
 
     def _persist_analysis_error(self, *, photo: Photo, model_name: str, error: str) -> None:
@@ -298,6 +410,19 @@ def _parse_decision(raw: str) -> dict:
     has_record_value = data.get("has_record_value", True)
     if not isinstance(has_record_value, bool):
         raise ValueError("has_record_value must be a JSON boolean")
+    sensitive_flags = data.get("sensitive_content_flags") or []
+    if not isinstance(sensitive_flags, list):
+        raise ValueError("sensitive_content_flags must be a JSON array")
+    normalized_sensitive_flags = list(
+        dict.fromkeys(str(flag).strip() for flag in sensitive_flags)
+    )
+    unknown_sensitive_flags = set(normalized_sensitive_flags) - SENSITIVE_CONTENT_FLAGS
+    if unknown_sensitive_flags:
+        raise ValueError("Invalid sensitive_content_flags")
+    content_rating = str(data.get("content_rating") or "SAFE").strip().upper()
+    if content_rating not in CONTENT_RATINGS:
+        raise ValueError("Invalid content_rating")
+    content_rating = _minimum_content_rating(content_rating, normalized_sensitive_flags)
     return {
         "decision": decision,
         "classification": classification,
@@ -305,7 +430,30 @@ def _parse_decision(raw: str) -> dict:
         "reason": str(data.get("reason") or "").strip()[:1000],
         "preservation_flags": [str(flag)[:200] for flag in flags],
         "has_record_value": has_record_value,
+        "content_rating": content_rating,
+        "sensitive_content_flags": normalized_sensitive_flags,
     }
+
+
+def _minimum_content_rating(content_rating: str, flags: list[str]) -> str:
+    adult_flags = {
+        "explicit_sexual_content",
+        "nudity",
+        "graphic_violence",
+        "gore",
+        "other_adult_content",
+    }
+    if adult_flags.intersection(flags):
+        return "ADULT"
+    if flags and content_rating == "SAFE":
+        return "SENSITIVE"
+    return content_rating
+
+
+def _review_reason(result: dict) -> str:
+    if not result["sensitive_content_flags"]:
+        return str(result["reason"])
+    return f"检测到可能的 18+ 或敏感内容，需人工复核。{result['reason']}"[:1000]
 
 
 def _is_first_pass_auto_candidate(result: dict) -> bool:

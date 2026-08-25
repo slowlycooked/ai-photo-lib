@@ -462,3 +462,26 @@ def test_list_items_can_select_unlabeled_calibration_sample(quarantine_fixture) 
         total, items = service.list_items(project_id=1, human_label="UNLABELED")
         assert total == 0
         assert items == []
+
+
+def test_list_items_can_filter_suspected_duplicates(quarantine_fixture) -> None:
+    engine, _library, trash, _original, _digest = quarantine_fixture
+    with Session(engine) as db:
+        service = PhotoQuarantineService(db, root=trash)
+        total, items = service.list_items(
+            project_id=1,
+            classification="suspected_duplicate",
+        )
+        assert total == 0
+        assert items == []
+
+        item = db.query(PhotoQuarantineItem).filter(PhotoQuarantineItem.id == 100).one()
+        item.classification = "suspected_duplicate"
+        db.commit()
+
+        total, items = service.list_items(
+            project_id=1,
+            classification="suspected_duplicate",
+        )
+        assert total == 1
+        assert [candidate.id for candidate in items] == [100]

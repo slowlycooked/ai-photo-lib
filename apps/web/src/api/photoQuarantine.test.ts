@@ -24,6 +24,22 @@ describe("photoQuarantineApi", () => {
     );
   });
 
+  it("passes the classification filter to the list endpoint", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ total: 0, items: [] }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await photoQuarantineApi.list(3, "review", 24, 0, undefined, "suspected_duplicate");
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/projects/3/photo-quarantine/items?status=review&classification=suspected_duplicate&limit=24&offset=0",
+      expect.any(Object),
+    );
+  });
+
   it("starts an idempotent deletion reconciliation", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,

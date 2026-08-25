@@ -1117,6 +1117,8 @@ export interface PhotoQuarantineItem {
   confidence: number;
   reason: string;
   preservation_flags: string[];
+  content_rating?: "SAFE" | "SENSITIVE" | "ADULT";
+  sensitive_content_flags?: string[];
   first_result: Record<string, unknown>;
   verification_result: Record<string, unknown> | null;
   model_name: string;

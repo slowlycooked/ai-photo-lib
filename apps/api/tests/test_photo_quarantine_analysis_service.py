@@ -16,6 +16,7 @@ from app.models.photo_quarantine import (
     ProjectPhotoQuarantineSettings,
 )
 from app.models.project import Project
+from app.schemas.photo_quarantine import PhotoQuarantineItemResponse
 from app.services.photo_quarantine_analysis_service import (
     PhotoQuarantineAnalysisService,
     is_hour_in_window,
@@ -58,7 +59,13 @@ def _build_db(tmp_path: Path, *, dry_run: bool = True) -> tuple[Session, Path]:
     return db, image
 
 
-def _decision(category: str, decision: str = "QUARANTINE") -> str:
+def _decision(
+    category: str,
+    decision: str = "QUARANTINE",
+    *,
+    content_rating: str = "SAFE",
+    sensitive_content_flags: list[str] | None = None,
+) -> str:
     return json.dumps(
         {
             "decision": decision,
@@ -67,6 +74,8 @@ def _decision(category: str, decision: str = "QUARANTINE") -> str:
             "reason": "test",
             "preservation_flags": [],
             "has_record_value": False,
+            "content_rating": content_rating,
+            "sensitive_content_flags": sensitive_content_flags or [],
         }
     )
 
@@ -106,6 +115,96 @@ def test_screenshot_is_never_auto_move_category(tmp_path: Path) -> None:
     assert item.decision == "QUARANTINE"
     assert item.status == "review"
     assert item.verification_result is None
+
+
+def test_adult_content_is_flagged_and_forced_to_manual_review(tmp_path: Path) -> None:
+    db, _image = _build_db(tmp_path, dry_run=False)
+    service = PhotoQuarantineAnalysisService(
+        db,
+        analyzer=lambda *_args, **_kwargs: _decision(
+            "other",
+            decision="QUARANTINE",
+            content_rating="SENSITIVE",
+            sensitive_content_flags=["nudity", "violence"],
+        ),
+        clock=lambda tz: datetime(2026, 8, 25, 2, tzinfo=tz),
+    )
+
+    result = service.run_project(project_id=1)
+    item = db.query(PhotoQuarantineItem).one()
+
+    assert result["review"] == 1
+    assert item.decision == "REVIEW"
+    assert item.status == "review"
+    assert item.content_rating == "ADULT"
+    assert item.sensitive_content_flags == ["nudity", "violence"]
+    assert item.quarantine_path is None
+    assert "18+" in item.reason
+    response = PhotoQuarantineItemResponse.model_validate(item)
+    assert response.content_rating == "ADULT"
+    assert response.sensitive_content_flags == ["nudity", "violence"]
+
+
+def test_sensitive_content_payload_rejects_unknown_flags(tmp_path: Path) -> None:
+    db, _image = _build_db(tmp_path)
+    service = PhotoQuarantineAnalysisService(
+        db,
+        analyzer=lambda *_args, **_kwargs: _decision(
+            "other",
+            decision="REVIEW",
+            content_rating="SENSITIVE",
+            sensitive_content_flags=["unknown_risk"],
+        ),
+        clock=lambda tz: datetime(2026, 8, 25, 2, tzinfo=tz),
+    )
+
+    result = service.run_project(project_id=1)
+    item = db.query(PhotoQuarantineItem).one()
+
+    assert result["errors"] == 1
+    assert item.status == "analysis_failed"
+    assert item.decision == "REVIEW"
+
+
+def test_exact_hash_duplicate_marks_only_newer_copy_for_review(tmp_path: Path) -> None:
+    db, image = _build_db(tmp_path)
+    duplicate = image.with_name("photo-copy.jpg")
+    duplicate.write_bytes(image.read_bytes())
+    db.query(Photo).filter(Photo.id == 1).update({"file_hash": "same-hash"})
+    db.add(
+        Photo(
+            id=2,
+            project_id=1,
+            file_path=str(duplicate),
+            file_name=duplicate.name,
+            file_hash="same-hash",
+            status="indexed",
+        )
+    )
+    db.commit()
+    analyzer_calls = []
+
+    def analyzer(*_args, **_kwargs):
+        analyzer_calls.append(1)
+        return _decision("valuable", decision="KEEP")
+
+    service = PhotoQuarantineAnalysisService(
+        db,
+        analyzer=analyzer,
+        clock=lambda tz: datetime(2026, 8, 25, 2, tzinfo=tz),
+    )
+
+    result = service.run_project(project_id=1)
+    items = db.query(PhotoQuarantineItem).order_by(PhotoQuarantineItem.photo_id).all()
+
+    assert result["analyzed"] == 2
+    assert len(analyzer_calls) == 1
+    assert items[0].classification == "valuable"
+    assert items[0].status == "kept"
+    assert items[1].classification == "suspected_duplicate"
+    assert items[1].status == "review"
+    assert items[1].first_result["duplicate_photo_id"] == 1
+    assert items[1].first_result["duplicate_original_path"] == str(image)
 
 
 def test_hour_window_supports_normal_and_overnight_ranges() -> None:

@@ -68,10 +68,12 @@ const item = {
   confidence: 0.995,
   reason: "明显误触且没有可保留内容",
   preservation_flags: [],
+  content_rating: "SAFE" as const,
+  sensitive_content_flags: [],
   first_result: {},
   verification_result: {},
   model_name: "qwen3.8:27b",
-  prompt_version: "photo-quarantine-v1",
+  prompt_version: "photo-quarantine-v3-duplicate-detection",
   original_path: "/photos/2026/IMG_007.jpg",
   quarantine_path: "/tobetrash/project-1/2026-08-24/7/IMG_007.jpg",
   content_hash: "abc",
@@ -389,7 +391,14 @@ describe("PhotoQuarantinePage", () => {
 
     await user.click(await screen.findByRole("button", { name: "下一页" }));
 
-    await waitFor(() => expect(listMock).toHaveBeenCalledWith(1, expect.any(String), 24, 24, undefined));
+    await waitFor(() => expect(listMock).toHaveBeenCalledWith(
+      1,
+      expect.any(String),
+      24,
+      24,
+      undefined,
+      undefined,
+    ));
     expect(await screen.findByText("第 2 / 2 页")).toBeInTheDocument();
   });
 
@@ -423,6 +432,49 @@ describe("PhotoQuarantinePage", () => {
     await user.click(await screen.findByRole("button", { name: "提交删除" }));
 
     await waitFor(() => expect(requestDeleteMock).toHaveBeenCalledWith(1, 7));
+  });
+
+  it("shows adult content warnings and localized risk labels", async () => {
+    listMock.mockResolvedValue({
+      total: 1,
+      items: [{
+        ...item,
+        status: "review",
+        decision: "REVIEW",
+        content_rating: "ADULT",
+        sensitive_content_flags: ["nudity", "graphic_violence"],
+      }],
+    });
+    renderPage();
+
+    expect(await screen.findByText("18+ 内容：裸露、重度暴力")).toBeInTheDocument();
+  });
+
+  it("filters suspected duplicates and keeps deletion actions available", async () => {
+    const user = userEvent.setup();
+    listMock.mockResolvedValue({
+      total: 1,
+      items: [{
+        ...item,
+        status: "review",
+        decision: "REVIEW",
+        classification: "suspected_duplicate",
+      }],
+    });
+    renderPage();
+
+    await user.selectOptions(await screen.findByLabelText("类别筛选"), "suspected_duplicate");
+
+    await waitFor(() => expect(listMock).toHaveBeenLastCalledWith(
+      1,
+      expect.any(String),
+      24,
+      0,
+      undefined,
+      "suspected_duplicate",
+    ));
+    expect((await screen.findAllByText("疑似重复")).length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByRole("button", { name: "提交删除" })).toBeInTheDocument();
   });
 
   it("immediately removes a submitted deletion from the default pending view", async () => {
@@ -495,6 +547,7 @@ describe("PhotoQuarantinePage", () => {
       24,
       0,
       "UNLABELED",
+      undefined,
     ));
   });
 });

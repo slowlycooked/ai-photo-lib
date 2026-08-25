@@ -28,9 +28,10 @@ export const photoQuarantineApi = {
     limit = 200,
     offset = 0,
     humanLabel?: "KEEP" | "TRASH" | "UNLABELED",
+    classification?: string,
   ) =>
     request<PhotoQuarantineListResponse>(
-      `/projects/${projectId}/photo-quarantine/items${qs({ status, human_label: humanLabel, limit, offset })}`,
+      `/projects/${projectId}/photo-quarantine/items${qs({ status, human_label: humanLabel, classification, limit, offset })}`,
     ),
 
   reconcile: (projectId: number) =>

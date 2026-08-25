@@ -1,6 +1,7 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { Search } from "lucide-react";
+import { useSearchParams } from "react-router-dom";
 import { api } from "@/api";
 import { EmptyState } from "@/components/EmptyState";
 import { LoadingState } from "@/components/LoadingState";
@@ -27,9 +28,12 @@ function writeRecentSearches(items: string[]) {
 
 export function MobileSearchPage() {
   const { currentProjectId } = useProjectContext();
-  const [input, setInput] = useState("");
-  const [query, setQuery] = useState("");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const query = searchParams.get("q") ?? "";
+  const [input, setInput] = useState(query);
   const [recent, setRecent] = useState<string[]>(() => readRecentSearches());
+
+  useEffect(() => setInput(query), [query]);
 
   const search = useInfiniteQuery({
     queryKey: ["mobile-search", currentProjectId, query],
@@ -69,12 +73,12 @@ export function MobileSearchPage() {
     (value: string) => {
       const normalized = value.trim();
       if (!normalized) return;
-      setQuery(normalized);
+      setSearchParams({ q: normalized });
       const nextRecent = [normalized, ...recent.filter((item) => item !== normalized)].slice(0, 8);
       setRecent(nextRecent);
       writeRecentSearches(nextRecent);
     },
-    [recent],
+    [recent, setSearchParams],
   );
 
   const loadMore = useCallback(() => {

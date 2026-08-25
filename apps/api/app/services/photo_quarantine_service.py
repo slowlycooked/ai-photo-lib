@@ -114,6 +114,7 @@ class PhotoQuarantineService:
         project_id: int,
         status: Optional[str] = None,
         human_label: Optional[str] = None,
+        classification: Optional[str] = None,
         limit: int = 50,
         offset: int = 0,
     ) -> tuple[int, list[PhotoQuarantineItem]]:
@@ -128,6 +129,14 @@ class PhotoQuarantineService:
             query = query.filter(PhotoQuarantineItem.human_label.is_(None))
         elif human_label in {"KEEP", "TRASH"}:
             query = query.filter(PhotoQuarantineItem.human_label == human_label)
+        if classification:
+            classifications = [
+                value.strip() for value in classification.split(",") if value.strip()
+            ]
+            if classifications:
+                query = query.filter(
+                    PhotoQuarantineItem.classification.in_(classifications)
+                )
         total = query.count()
         items = (
             query.order_by(

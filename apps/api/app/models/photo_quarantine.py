@@ -11,6 +11,23 @@ from ..database import Base
 
 _ID_TYPE = BigInteger().with_variant(Integer, "sqlite")
 
+CONTENT_RATINGS = frozenset({"SAFE", "SENSITIVE", "ADULT"})
+SENSITIVE_CONTENT_FLAGS = frozenset(
+    {
+        "explicit_sexual_content",
+        "sexual_content",
+        "nudity",
+        "suggestive_content",
+        "graphic_violence",
+        "violence",
+        "gore",
+        "self_harm",
+        "drug_use",
+        "disturbing_content",
+        "other_adult_content",
+    }
+)
+
 
 class ProjectPhotoQuarantineSettings(Base):
     __tablename__ = "project_photo_quarantine_settings"
@@ -99,3 +116,21 @@ class PhotoQuarantineItem(Base):
     updated_at: Mapped[datetime] = mapped_column(
         TIMESTAMP, server_default=func.now(), nullable=False
     )
+
+    @property
+    def content_rating(self) -> str:
+        result = self.first_result if isinstance(self.first_result, dict) else {}
+        rating = str(result.get("content_rating") or "SAFE").strip().upper()
+        return rating if rating in CONTENT_RATINGS else "SAFE"
+
+    @property
+    def sensitive_content_flags(self) -> list[str]:
+        result = self.first_result if isinstance(self.first_result, dict) else {}
+        flags = result.get("sensitive_content_flags") or []
+        if not isinstance(flags, list):
+            return []
+        return [
+            str(flag)
+            for flag in flags
+            if str(flag) in SENSITIVE_CONTENT_FLAGS
+        ]
