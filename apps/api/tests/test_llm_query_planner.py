@@ -413,6 +413,56 @@ def test_qwen_v2_drops_hallucinated_time_and_gps_without_fallback() -> None:
     ]
 
 
+def test_qwen_v2_earliest_family_dinner_keeps_semantics_and_sort() -> None:
+    settings = replace(
+        _v1_defaults(),
+        query_planner_enabled=True,
+        query_planner_endpoint_url="http://127.0.0.1:18084/v1/chat/completions",
+        query_planner_model_name="qwen3-8b-query-planner",
+        query_planner_planner_version="v2",
+    )
+    llm_json = """
+    {
+      "version": "2",
+      "intent": "photo_search",
+      "filters": {},
+      "lexical": {"required": ["家庭聚餐"], "preferred": [], "excluded": []},
+      "semantic": {
+        "concepts": ["家庭聚餐"],
+        "queries": ["家庭聚餐", "家庭聚会", "团聚晚餐"]
+      },
+      "visual": {
+        "objects": ["餐桌", "食物"],
+        "scenes": ["室内聚餐"],
+        "activities": ["聚餐"],
+        "attributes": []
+      },
+      "ranking": {"sort": []},
+      "confidence": 0.8,
+      "unresolved": {"people": [], "locations": []}
+    }
+    """
+
+    with patch(
+        "app.services.search.query_planner.llm_query_planner.call_chat_completion",
+        return_value=llm_json,
+    ):
+        plan = resolve_query_plan_llm_first(
+            "最早拍摄的家庭聚餐",
+            project_id=1,
+            settings=settings,
+            understander=understand_query,
+            include_raw_output=True,
+        )
+
+    assert plan.planner_debug["planner_route"] == "llm"
+    assert plan.planner_debug["semantic_source"] == "qwen"
+    assert plan.semantic_query_text == "家庭聚餐 家庭聚会 团聚晚餐"
+    assert plan.sort == [{"field": "taken_at", "order": "asc"}]
+    assert plan.metadata_filters["place_terms"] == []
+    assert plan.metadata_filters["metadata_only"] is False
+
+
 def test_qwen_v2_fallback_keeps_control_only_query_out_of_semantic_recall() -> None:
     settings = replace(
         _v1_defaults(),

@@ -77,11 +77,17 @@ _DYNAMIC_FILTER_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
 
 _SORT_PATTERNS: tuple[tuple[re.Pattern[str], dict[str, str]], ...] = (
     (
-        re.compile(r"(?:按)?(?:拍摄)?时间(?:倒序|降序)|最新(?:优先|的?在前)|最近(?:优先|的?在前)"),
+        re.compile(
+            r"(?:按)?(?:拍摄)?时间(?:倒序|降序)"
+            r"|(?:最新|最近)(?:拍摄)?(?:的)?(?:照片|图片|相片)?(?:优先|在前)?"
+        ),
         {"field": "taken_at", "order": "desc"},
     ),
     (
-        re.compile(r"(?:按)?(?:拍摄)?时间(?:正序|升序)|最早(?:优先|的?在前)|最旧(?:优先|的?在前)"),
+        re.compile(
+            r"(?:按)?(?:拍摄)?时间(?:正序|升序)"
+            r"|(?:最早|最旧)(?:拍摄)?(?:的)?(?:照片|图片|相片)?(?:优先|在前)?"
+        ),
         {"field": "taken_at", "order": "asc"},
     ),
 )
@@ -182,7 +188,7 @@ _PLACE_PREFIX_NOISE: tuple[str, ...] = (
     "为",
 )
 _LOCATION_QUERY_CUE_RE = re.compile(
-    r"地址|地点|位置|拍摄地|拍摄地点|拍摄位置|位于|在.*(照片|图片|相片|拍)|于.*(照片|图片|相片|拍)|拍的|拍摄"
+    r"地址|地点|位置|拍摄地|拍摄地点|拍摄位置|位于|在.*(照片|图片|相片|拍)|于.*(照片|图片|相片|拍)|拍的"
 )
 
 # Strong semantic intents should never be treated as metadata-only requests,

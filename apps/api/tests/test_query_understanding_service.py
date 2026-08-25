@@ -52,6 +52,21 @@ class TestUnderstandQuery:
         assert plan.filter_clauses == []
         assert plan.sort == []
 
+    def test_extracts_earliest_sort_without_treating_semantics_as_location(self):
+        plan = understand_query("最早拍摄的家庭聚餐")
+
+        assert plan.sort == [{"field": "taken_at", "order": "asc"}]
+        assert "家庭聚餐" in plan.semantic_query_text
+        assert "最早拍摄" not in plan.semantic_query_text
+        assert plan.metadata_filters["place_terms"] == []
+        assert plan.metadata_filters["metadata_only"] is False
+
+    def test_keeps_explicit_shanghai_photo_query_as_location_metadata(self):
+        plan = understand_query("上海拍的照片")
+
+        assert plan.metadata_filters["place_terms"] == ["上海"]
+        assert plan.metadata_filters["metadata_only"] is True
+
     def test_original_query_preserved(self):
         plan = understand_query("sunset photo")
         assert plan.original_query == "sunset photo"
