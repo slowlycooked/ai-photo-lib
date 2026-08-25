@@ -75,9 +75,15 @@ export const projectFacesApi = {
       body: JSON.stringify(body),
     }),
 
-  rematchUnknownStatus: (projectId: number) =>
+  rematchUnknownStatus: (
+    projectId: number,
+    filter: Pick<FaceRematchUnknownRequest, "scope" | "person_id"> = {},
+  ) =>
     request<FaceRematchUnknownStatusResponse>(
-      `/projects/${projectId}/face-rematch-unknown/status`,
+      `/projects/${projectId}/face-rematch-unknown/status${qs({
+        scope: filter.scope,
+        person_id: filter.person_id,
+      })}`,
     ),
 
   cancelRematchUnknown: (projectId: number) =>

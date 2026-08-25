@@ -671,6 +671,83 @@ class ProjectFacesEndpointsTest(unittest.TestCase):
     self.assertEqual(payload["status"]["scope"], "person")
     self.assertEqual(payload["status"]["person_id"], 101)
 
+  def test_person_rematches_queue_independently_and_status_is_scoped(self) -> None:
+    with self._engine.begin() as conn:
+      conn.execute(
+        sa.text(
+          "UPDATE persons SET sample_count = 1, confirmed_sample_count = 1 WHERE id = 103"
+        )
+      )
+      conn.execute(
+        sa.text(
+          """
+          INSERT INTO persons (
+            id, project_id, display_name, normalized_name, is_named,
+            sample_count, confirmed_sample_count, created_by
+          ) VALUES
+            (104, 1, 'Person 104', 'person 104', 1, 1, 1, 'user'),
+            (105, 1, 'Person 105', 'person 105', 1, 1, 1, 'user')
+          """
+        )
+      )
+
+    first = self.client.post(
+      "/projects/1/face-rematch-unknown",
+      json={"scope": "person", "person_id": 101},
+    )
+    second = self.client.post(
+      "/projects/1/face-rematch-unknown",
+      json={"scope": "person", "person_id": 103},
+    )
+    third = self.client.post(
+      "/projects/1/face-rematch-unknown",
+      json={"scope": "person", "person_id": 104},
+    )
+    fourth = self.client.post(
+      "/projects/1/face-rematch-unknown",
+      json={"scope": "person", "person_id": 105},
+    )
+    duplicate = self.client.post(
+      "/projects/1/face-rematch-unknown",
+      json={"scope": "person", "person_id": 105},
+    )
+
+    self.assertEqual(first.status_code, 200)
+    self.assertEqual(second.status_code, 200)
+    self.assertEqual(third.status_code, 200)
+    self.assertEqual(fourth.status_code, 200)
+    self.assertEqual(duplicate.status_code, 200)
+    first_payload = first.json()
+    second_payload = second.json()
+    third_payload = third.json()
+    fourth_payload = fourth.json()
+    duplicate_payload = duplicate.json()
+    self.assertEqual(first_payload["status"]["status"], "queued")
+    self.assertEqual(second_payload["status"]["status"], "queued")
+    self.assertEqual(third_payload["status"]["status"], "queued")
+    self.assertEqual(fourth_payload["status"]["status"], "pending")
+    self.assertNotEqual(second_payload["status"]["task_id"], first_payload["status"]["task_id"])
+    self.assertEqual(duplicate_payload["status"]["task_id"], fourth_payload["status"]["task_id"])
+
+    scoped = self.client.get(
+      "/projects/1/face-rematch-unknown/status?scope=person&person_id=105"
+    )
+    self.assertEqual(scoped.status_code, 200)
+    self.assertEqual(scoped.json()["task_id"], fourth_payload["status"]["task_id"])
+    self.assertEqual(scoped.json()["person_id"], 105)
+    self.assertTrue(scoped.json()["running"])
+
+    global_status = self.client.get("/projects/1/face-rematch-unknown/status")
+    self.assertEqual(global_status.status_code, 200)
+    self.assertIn(
+      global_status.json()["task_id"],
+      {
+        first_payload["status"]["task_id"],
+        second_payload["status"]["task_id"],
+        third_payload["status"]["task_id"],
+      },
+    )
+
   def test_face_rematch_unknown_person_scope_requires_confirmed_named_person(self) -> None:
     unnamed = self.client.post(
       "/projects/1/face-rematch-unknown",

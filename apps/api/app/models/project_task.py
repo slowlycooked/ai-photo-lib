@@ -56,17 +56,6 @@ class ProjectTask(Base):
             ),
         ),
         sa.Index(
-            "uq_project_tasks_one_active_face_rematch",
-            "project_id",
-            unique=True,
-            sqlite_where=sa.text(
-                "task_type = 'face_rematch_unknown' AND status IN ('queued', 'running')"
-            ),
-            postgresql_where=sa.text(
-                "task_type = 'face_rematch_unknown' AND status IN ('queued', 'running')"
-            ),
-        ),
-        sa.Index(
             "uq_project_tasks_one_active_photo_quarantine",
             "project_id",
             unique=True,

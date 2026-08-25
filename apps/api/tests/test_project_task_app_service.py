@@ -699,7 +699,32 @@ class ProjectTaskAppServiceTest(unittest.TestCase):
             status="queued",
             request_params={"max_faces": 321},
         )
-        db.add(task)
+        sibling_tasks = [
+            ProjectTask(
+                project_id=1,
+                task_type=TASK_TYPE_FACE_REMATCH_UNKNOWN,
+                status="queued",
+                request_params={
+                    "max_faces": 321,
+                    "scope": "person",
+                    "person_id": person_id,
+                },
+            )
+            for person_id in (101, 102)
+        ]
+        waiting_task = ProjectTask(
+            project_id=1,
+            task_type=TASK_TYPE_FACE_REMATCH_UNKNOWN,
+            status="pending",
+            request_params={"max_faces": 321, "scope": "person", "person_id": 103},
+        )
+        next_waiting_task = ProjectTask(
+            project_id=1,
+            task_type=TASK_TYPE_FACE_REMATCH_UNKNOWN,
+            status="pending",
+            request_params={"max_faces": 321, "scope": "person", "person_id": 104},
+        )
+        db.add_all([task, *sibling_tasks, waiting_task, next_waiting_task])
         db.commit()
         db.refresh(task)
 
@@ -722,6 +747,11 @@ class ProjectTaskAppServiceTest(unittest.TestCase):
         self.assertEqual(task.progress_payload["faces_considered"], 9)
         self.assertEqual(task.result_payload["matched_faces"], 5)
         self.assertEqual(task.result_payload["review_pending"], 3)
+        db.refresh(waiting_task)
+        self.assertEqual(waiting_task.status, "queued")
+        self.assertTrue(waiting_task.progress_payload["running"])
+        db.refresh(next_waiting_task)
+        self.assertEqual(next_waiting_task.status, "pending")
         db.close()
 
     def test_process_face_rematch_unknown_task_honors_cancel_callback(self) -> None:

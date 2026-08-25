@@ -204,10 +204,16 @@ def rematch_project_unknown_faces(
 )
 def get_rematch_project_unknown_faces_status(
     project_id: int,
+    scope: Optional[str] = Query(default=None),
+    person_id: Optional[int] = Query(default=None, ge=1),
     project: Project = Depends(require_project),
     db: Session = Depends(get_db),
 ) -> FaceRematchUnknownStatusResponse:
-    return ProjectFaceClusterRematchAppService(db).rematch_status(project_id=project_id)
+    return ProjectFaceClusterRematchAppService(db).rematch_status(
+        project_id=project_id,
+        scope=scope,
+        person_id=person_id,
+    )
 
 
 @router.post(

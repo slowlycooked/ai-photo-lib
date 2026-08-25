@@ -471,6 +471,56 @@ describe("PeoplePage", () => {
     });
   });
 
+  it("targets and tracks rematch status for a non-first person", async () => {
+    const user = userEvent.setup();
+    peopleState[1] = {
+      ...peopleState[1],
+      display_name: "妈妈",
+      normalized_name: "妈妈",
+      is_named: true,
+      representative_face_detection_id: 302,
+      sample_count: 1,
+      confirmed_sample_count: 1,
+    };
+    rematchUnknownMock.mockResolvedValueOnce({
+      message: "Unknown face rematch queued behind active task",
+      status: {
+        project_id: 1,
+        task_id: 3002,
+        status: "pending",
+        running: true,
+        max_faces: 10000,
+        scope: "person",
+        person_id: 102,
+        start_time: null,
+        end_time: null,
+        faces_considered: 0,
+        matched_faces: 0,
+        auto_assigned: 0,
+        review_pending: 0,
+        errors: 0,
+        recent_errors: [],
+        message: "Waiting for earlier face rematch task",
+      },
+    });
+
+    renderPage("/projects/1/people?person_id=102");
+
+    await user.click(await screen.findByRole("button", { name: "从已扫描人脸找相似候选" }));
+
+    await waitFor(() => {
+      expect(rematchUnknownMock).toHaveBeenCalledWith(1, {
+        scope: "person",
+        person_id: 102,
+        max_faces: 10000,
+      });
+      expect(rematchUnknownStatusMock).toHaveBeenCalledWith(1, {
+        scope: "person",
+        person_id: 102,
+      });
+    });
+  });
+
   it("batch-confirms candidates from the detail panel", async () => {
     const user = userEvent.setup();
     personMock.mockImplementation((projectId: number, personId: number) => {

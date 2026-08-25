@@ -109,7 +109,7 @@ export function usePeoplePage() {
     staleTime: 30_000,
   });
 
-  const people = peopleData?.items ?? [];
+  const people = useMemo(() => peopleData?.items ?? [], [peopleData]);
   const archivedPeople = useMemo(
     () =>
       (archivePeopleData?.items ?? []).filter(
@@ -159,7 +159,10 @@ export function usePeoplePage() {
 
   useEffect(() => {
     const managedIds = new Set(managedPeople.map((person) => person.id));
-    setSelectedPersonIds((prev) => prev.filter((id) => managedIds.has(id)));
+    setSelectedPersonIds((prev) => {
+      const next = prev.filter((id) => managedIds.has(id));
+      return next.length === prev.length ? prev : next;
+    });
   }, [managedPeople]);
 
   useEffect(() => {
@@ -199,9 +202,13 @@ export function usePeoplePage() {
   });
 
   const { data: rematchStatus } = useQuery({
-    queryKey: ["face-rematch-unknown-status", selectedProjectId],
-    queryFn: () => api.projectFaces.rematchUnknownStatus(selectedProjectId!),
-    enabled: selectedProjectId != null,
+    queryKey: ["face-rematch-unknown-status", selectedProjectId, resolvedSelectedPersonId],
+    queryFn: () =>
+      api.projectFaces.rematchUnknownStatus(selectedProjectId!, {
+        scope: "person",
+        person_id: resolvedSelectedPersonId!,
+      }),
+    enabled: selectedProjectId != null && resolvedSelectedPersonId != null,
     refetchInterval: (query) => {
       const d = query.state.data;
       return d && d.running ? 3000 : 15000;

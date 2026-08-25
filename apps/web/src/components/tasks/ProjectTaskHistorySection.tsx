@@ -21,7 +21,7 @@ export function ProjectTaskHistorySection({ projectId }: { projectId: number | n
     enabled: canLoad,
     refetchInterval: (query) => {
       const hasActive = query.state.data?.items.some((task) =>
-        ["queued", "running"].includes(task.status),
+        ["pending", "queued", "running"].includes(task.status),
       );
       return hasActive ? 3000 : false;
     },
@@ -86,7 +86,7 @@ export function ProjectTaskHistorySection({ projectId }: { projectId: number | n
             const latestError = task.latest_failure?.message ?? task.error_message;
             const isExpanded = expandedTaskId === task.id;
             const canPause = ["queued", "running"].includes(task.status);
-            const canCancel = ["queued", "running", "paused"].includes(task.status);
+            const canCancel = ["pending", "queued", "running", "paused"].includes(task.status);
             const canResume = task.status === "paused";
             return (
               <div key={task.id} className="px-4 py-3 space-y-1">
@@ -101,7 +101,7 @@ export function ProjectTaskHistorySection({ projectId }: { projectId: number | n
                         ? "text-danger"
                         : task.status === "cancelled"
                           ? "text-mute"
-                          : ["queued", "running"].includes(task.status)
+                          : ["pending", "queued", "running"].includes(task.status)
                             ? "text-primary"
                             : "text-green-700",
                     ].join(" ")}

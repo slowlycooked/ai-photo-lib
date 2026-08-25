@@ -68,7 +68,6 @@ REQUIRED_INDEXES: dict[str, tuple[str, ...]] = {
         "uq_project_tasks_one_active_scan",
         "uq_project_tasks_one_active_face_cluster",
         "uq_project_tasks_one_active_face_scan",
-        "uq_project_tasks_one_active_face_rematch",
         "uq_project_tasks_one_active_photo_quarantine",
     ),
     "photo_quarantine_items": (

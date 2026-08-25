@@ -129,11 +129,34 @@ class ProjectFaceClusterRematchAppService:
             status=build_face_rematch_status(result.task),
         )
 
-    def rematch_status(self, *, project_id: int) -> FaceRematchUnknownStatusResponse:
-        active_task = get_active_face_rematch_task(self.db, project_id)
+    def rematch_status(
+        self,
+        *,
+        project_id: int,
+        scope: Optional[str] = None,
+        person_id: Optional[int] = None,
+    ) -> FaceRematchUnknownStatusResponse:
+        match_params: Optional[dict[str, object]] = None
+        if scope is not None or person_id is not None:
+            match_params = {}
+            if scope is not None:
+                match_params["scope"] = scope
+            if person_id is not None:
+                match_params["person_id"] = int(person_id)
+        active_task = get_active_face_rematch_task(
+            self.db,
+            project_id,
+            match_params=match_params,
+        )
         if active_task is not None:
             return build_face_rematch_status(active_task)
-        return build_face_rematch_status(get_latest_face_rematch_task(self.db, project_id))
+        return build_face_rematch_status(
+            get_latest_face_rematch_task(
+                self.db,
+                project_id,
+                match_params=match_params,
+            )
+        )
 
     def cancel_rematch(self, *, project_id: int) -> FaceRematchUnknownStatusResponse:
         task = request_project_task_cancel(

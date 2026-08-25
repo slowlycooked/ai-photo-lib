@@ -28,6 +28,8 @@ FACE_SCAN_TASK_TYPES: tuple[str, ...] = (TASK_TYPE_FACE_SCAN_PROJECT,)
 FACE_REMATCH_TASK_TYPES: tuple[str, ...] = (TASK_TYPE_FACE_REMATCH_UNKNOWN,)
 PHOTO_QUARANTINE_TASK_TYPES: tuple[str, ...] = (TASK_TYPE_PHOTO_QUARANTINE_ANALYSIS,)
 ACTIVE_TASK_STATUSES: tuple[str, ...] = ("queued", "running", "paused")
+FACE_REMATCH_PENDING_STATUS = "pending"
+FACE_REMATCH_CONCURRENCY = 3
 
 
 @dataclass(frozen=True)
@@ -102,12 +104,68 @@ def get_latest_face_scan_task(db: Session, project_id: int) -> Optional[ProjectT
     return _get_latest_project_task(db, project_id, FACE_SCAN_TASK_TYPES)
 
 
-def get_active_face_rematch_task(db: Session, project_id: int) -> Optional[ProjectTask]:
-    return _get_active_project_task(db, project_id, FACE_REMATCH_TASK_TYPES)
+def get_active_face_rematch_task(
+    db: Session,
+    project_id: int,
+    *,
+    match_params: Optional[dict[str, object]] = None,
+) -> Optional[ProjectTask]:
+    runnable = _get_face_rematch_task(
+        db,
+        project_id,
+        statuses=("queued", "running"),
+        match_params=match_params,
+    )
+    if runnable is not None:
+        return runnable
+    return _get_face_rematch_task(
+        db,
+        project_id,
+        statuses=(FACE_REMATCH_PENDING_STATUS, "paused"),
+        match_params=match_params,
+    )
 
 
-def get_latest_face_rematch_task(db: Session, project_id: int) -> Optional[ProjectTask]:
-    return _get_latest_project_task(db, project_id, FACE_REMATCH_TASK_TYPES)
+def get_latest_face_rematch_task(
+    db: Session,
+    project_id: int,
+    *,
+    match_params: Optional[dict[str, object]] = None,
+) -> Optional[ProjectTask]:
+    return _get_face_rematch_task(
+        db,
+        project_id,
+        statuses=None,
+        match_params=match_params,
+    )
+
+
+def _get_face_rematch_task(
+    db: Session,
+    project_id: int,
+    *,
+    statuses: Optional[tuple[str, ...]],
+    match_params: Optional[dict[str, object]] = None,
+    oldest_first: bool = False,
+) -> Optional[ProjectTask]:
+    query = db.query(ProjectTask).filter(
+        ProjectTask.project_id == project_id,
+        ProjectTask.task_type == TASK_TYPE_FACE_REMATCH_UNKNOWN,
+    )
+    if statuses is not None:
+        query = query.filter(ProjectTask.status.in_(statuses))
+    order = (
+        (ProjectTask.created_at.asc(), ProjectTask.id.asc())
+        if oldest_first
+        else (ProjectTask.created_at.desc(), ProjectTask.id.desc())
+    )
+    for task in query.order_by(*order).all():
+        params = dict(task.request_params or {})
+        if match_params is None or all(
+            params.get(key) == value for key, value in match_params.items()
+        ):
+            return task
+    return None
 
 
 def get_active_photo_quarantine_task(db: Session, project_id: int) -> Optional[ProjectTask]:
@@ -216,13 +274,123 @@ def enqueue_face_rematch_unknown_task(
         request_params["trigger"] = trigger
     if schedule:
         request_params["schedule"] = schedule
-    return enqueue_unique_project_task(
+    # Serialize enqueue decisions per project so the runnable count cannot exceed
+    # the project-level concurrency limit.
+    db.query(Project.id).filter(Project.id == project_id).with_for_update().first()
+    identity_params = {
+        key: request_params[key]
+        for key in ("scope", "person_id", "start_time", "end_time")
+        if key in request_params
+    }
+    existing = get_active_face_rematch_task(
         db,
+        project_id,
+        match_params=identity_params,
+    )
+    if existing is not None:
+        return EnqueueProjectTaskResult(task=existing, created=False)
+
+    runnable_count = _count_runnable_face_rematch_tasks(db, project_id)
+    status = (
+        "queued"
+        if runnable_count < FACE_REMATCH_CONCURRENCY
+        else FACE_REMATCH_PENDING_STATUS
+    )
+    progress = build_queued_progress_payload(
+        TASK_TYPE_FACE_REMATCH_UNKNOWN,
+        request_params,
+        project_id=project_id,
+    )
+    if status == FACE_REMATCH_PENDING_STATUS:
+        progress["message"] = "Waiting for earlier face rematch task"
+
+    task = ProjectTask(
         project_id=project_id,
         task_type=TASK_TYPE_FACE_REMATCH_UNKNOWN,
-        active_task_types=FACE_REMATCH_TASK_TYPES,
+        status=status,
+        retry_count=0,
         request_params=request_params,
+        progress_payload=progress,
+        result_payload=None,
+        error_message=None,
+        updated_at=_now_utc(),
     )
+    db.add(task)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        existing = get_active_face_rematch_task(
+            db,
+            project_id,
+            match_params=identity_params,
+        )
+        if existing is not None:
+            return EnqueueProjectTaskResult(task=existing, created=False)
+        task = ProjectTask(
+            project_id=project_id,
+            task_type=TASK_TYPE_FACE_REMATCH_UNKNOWN,
+            status=FACE_REMATCH_PENDING_STATUS,
+            retry_count=0,
+            request_params=request_params,
+            progress_payload={**progress, "message": "Waiting for earlier face rematch task"},
+            result_payload=None,
+            error_message=None,
+            updated_at=_now_utc(),
+        )
+        db.add(task)
+        db.commit()
+    db.refresh(task)
+    return EnqueueProjectTaskResult(task=task, created=True)
+
+
+def _count_runnable_face_rematch_tasks(db: Session, project_id: int) -> int:
+    return (
+        db.query(ProjectTask.id)
+        .filter(
+            ProjectTask.project_id == project_id,
+            ProjectTask.task_type == TASK_TYPE_FACE_REMATCH_UNKNOWN,
+            ProjectTask.status.in_(("queued", "running")),
+        )
+        .count()
+    )
+
+
+def promote_pending_face_rematch_tasks(
+    db: Session,
+    project_id: int,
+) -> list[ProjectTask]:
+    db.query(Project.id).filter(Project.id == project_id).with_for_update().first()
+    available_slots = max(
+        0,
+        FACE_REMATCH_CONCURRENCY
+        - _count_runnable_face_rematch_tasks(db, project_id),
+    )
+    if available_slots == 0:
+        return []
+
+    pending_tasks = (
+        db.query(ProjectTask)
+        .filter(
+            ProjectTask.project_id == project_id,
+            ProjectTask.task_type == TASK_TYPE_FACE_REMATCH_UNKNOWN,
+            ProjectTask.status == FACE_REMATCH_PENDING_STATUS,
+        )
+        .order_by(ProjectTask.created_at.asc(), ProjectTask.id.asc())
+        .limit(available_slots)
+        .all()
+    )
+    for task in pending_tasks:
+        task.status = "queued"
+        task.progress_payload = build_queued_progress_payload(
+            task.task_type,
+            task.request_params,
+            project_id=task.project_id,
+        )
+        task.updated_at = _now_utc()
+    if pending_tasks:
+        db.flush()
+    return pending_tasks
 
 
 def enqueue_photo_quarantine_task(
@@ -323,7 +491,7 @@ def request_project_task_cancel_by_id(
     task_id: int,
 ) -> Optional[ProjectTask]:
     task = get_project_task(db, project_id=project_id, task_id=task_id)
-    if task is None or task.status not in ACTIVE_TASK_STATUSES:
+    if task is None or task.status not in (*ACTIVE_TASK_STATUSES, FACE_REMATCH_PENDING_STATUS):
         return task
 
     return _request_task_cancel(db, task)
@@ -343,7 +511,7 @@ def _request_task_cancel(db: Session, task: ProjectTask) -> ProjectTask:
     progress.pop("pause_requested", None)
     progress["message"] = "cancelling"
 
-    if task.status in ("queued", "paused"):
+    if task.status in ("queued", "paused", FACE_REMATCH_PENDING_STATUS):
         task.status = "cancelled"
         task.finished_at = now
         progress["running"] = False
@@ -355,6 +523,9 @@ def _request_task_cancel(db: Session, task: ProjectTask) -> ProjectTask:
 
     task.progress_payload = progress
     task.updated_at = now
+    if task.task_type == TASK_TYPE_FACE_REMATCH_UNKNOWN and task.status == "cancelled":
+        db.flush()
+        promote_pending_face_rematch_tasks(db, task.project_id)
     db.commit()
     db.refresh(task)
     return task
@@ -391,6 +562,9 @@ def request_project_task_pause(
 
     task.progress_payload = progress
     task.updated_at = now
+    if task.task_type == TASK_TYPE_FACE_REMATCH_UNKNOWN and task.status == "paused":
+        db.flush()
+        promote_pending_face_rematch_tasks(db, task.project_id)
     db.commit()
     db.refresh(task)
     return task
@@ -405,6 +579,11 @@ def resume_project_task(
     task = get_project_task(db, project_id=project_id, task_id=task_id)
     if task is None or task.status != "paused":
         return task
+
+    if task.task_type == TASK_TYPE_FACE_REMATCH_UNKNOWN:
+        db.query(Project.id).filter(Project.id == project_id).with_for_update().first()
+        if _count_runnable_face_rematch_tasks(db, project_id) >= FACE_REMATCH_CONCURRENCY:
+            return task
 
     progress = dict(
         task.progress_payload
@@ -717,7 +896,7 @@ def build_face_rematch_status(task: Optional[ProjectTask]) -> FaceRematchUnknown
     payload["project_id"] = task.project_id
     payload["task_id"] = task.id
     payload["status"] = task.status
-    payload["running"] = task.status in ("queued", "running")
+    payload["running"] = task.status in (FACE_REMATCH_PENDING_STATUS, "queued", "running")
     payload["max_faces"] = int(payload.get("max_faces") or max_faces)
 
     if task.status == "failed":

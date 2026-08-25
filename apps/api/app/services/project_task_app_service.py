@@ -10,9 +10,11 @@ from sqlalchemy.orm import Session
 from ..database import SessionLocal
 from ..models.project_task import ProjectTask
 from .project_task_service import (
+    TASK_TYPE_FACE_REMATCH_UNKNOWN,
     TASK_TYPE_LIBRARY_REINDEX,
     TASK_TYPE_LIBRARY_SCAN,
     TASK_TYPE_PHOTO_QUARANTINE_ANALYSIS,
+    promote_pending_face_rematch_tasks,
 )
 from .search.result_cache import bump_project_search_cache_epoch
 from .task_claim_service import TaskClaimService
@@ -177,6 +179,9 @@ class ProjectTaskAppService:
         task.locked_at = None
         task.heartbeat_at = None
         task.lease_expires_at = None
+        if task.task_type == TASK_TYPE_FACE_REMATCH_UNKNOWN:
+            db.flush()
+            promote_pending_face_rematch_tasks(db, task.project_id)
 
     def _persist_paused(self, task_id: int, state: Optional[dict] = None) -> None:
         if self._use_main_session_for_finalization():
@@ -218,6 +223,9 @@ class ProjectTaskAppService:
         task.locked_at = None
         task.heartbeat_at = None
         task.lease_expires_at = None
+        if task.task_type == TASK_TYPE_FACE_REMATCH_UNKNOWN:
+            db.flush()
+            promote_pending_face_rematch_tasks(db, task.project_id)
 
     def _persist_failure(self, task_id: int, error_message: str) -> None:
         if self._use_main_session_for_finalization():
@@ -259,6 +267,9 @@ class ProjectTaskAppService:
             recent_errors.append(error_message[:_MAX_ERROR_LEN])
         progress["recent_errors"] = recent_errors
         task.progress_payload = progress
+        if task.task_type == TASK_TYPE_FACE_REMATCH_UNKNOWN:
+            db.flush()
+            promote_pending_face_rematch_tasks(db, task.project_id)
 
     def _persist_success(self, task_id: int, final_state: dict) -> None:
         task = self._load_task(self._db, task_id)
@@ -288,6 +299,8 @@ class ProjectTaskAppService:
                 reason=f"project_task_completed:{task.task_type}",
             )
         self._db.flush()
+        if task.task_type == TASK_TYPE_FACE_REMATCH_UNKNOWN:
+            promote_pending_face_rematch_tasks(self._db, task.project_id)
 
     def _run_task(self, task: ProjectTask) -> dict:
         if self._cancel_requested(task):
