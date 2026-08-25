@@ -1,6 +1,12 @@
 from __future__ import annotations
 
+import app.routers.project_tags as project_tags_router
 from app.routers.project_tags import _count_tag_groups, project_tags
+
+
+def setup_function():
+    with project_tags_router._TAG_GROUP_CACHE_LOCK:
+        project_tags_router._TAG_GROUP_CACHE.clear()
 
 
 class FakeResult:
@@ -60,3 +66,27 @@ def test_project_tags_response_uses_grouped_counts():
     assert response.scene_tags[0].tag == "night"
     assert response.search_keywords[0].count == 3
     assert response.object_tags == []
+
+
+def test_project_tags_reuses_cached_counts_until_project_epoch_changes(monkeypatch):
+    epoch = 4
+    monkeypatch.setattr(
+        project_tags_router,
+        "get_project_search_cache_epoch",
+        lambda db, project_id: epoch,
+    )
+    db = FakeSession([("scene_tags", "night", 5)])
+
+    first = project_tags(project_id=11, project=object(), db=db)
+    db.rows = [("scene_tags", "day", 2)]
+    cached = project_tags(project_id=11, project=object(), db=db)
+
+    assert len(db.executions) == 1
+    assert first.scene_tags[0].tag == "night"
+    assert cached.scene_tags[0].tag == "night"
+
+    epoch = 5
+    refreshed = project_tags(project_id=11, project=object(), db=db)
+
+    assert len(db.executions) == 2
+    assert refreshed.scene_tags[0].tag == "day"
