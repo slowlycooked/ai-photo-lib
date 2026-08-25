@@ -130,6 +130,7 @@ class BuildPlanStage:
             has_people=execution_context.people_resolution.has_people,
             people_filter_mode=execution_context.people_resolution.people_filter_mode,
             matched_person_ids=execution_context.people_resolution.matched_person_ids,
+            unresolved_people=execution_context.people_resolution.unresolved_people,
             residual_query=execution_context.people_resolution.residual_query,
             is_people_only=execution_context.people_resolution.is_people_only,
         )

@@ -126,7 +126,7 @@ def run_metadata_stage(
     if (
         execution_context.metadata_only_requested
         and execution_context.metadata_only_allowed
-        and not execution_context.people_resolution.has_people
+        and not execution_context.people_resolution.has_people_constraint
     ):
         metadata_results = metadata_service.search(
             metadata_filters=execution_context.metadata_filters,
@@ -183,13 +183,32 @@ def run_people_stage(
     trace_writer: SearchDebugTraceWriter,
 ) -> PeopleStageResult:
     """Run people recall stage and update constrained candidates."""
-    if execution_context.project_id is None or not execution_context.people_resolution.has_people:
+    if execution_context.project_id is None or not execution_context.people_resolution.has_people_constraint:
         return PeopleStageResult(
             constrained_photo_ids=execution_context.constrained_photo_ids,
             people_results=[],
             matched_person_ids=[],
             people_candidates_debug=[],
             people_only_candidates=None,
+        )
+
+    if execution_context.people_resolution.unresolved_people:
+        trace_writer.write_stage(
+            "people_recall",
+            people_filter_mode=execution_context.people_resolution.people_filter_mode,
+            matched_person_ids=[],
+            unresolved_people=execution_context.people_resolution.unresolved_people,
+            people_candidates=0,
+            constrained_photo_ids=0,
+        )
+        return PeopleStageResult(
+            constrained_photo_ids=set(),
+            people_results=[],
+            matched_person_ids=[],
+            people_candidates_debug=[],
+            people_only_candidates=(
+                [] if execution_context.people_resolution.is_people_only else None
+            ),
         )
 
     next_constrained = execution_context.constrained_photo_ids

@@ -155,7 +155,14 @@ def build_search_plan(
     }
 
     search_query_plan = query_plan
-    if people_resolution.has_people and people_resolution.residual_query.strip():
+    uses_v2_contract = (
+        str(getattr(query_plan, "planner_contract_version", "1")) == "2"
+    )
+    if (
+        not uses_v2_contract
+        and people_resolution.has_people
+        and people_resolution.residual_query.strip()
+    ):
         search_query_plan = query_plan_resolver(
             people_resolution.residual_query,
             project_id=project_id,
@@ -172,6 +179,8 @@ def build_search_plan(
             "broad_terms": search_query_plan.broad_terms,
             "support_terms": search_query_plan.support_terms,
         }
+    elif uses_v2_contract and people_resolution.residual_query.strip():
+        people_query_plan["semantic_query"] = people_resolution.residual_query
 
     if mode == "auto":
         if search_query_plan.intent == "ocr_text_search":
@@ -215,45 +224,40 @@ def build_search_plan(
             search_query_plan.query_constraints = constraints
 
     metadata_filters = dict(search_query_plan.metadata_filters or {})
-    people_filter_mode = str(people_resolution.people_filter_mode or "none")
-    people_context_active = (
-        bool(people_resolution.is_people_only)
-        or people_filter_mode not in ("none", "boost")
-    )
     force_temporal_metadata_filters = any(
         metadata_filters.get(key) not in (None, "", [], {})
         for key in _TEMPORAL_METADATA_KEYS
-    ) and (not people_context_active)
+    )
     force_location_metadata_filters = (
         _should_force_location_metadata_filters(search_query_plan, metadata_filters)
-        and (not people_context_active)
         and search_query_plan.intent not in _METADATA_ONLY_BLOCKED_INTENTS
     )
+    force_v2_metadata_filters = uses_v2_contract and bool(metadata_filters)
 
-    if people_context_active:
-        metadata_filters = {}
-    elif (
+    if (
         (not effective_settings.enable_structured_filters)
         and (not force_temporal_metadata_filters)
         and (not force_location_metadata_filters)
+        and (not force_v2_metadata_filters)
     ):
         metadata_filters = {}
 
     metadata_only_requested = bool(metadata_filters.get("metadata_only")) and not face_filter_active
     metadata_only_allowed = search_query_plan.intent not in _METADATA_ONLY_BLOCKED_INTENTS
     metadata_filter_skipped_reason = "not_skipped"
-    if people_context_active:
-        metadata_filter_skipped_reason = "people_only_query"
-    elif (
+    if (
         not effective_settings.enable_structured_filters
         and not force_temporal_metadata_filters
         and not force_location_metadata_filters
+        and not force_v2_metadata_filters
     ):
         metadata_filter_skipped_reason = "structured_filters_disabled"
     elif not effective_settings.enable_structured_filters and force_temporal_metadata_filters:
         metadata_filter_skipped_reason = "forced_temporal_metadata"
     elif not effective_settings.enable_structured_filters and force_location_metadata_filters:
         metadata_filter_skipped_reason = "forced_location_metadata"
+    elif not effective_settings.enable_structured_filters and force_v2_metadata_filters:
+        metadata_filter_skipped_reason = "forced_v2_metadata"
     elif search_query_plan.intent in _METADATA_ONLY_BLOCKED_INTENTS:
         metadata_filter_skipped_reason = "strong_semantic_intent"
     elif not metadata_filters:

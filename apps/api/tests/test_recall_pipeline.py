@@ -247,6 +247,27 @@ class RecallPipelineStageTest(unittest.TestCase):
         self.assertEqual(result.people_results[0].photo_id, 9)
         self.assertEqual(trace[-1]["people_filter_mode"], "boost")
 
+    def test_unresolved_required_person_produces_empty_constraint(self) -> None:
+        trace: list[dict] = []
+        resolution = PeopleQueryResolution(
+            query="不存在的人滑雪",
+            residual_query="滑雪",
+            people_filter_mode="any",
+            matched_people=[],
+            unresolved_people=["不存在的人"],
+        )
+        context = self._build_context(people_resolution=resolution)
+
+        result = run_people_stage(
+            db=MagicMock(),
+            execution_context=context,
+            trace_writer=SearchDebugTraceWriter(trace),
+        )
+
+        self.assertEqual(result.constrained_photo_ids, set())
+        self.assertEqual(result.people_results, [])
+        self.assertEqual(trace[-1]["unresolved_people"], ["不存在的人"])
+
     def test_vector_stage_reports_fallback_on_embedding_error(self) -> None:
         trace: list[dict] = []
         writer = SearchDebugTraceWriter(trace)

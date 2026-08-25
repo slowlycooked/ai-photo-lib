@@ -14,7 +14,10 @@ os.environ.setdefault("OPENAI_MODEL", "test-model")
 os.environ.setdefault("OPENAI_VISION_MODEL", "test-model")
 
 from app.services.query_understanding_service import SearchQueryPlan  # noqa: E402
-from app.services.search.people_query_resolver import PeopleQueryResolution  # noqa: E402
+from app.services.search.people_query_resolver import (  # noqa: E402
+    PeopleQueryResolution,
+    ResolvedPersonRef,
+)
 from app.services.search.search_plan_builder import build_search_plan  # noqa: E402
 from app.services.search.settings_resolver import SearchSettingsResolver  # noqa: E402
 
@@ -58,7 +61,7 @@ class SearchPlanBuilderTest(unittest.TestCase):
         self.assertEqual(plan.metadata_filter_skipped_reason, "strong_semantic_intent")
         self.assertFalse(plan.metadata_filters.get("metadata_only"))
 
-    def test_people_only_query_clears_metadata_filters(self) -> None:
+    def test_people_query_preserves_temporal_metadata_constraint(self) -> None:
         settings = SearchSettingsResolver.defaults()
         query_plan = SearchQueryPlan(
             original_query="小明",
@@ -89,8 +92,68 @@ class SearchPlanBuilderTest(unittest.TestCase):
             people_query_resolver=MagicMock(return_value=people_resolution),
         )
 
-        self.assertEqual(plan.metadata_filters, {})
+        self.assertEqual(plan.metadata_filters.get("year"), 2020)
+        self.assertFalse(plan.metadata_filters.get("metadata_only"))
         self.assertEqual(plan.effective_mode, settings.default_mode)
+
+    def test_v2_people_compound_preserves_metadata_and_plans_once(self) -> None:
+        settings = SearchSettingsResolver.defaults()
+        query_plan = SearchQueryPlan(
+            original_query="去年和老王一起滑雪",
+            normalized_query="去年和老王一起滑雪",
+            semantic_query_text="滑雪",
+            expanded_terms=["滑雪"],
+            intent="semantic_photo_search",
+            metadata_filters={
+                "date_from": "2025-01-01",
+                "date_to": "2026-01-01",
+                "metadata_only": False,
+            },
+            planner_contract_version="2",
+            planner_filters={
+                "people": [{"name": "老王", "required": True}],
+                "time_ranges": [
+                    {"start": "2025-01-01", "end": "2026-01-01"}
+                ],
+            },
+            lexical_plan={"required": [], "preferred": ["滑雪"], "excluded": []},
+            semantic_plan={"concepts": ["滑雪"], "queries": ["滑雪"]},
+            visual_plan={"objects": [], "scenes": [], "activities": ["滑雪"], "attributes": []},
+        )
+        people_resolution = PeopleQueryResolution(
+            query="去年和老王一起滑雪",
+            residual_query="滑雪",
+            people_filter_mode="any",
+            matched_people=[
+                ResolvedPersonRef(
+                    person_id=7,
+                    display_name="老王",
+                    normalized_name="老王",
+                    matched_term="老王",
+                )
+            ],
+        )
+        resolver = MagicMock()
+        resolver.resolve.return_value = settings
+        resolver.defaults.return_value = settings
+        query_plan_resolver = MagicMock(return_value=query_plan)
+
+        plan = build_search_plan(
+            db=MagicMock(),
+            query="去年和老王一起滑雪",
+            mode="auto",
+            project_id=1,
+            face_filter_active=False,
+            settings_resolver_cls=resolver,
+            query_plan_resolver=query_plan_resolver,
+            people_query_resolver=MagicMock(return_value=people_resolution),
+        )
+
+        query_plan_resolver.assert_called_once()
+        self.assertIs(plan.search_query_plan, query_plan)
+        self.assertEqual(plan.metadata_filters["date_from"], "2025-01-01")
+        self.assertEqual(plan.metadata_filters["date_to"], "2026-01-01")
+        self.assertEqual(plan.people_query_plan["semantic_query"], "滑雪")
 
     def test_auto_mode_uses_keyword_for_ocr_intent(self) -> None:
         settings = replace(SearchSettingsResolver.defaults(), default_mode="hybrid")

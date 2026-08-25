@@ -15,7 +15,10 @@ os.environ.setdefault("OPENAI_BASE_URL", "http://127.0.0.1:9999/v1")
 os.environ.setdefault("OPENAI_MODEL", "test-model")
 os.environ.setdefault("OPENAI_VISION_MODEL", "test-model")
 
-from app.services.query_understanding_service import understand_query  # noqa: E402
+from app.services.query_understanding_service import (  # noqa: E402
+    SearchQueryPlan,
+    understand_query,
+)
 from app.services.search.people_query_resolver import resolve_people_query  # noqa: E402
 from app.services.search.people_recall import PeopleRecallService  # noqa: E402
 
@@ -249,6 +252,50 @@ class PeopleSearchRecallTest(unittest.TestCase):
 
         ids = {c.photo_id for c in result.candidates}
         self.assertEqual(ids, {14})
+
+    def test_v2_people_resolver_consumes_planned_name_and_semantic_residual(self) -> None:
+        plan = SearchQueryPlan(
+            original_query="去年和妈妈一起滑雪",
+            normalized_query="去年和妈妈一起滑雪",
+            planner_contract_version="2",
+            planner_filters={"people": [{"name": "妈妈", "required": True}]},
+            lexical_plan={"required": [], "preferred": ["滑雪"], "excluded": []},
+            semantic_plan={"concepts": ["滑雪"], "queries": ["滑雪"]},
+            visual_plan={"objects": [], "scenes": ["雪地"], "activities": ["滑雪"], "attributes": []},
+        )
+
+        resolution = resolve_people_query(
+            self.db,
+            project_id=1,
+            query="去年和妈妈一起滑雪",
+            query_plan=plan,
+        )
+
+        self.assertEqual(resolution.matched_person_ids, [102])
+        self.assertEqual(resolution.people_filter_mode, "any")
+        self.assertEqual(resolution.residual_query, "滑雪 雪地")
+        self.assertEqual(resolution.unresolved_people, [])
+
+    def test_v2_unresolved_required_person_is_not_silently_ignored(self) -> None:
+        plan = SearchQueryPlan(
+            original_query="不存在的人滑雪",
+            normalized_query="不存在的人滑雪",
+            planner_contract_version="2",
+            planner_filters={"people": [{"name": "不存在的人", "required": True}]},
+            semantic_plan={"concepts": ["滑雪"], "queries": ["滑雪"]},
+        )
+
+        resolution = resolve_people_query(
+            self.db,
+            project_id=1,
+            query="不存在的人滑雪",
+            query_plan=plan,
+        )
+
+        self.assertEqual(resolution.matched_person_ids, [])
+        self.assertEqual(resolution.unresolved_people, ["不存在的人"])
+        self.assertTrue(resolution.has_people_constraint)
+        self.assertEqual(plan.unresolved_entities["people"], ["不存在的人"])
 
     def test_project_a_cannot_recall_project_b_people(self) -> None:
         plan = understand_query("爸爸")
