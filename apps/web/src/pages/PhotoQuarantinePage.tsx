@@ -25,6 +25,14 @@ import { canManageProjects } from "@/lib/permissions";
 
 const REVIEW_STATUSES = "review,delete_queued,quarantined,restore_conflict,restore_failed,queue_failed,move_failed,analysis_failed";
 const RESTORABLE_STATUSES = new Set(["quarantined", "restore_conflict", "restore_failed"]);
+const APPROVAL_STATUSES = new Set([
+  "review",
+  "analysis_failed",
+  "move_failed",
+  "queue_failed",
+  "kept",
+  "restored",
+]);
 const PAGE_SIZE = 24;
 
 const STATUS_OPTIONS = [
@@ -173,33 +181,34 @@ export function PhotoQuarantinePage() {
     onError: (error: Error) => setMessage(`启动失败：${error.message}`),
   });
   const itemMutation = useMutation({
-    mutationFn: ({ item, action }: { item: PhotoQuarantineItem; action: "move" | "restore" | "confirm" | "keep" | "labelKeep" | "labelTrash" }) => {
-      if (action === "move") return api.photoQuarantine.move(selectedProjectId!, item.id);
+    mutationFn: ({ item, action }: { item: PhotoQuarantineItem; action: "requestDelete" | "restore" | "confirm" | "keep" }) => {
+      if (action === "requestDelete") return api.photoQuarantine.requestDelete(selectedProjectId!, item.id);
       if (action === "restore") return api.photoQuarantine.restore(selectedProjectId!, item.id);
       if (action === "keep") return api.photoQuarantine.keep(selectedProjectId!, item.id);
-      if (action === "labelKeep") return api.photoQuarantine.label(selectedProjectId!, item.id, "KEEP");
-      if (action === "labelTrash") return api.photoQuarantine.label(selectedProjectId!, item.id, "TRASH");
       return api.photoQuarantine.confirmDeleted(selectedProjectId!, item.id);
     },
     onSuccess: (_, variables) => {
-      setMessage(variables.action === "restore" ? "照片已安全放回原位置" : "操作已完成");
+      const successMessage = variables.action === "restore"
+        ? "照片已安全放回原位置，并记为应保留"
+        : variables.action === "requestDelete"
+          ? "已批准删除：垃圾标签已记录，删除请求已写入后台清单"
+          : variables.action === "keep"
+            ? "已批准保留，并记为应保留"
+            : "已确认后台处理完成";
+      setMessage(successMessage);
       refreshItems();
     },
     onError: (error: Error) => setMessage(`操作失败：${error.message}`),
   });
   const batchMutation = useMutation({
-    mutationFn: ({ action, ids }: { action: "KEEP" | "MOVE" | "RESTORE" | "LABEL_KEEP" | "LABEL_TRASH"; ids: number[] }) =>
+    mutationFn: ({ action, ids }: { action: "KEEP" | "REQUEST_DELETE" | "RESTORE"; ids: number[] }) =>
       api.photoQuarantine.batch(selectedProjectId!, action, ids),
     onSuccess: (result, variables) => {
       const verb = variables.action === "RESTORE"
         ? "放回"
-        : variables.action === "MOVE"
-          ? "加入后台删除队列"
-          : variables.action === "LABEL_TRASH"
-            ? "标记为垃圾"
-            : variables.action === "LABEL_KEEP"
-              ? "标记为应保留"
-              : "保留";
+        : variables.action === "REQUEST_DELETE"
+          ? "批准删除并加入后台清单"
+          : "批准保留";
       setMessage(`已${verb} ${result.succeeded} 张${result.failed ? `，${result.failed} 张失败，请逐项检查` : ""}`);
       setSelectedIds(new Set());
       refreshItems();
@@ -208,16 +217,12 @@ export function PhotoQuarantinePage() {
   });
 
   const items = itemsQuery.data?.items ?? [];
-  const selectedItems = useMemo(
-    () => items.filter((item) => selectedIds.has(item.id)),
-    [items, selectedIds],
-  );
   const restorableSelected = useMemo(
     () => items.filter((item) => selectedIds.has(item.id) && RESTORABLE_STATUSES.has(item.status)),
     [items, selectedIds],
   );
-  const reviewSelected = useMemo(
-    () => items.filter((item) => selectedIds.has(item.id) && item.status === "review"),
+  const approvalSelected = useMemo(
+    () => items.filter((item) => selectedIds.has(item.id) && APPROVAL_STATUSES.has(item.status)),
     [items, selectedIds],
   );
   const latestTask = taskQuery.data?.items[0];
@@ -237,7 +242,7 @@ export function PhotoQuarantinePage() {
             <Trash2 className="w-5 h-5" /> 待删除图片审核
           </h1>
           <p className="mt-1 text-body-sm text-mute">
-            页面只写入删除清单，不会移动或删除原片；原片由 NAS 后台脚本统一处理。
+            页面只写入删除清单，不会移动或删除原片；原片由 NAS 后台脚本统一处理。提交后如需反悔，请在脚本执行前停用该清单，或在执行后从 NAS 回收目录恢复。
           </p>
         </div>
         {canManage && (
@@ -270,7 +275,7 @@ export function PhotoQuarantinePage() {
               <BarChart3 className="w-4 h-4 text-primary" /> 校准报告
             </h2>
             <p className="mt-1 text-caption-sm text-mute">
-              用人工 KEEP/TRASH 标签核验双重识别结果；放回照片会自动记为 KEEP 误判反馈。
+              人工选择“保留”会自动记为 KEEP；“提交删除”会自动记为 TRASH；放回旧隔离照片也会记为 KEEP。
             </p>
           </div>
           <a
@@ -367,10 +372,8 @@ export function PhotoQuarantinePage() {
             <button type="button" onClick={() => itemsQuery.refetch()} className="text-mute hover:text-ink" aria-label="刷新"><RefreshCw className="w-4 h-4" /></button>
           </div>
           <div className="flex flex-wrap gap-2">
-            {canManage && reviewSelected.length > 0 && <button type="button" onClick={() => batchMutation.mutate({ action: "KEEP", ids: reviewSelected.map((item) => item.id) })} disabled={batchMutation.isPending} className="px-3 py-2 rounded-md border border-hairline text-btn-sm font-bold hover:bg-surface-card disabled:opacity-50">批量保留（{reviewSelected.length}）</button>}
-            {canManage && selectedItems.length > 0 && <button type="button" onClick={() => batchMutation.mutate({ action: "LABEL_KEEP", ids: selectedItems.map((item) => item.id) })} disabled={batchMutation.isPending} className="px-3 py-2 rounded-md border border-hairline text-btn-sm font-bold hover:bg-surface-card disabled:opacity-50">仅标记应保留（{selectedItems.length}）</button>}
-            {canManage && selectedItems.length > 0 && <button type="button" onClick={() => batchMutation.mutate({ action: "LABEL_TRASH", ids: selectedItems.map((item) => item.id) })} disabled={batchMutation.isPending} className="px-3 py-2 rounded-md border border-hairline text-btn-sm font-bold hover:bg-surface-card disabled:opacity-50">仅标记垃圾（{selectedItems.length}）</button>}
-            {canManage && reviewSelected.length > 0 && <button type="button" onClick={() => batchMutation.mutate({ action: "MOVE", ids: reviewSelected.map((item) => item.id) })} disabled={batchMutation.isPending} className="px-3 py-2 rounded-md bg-primary text-white text-btn-sm font-bold disabled:opacity-50">批量加入后台删除队列（{reviewSelected.length}）</button>}
+            {canManage && approvalSelected.length > 0 && <button type="button" onClick={() => batchMutation.mutate({ action: "KEEP", ids: approvalSelected.map((item) => item.id) })} disabled={batchMutation.isPending} className="px-3 py-2 rounded-md border border-hairline text-btn-sm font-bold hover:bg-surface-card disabled:opacity-50">批量保留（{approvalSelected.length}）</button>}
+            {canManage && approvalSelected.length > 0 && <button type="button" onClick={() => { if (window.confirm(`将批准删除 ${approvalSelected.length} 张照片，并写入 NAS 后台删除清单。应用不会直接移动或删除原片，但当前不能从页面撤销已写入的请求。继续？`)) batchMutation.mutate({ action: "REQUEST_DELETE", ids: approvalSelected.map((item) => item.id) }); }} disabled={batchMutation.isPending} className="px-3 py-2 rounded-md bg-primary text-white text-btn-sm font-bold disabled:opacity-50">批量提交删除（{approvalSelected.length}）</button>}
             {canManage && restorableSelected.length > 0 && <button type="button" onClick={() => batchMutation.mutate({ action: "RESTORE", ids: restorableSelected.map((item) => item.id) })} disabled={batchMutation.isPending} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-hairline text-btn-sm font-bold hover:bg-surface-card disabled:opacity-50"><ArchiveRestore className="w-4 h-4" />批量放回（{restorableSelected.length}）</button>}
           </div>
         </div>
@@ -400,10 +403,8 @@ export function PhotoQuarantinePage() {
                   <p className="text-[11px] text-mute break-all" title={item.original_path}>{item.original_path}</p>
                   {canManage && (
                     <div className="flex flex-wrap gap-2">
-                      {(item.status === "review" || item.status === "queue_failed") && <button type="button" onClick={() => itemMutation.mutate({ item, action: "move" })} disabled={itemMutation.isPending} className="px-3 py-1.5 rounded-md bg-primary text-white text-btn-sm font-bold disabled:opacity-50">{item.status === "queue_failed" ? "重试加入删除队列" : "加入后台删除队列"}</button>}
-                      {item.status === "review" && <button type="button" onClick={() => itemMutation.mutate({ item, action: "keep" })} disabled={itemMutation.isPending} className="px-3 py-1.5 rounded-md border border-hairline text-btn-sm font-bold hover:bg-surface-card disabled:opacity-50">保留此图</button>}
-                      {item.status !== "deleted_confirmed" && <button type="button" onClick={() => itemMutation.mutate({ item, action: "labelKeep" })} disabled={itemMutation.isPending} className="px-3 py-1.5 rounded-md border border-hairline text-btn-sm text-mute hover:text-ink disabled:opacity-50">仅标记应保留</button>}
-                      {item.status !== "deleted_confirmed" && <button type="button" onClick={() => itemMutation.mutate({ item, action: "labelTrash" })} disabled={itemMutation.isPending} className="px-3 py-1.5 rounded-md border border-hairline text-btn-sm text-mute hover:text-ink disabled:opacity-50">仅标记垃圾</button>}
+                      {APPROVAL_STATUSES.has(item.status) && <button type="button" onClick={() => { if (window.confirm("将批准删除此照片，并写入 NAS 后台删除清单。应用不会直接移动或删除原片，但当前不能从页面撤销已写入的请求。继续？")) itemMutation.mutate({ item, action: "requestDelete" }); }} disabled={itemMutation.isPending} className="px-3 py-1.5 rounded-md bg-primary text-white text-btn-sm font-bold disabled:opacity-50">{item.status === "queue_failed" ? "重试提交删除" : "提交删除"}</button>}
+                      {APPROVAL_STATUSES.has(item.status) && <button type="button" onClick={() => itemMutation.mutate({ item, action: "keep" })} disabled={itemMutation.isPending} className="px-3 py-1.5 rounded-md border border-hairline text-btn-sm font-bold hover:bg-surface-card disabled:opacity-50">保留</button>}
                       {RESTORABLE_STATUSES.has(item.status) && <button type="button" onClick={() => itemMutation.mutate({ item, action: "restore" })} disabled={itemMutation.isPending} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-md border border-hairline text-btn-sm font-bold hover:bg-surface-card disabled:opacity-50"><ArchiveRestore className="w-3.5 h-3.5" />放回原处</button>}
                       {(item.status === "delete_queued" || item.status === "quarantined") && <button type="button" onClick={() => { if (window.confirm("仅当 NAS 后台脚本已处理该文件时才确认。继续？")) itemMutation.mutate({ item, action: "confirm" }); }} disabled={itemMutation.isPending} className="px-3 py-1.5 rounded-md border border-hairline text-btn-sm text-mute hover:text-ink disabled:opacity-50">确认后台已处理</button>}
                     </div>

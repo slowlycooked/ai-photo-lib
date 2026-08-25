@@ -134,6 +134,42 @@ def test_move_queues_original_for_nas_worker(quarantine_fixture) -> None:
             service.restore(project_id=1, item_id=100)
 
 
+def test_delete_approval_also_records_trash_label(quarantine_fixture) -> None:
+    engine, _library, trash, original, _digest = quarantine_fixture
+    with Session(engine) as db:
+        item = db.query(PhotoQuarantineItem).filter(PhotoQuarantineItem.id == 100).one()
+        item.status = "analysis_failed"
+        db.commit()
+
+        result = PhotoQuarantineService(db, root=trash).request_delete(
+            project_id=1,
+            item_id=100,
+            labeled_by="martin",
+        )
+
+        assert result.item.status == "delete_queued"
+        assert result.item.decision == "QUARANTINE"
+        assert result.item.human_label == "TRASH"
+        assert result.item.human_labeled_by == "martin"
+        assert original.exists()
+
+
+def test_batch_request_delete_uses_approval_semantics(quarantine_fixture) -> None:
+    engine, _library, trash, original, _digest = quarantine_fixture
+    with Session(engine) as db:
+        result = PhotoQuarantineService(db, root=trash).batch_action(
+            project_id=1,
+            item_ids=[100],
+            action="REQUEST_DELETE",
+            labeled_by="martin",
+        )
+
+        assert result.succeeded == 1
+        assert result.results[0].item is not None
+        assert result.results[0].item.human_label == "TRASH"
+        assert original.exists()
+
+
 def test_restore_never_overwrites_occupied_original_path(quarantine_fixture) -> None:
     engine, _library, trash, original, _digest = quarantine_fixture
     with Session(engine) as db:

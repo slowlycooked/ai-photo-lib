@@ -109,7 +109,7 @@ People Recognition 已经从“只读调试阶段”进入“人工纠错闭环�
 3. NAS 后台运行 `deleteMartinLib.sh`，由 `nas-trash-deleted-photos.py` 按 JSONL 清单把原片移入 NAS 回收目录。
 4. 后台脚本处理完成后，可在审核页面确认该项已处理。
 
-`/projects/{project_id}/photo-quarantine/items/{item_id}/move` 和批量 `MOVE` 为兼容现有客户端而保留名称；其当前语义是“加入后台删除队列”，不是由 API 进程移动文件。旧版本已经移动到应用隔离目录的记录仍支持从页面放回。
+审核页面只有“保留”和“提交删除”两个审批动作；前者同时记录 `KEEP`，后者同时记录 `TRASH` 并写入后台清单。`/projects/{project_id}/photo-quarantine/items/{item_id}/request-delete` 和批量 `REQUEST_DELETE` 是标准接口。旧的 `move` / `MOVE` 仅为兼容现有客户端保留，其当前语义同样是“提交删除”，不会由 API 进程移动原片。旧版本已经移动到应用隔离目录的记录仍支持从页面放回。
 
 ## 第 4 周发布分层：能力成熟度标记
 

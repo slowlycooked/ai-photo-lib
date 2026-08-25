@@ -1143,6 +1143,7 @@ export interface PhotoQuarantineListResponse {
 
 export type PhotoQuarantineBatchAction =
   | "KEEP"
+  | "REQUEST_DELETE"
   | "MOVE"
   | "RESTORE"
   | "LABEL_KEEP"

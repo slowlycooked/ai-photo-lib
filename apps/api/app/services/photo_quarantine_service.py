@@ -144,7 +144,7 @@ class PhotoQuarantineService:
             raise PhotoQuarantineError("Quarantine item not found")
         return item
 
-    def move(
+    def request_delete(
         self,
         *,
         project_id: int,
@@ -156,7 +156,15 @@ class PhotoQuarantineService:
             if labeled_by:
                 self._save_label(item, label="TRASH", labeled_by=labeled_by)
             return QuarantineMoveResult(item=item, moved=False)
-        if item.status not in {"review", "moving", "move_failed", "queue_failed"}:
+        if item.status not in {
+            "review",
+            "moving",
+            "move_failed",
+            "queue_failed",
+            "analysis_failed",
+            "kept",
+            "restored",
+        }:
             raise PhotoQuarantineConflict(
                 f"Item status {item.status!r} cannot be queued for deletion"
             )
@@ -187,6 +195,20 @@ class PhotoQuarantineService:
         if labeled_by:
             self._save_label(queued_item, label="TRASH", labeled_by=labeled_by)
         return QuarantineMoveResult(item=queued_item, moved=False)
+
+    def move(
+        self,
+        *,
+        project_id: int,
+        item_id: int,
+        labeled_by: Optional[str] = None,
+    ) -> QuarantineMoveResult:
+        """Compatibility alias for clients that still call the former move action."""
+        return self.request_delete(
+            project_id=project_id,
+            item_id=item_id,
+            labeled_by=labeled_by,
+        )
 
     def restore(
         self,
@@ -299,7 +321,13 @@ class PhotoQuarantineService:
             if labeled_by:
                 self._save_label(item, label="KEEP", labeled_by=labeled_by)
             return item
-        if item.status not in {"review", "analysis_failed", "move_failed"}:
+        if item.status not in {
+            "review",
+            "analysis_failed",
+            "move_failed",
+            "queue_failed",
+            "restored",
+        }:
             raise PhotoQuarantineConflict(
                 f"Item status {item.status!r} cannot be marked as kept"
             )
@@ -422,7 +450,12 @@ class PhotoQuarantineService:
     ) -> QuarantineBatchResult:
         operations = {
             "KEEP": lambda **kwargs: self.keep(**kwargs, labeled_by=labeled_by),
-            "MOVE": lambda **kwargs: self.move(**kwargs, labeled_by=labeled_by).item,
+            "REQUEST_DELETE": lambda **kwargs: self.request_delete(
+                **kwargs, labeled_by=labeled_by
+            ).item,
+            "MOVE": lambda **kwargs: self.request_delete(
+                **kwargs, labeled_by=labeled_by
+            ).item,
             "RESTORE": lambda **kwargs: self.restore(**kwargs, labeled_by=labeled_by),
             "LABEL_KEEP": lambda **kwargs: self.label(
                 **kwargs, label="KEEP", labeled_by=labeled_by or "unknown"
@@ -561,6 +594,7 @@ class PhotoQuarantineService:
         now = _now()
         item.previous_photo_status = item.previous_photo_status or photo.status
         item.status = "delete_queued"
+        item.decision = "QUARANTINE"
         item.quarantine_path = None
         item.content_hash = content_hash
         item.moved_at = item.moved_at or now

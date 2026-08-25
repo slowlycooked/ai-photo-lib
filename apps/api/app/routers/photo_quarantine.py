@@ -142,6 +142,26 @@ def list_photo_quarantine_items(
 
 
 @router.post(
+    "/{project_id}/photo-quarantine/items/{item_id}/request-delete",
+    response_model=PhotoQuarantineItemResponse,
+)
+def request_delete_photo_quarantine_item(
+    item_id: int,
+    project: Project = Depends(require_project_manager),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    try:
+        return PhotoQuarantineService(db).request_delete(
+            project_id=project.id, item_id=item_id, labeled_by=current_user.username
+        ).item
+    except PhotoQuarantineConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except PhotoQuarantineError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.post(
     "/{project_id}/photo-quarantine/items/{item_id}/move",
     response_model=PhotoQuarantineItemResponse,
 )
@@ -152,7 +172,7 @@ def move_photo_quarantine_item(
     db: Session = Depends(get_db),
 ):
     try:
-        return PhotoQuarantineService(db).move(
+        return PhotoQuarantineService(db).request_delete(
             project_id=project.id, item_id=item_id, labeled_by=current_user.username
         ).item
     except PhotoQuarantineConflict as exc:

@@ -42,6 +42,14 @@ class _FakeQuarantineService:
             ]
         )
 
+    def request_delete(self, *, project_id: int, item_id: int, labeled_by: str):
+        assert project_id == 1
+        assert item_id == 7
+        assert labeled_by == "reviewer"
+        from app.services.photo_quarantine_service import PhotoQuarantineConflict
+
+        raise PhotoQuarantineConflict("already queued")
+
     def calibration_report(self, *, project_id: int):
         assert project_id == 1
         return {
@@ -137,6 +145,15 @@ def test_batch_endpoint_requires_project_manager(monkeypatch) -> None:
     )
 
     assert response.status_code == 403
+
+
+def test_request_delete_endpoint_uses_explicit_approval_route(monkeypatch) -> None:
+    response = _build_client(monkeypatch).post(
+        "/api/projects/1/photo-quarantine/items/7/request-delete"
+    )
+
+    assert response.status_code == 409
+    assert response.json() == {"detail": "already queued"}
 
 
 def test_batch_endpoint_rejects_duplicate_ids_before_service(monkeypatch) -> None:

@@ -9,10 +9,10 @@ import { PhotoQuarantinePage } from "@/pages/PhotoQuarantinePage";
 const getSettingsMock = vi.fn();
 const listMock = vi.fn();
 const restoreMock = vi.fn();
-const moveMock = vi.fn();
+const requestDeleteMock = vi.fn();
+const keepMock = vi.fn();
 const batchMock = vi.fn();
 const calibrationMock = vi.fn();
-const labelMock = vi.fn();
 const taskListMock = vi.fn();
 const setCurrentProjectIdMock = vi.fn();
 
@@ -27,10 +27,10 @@ vi.mock("@/api", async () => {
         getSettings: (...args: unknown[]) => getSettingsMock(...args),
         list: (...args: unknown[]) => listMock(...args),
         restore: (...args: unknown[]) => restoreMock(...args),
-        move: (...args: unknown[]) => moveMock(...args),
+        requestDelete: (...args: unknown[]) => requestDeleteMock(...args),
+        keep: (...args: unknown[]) => keepMock(...args),
         batch: (...args: unknown[]) => batchMock(...args),
         getCalibration: (...args: unknown[]) => calibrationMock(...args),
-        label: (...args: unknown[]) => labelMock(...args),
       },
       projectTasks: {
         ...actual.api.projectTasks,
@@ -108,7 +108,8 @@ describe("PhotoQuarantinePage", () => {
     });
     listMock.mockResolvedValue({ total: 1, items: [item] });
     restoreMock.mockResolvedValue({ ...item, status: "restored" });
-    moveMock.mockResolvedValue({ ...item, status: "delete_queued", quarantine_path: null });
+    requestDeleteMock.mockResolvedValue({ ...item, status: "delete_queued", quarantine_path: null });
+    keepMock.mockResolvedValue({ ...item, status: "kept", human_label: "KEEP" });
     batchMock.mockResolvedValue({ requested: 1, succeeded: 1, failed: 0, results: [] });
     calibrationMock.mockResolvedValue({
       labeled_total: 42,
@@ -129,7 +130,6 @@ describe("PhotoQuarantinePage", () => {
       ready_for_auto_move: false,
       categories: [],
     });
-    labelMock.mockResolvedValue({ ...item, human_label: "KEEP" });
     taskListMock.mockResolvedValue({ total: 0, items: [] });
   });
 
@@ -137,12 +137,12 @@ describe("PhotoQuarantinePage", () => {
     const user = userEvent.setup();
     renderPage();
 
-    expect(await screen.findByText("页面只写入删除清单，不会移动或删除原片；原片由 NAS 后台脚本统一处理。")).toBeInTheDocument();
+    expect(await screen.findByText(/页面只写入删除清单，不会移动或删除原片/)).toBeInTheDocument();
     expect(await screen.findByText("明显误触且没有可保留内容")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "放回原处" }));
 
     await waitFor(() => expect(restoreMock).toHaveBeenCalledWith(1, 7));
-    expect(await screen.findByText("照片已安全放回原位置")).toBeInTheDocument();
+    expect(await screen.findByText("照片已安全放回原位置，并记为应保留")).toBeInTheDocument();
   });
 
   it("uses the server batch endpoint for selected restores", async () => {
@@ -189,18 +189,19 @@ describe("PhotoQuarantinePage", () => {
 
   it("lets a human queue review-only screenshots for backend deletion", async () => {
     const user = userEvent.setup();
+    vi.spyOn(window, "confirm").mockReturnValue(true);
     listMock.mockResolvedValue({
       total: 1,
       items: [{ ...item, status: "review", decision: "REVIEW", classification: "screenshot" }],
     });
     renderPage();
 
-    await user.click(await screen.findByRole("button", { name: "加入后台删除队列" }));
+    await user.click(await screen.findByRole("button", { name: "提交删除" }));
 
-    await waitFor(() => expect(moveMock).toHaveBeenCalledWith(1, 7));
+    await waitFor(() => expect(requestDeleteMock).toHaveBeenCalledWith(1, 7));
   });
 
-  it("shows calibration risk and labels without moving a review item", async () => {
+  it("uses approval actions as the human labels", async () => {
     const user = userEvent.setup();
     listMock.mockResolvedValue({
       total: 1,
@@ -210,10 +211,23 @@ describe("PhotoQuarantinePage", () => {
 
     expect(await screen.findByText("42 / 300")).toBeInTheDocument();
     expect(screen.getByText("误删风险项").nextElementSibling).toHaveTextContent("1");
-    await user.click(await screen.findByRole("button", { name: "仅标记应保留" }));
+    expect(screen.queryByRole("button", { name: "仅标记应保留" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "仅标记垃圾" })).not.toBeInTheDocument();
+    await user.click(await screen.findByRole("button", { name: "保留" }));
 
-    await waitFor(() => expect(labelMock).toHaveBeenCalledWith(1, 7, "KEEP"));
-    expect(moveMock).not.toHaveBeenCalled();
+    await waitFor(() => expect(keepMock).toHaveBeenCalledWith(1, 7));
+    expect(requestDeleteMock).not.toHaveBeenCalled();
+  });
+
+  it("offers both approval choices for an analysis failure", async () => {
+    listMock.mockResolvedValue({
+      total: 1,
+      items: [{ ...item, status: "analysis_failed", human_label: null }],
+    });
+    renderPage();
+
+    expect(await screen.findByRole("button", { name: "提交删除" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "保留" })).toBeInTheDocument();
   });
 
   it("requests only unlabelled calibration items", async () => {

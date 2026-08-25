@@ -75,7 +75,14 @@ class PhotoQuarantineListResponse(BaseModel):
 
 
 class PhotoQuarantineBatchRequest(BaseModel):
-    action: Literal["KEEP", "MOVE", "RESTORE", "LABEL_KEEP", "LABEL_TRASH"]
+    action: Literal[
+        "KEEP",
+        "REQUEST_DELETE",
+        "MOVE",
+        "RESTORE",
+        "LABEL_KEEP",
+        "LABEL_TRASH",
+    ]
     item_ids: list[int] = Field(min_length=1, max_length=100)
 
     @model_validator(mode="after")
