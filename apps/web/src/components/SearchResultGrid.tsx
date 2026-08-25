@@ -117,13 +117,14 @@ export function SearchResultGrid({
   });
 
   const [previewItem, setPreviewItem] = useState<SearchResultItem | null>(null);
+  const [deletedResultKeys, setDeletedResultKeys] = useState<Set<string>>(() => new Set());
   const sentinelRef = useInfiniteScrollSentinel<HTMLDivElement>({
     hasNextPage,
     isFetchingNextPage,
     fetchNextPage,
   });
 
-  const allItems = useMemo(() => {
+  const loadedItems = useMemo(() => {
     const loaded = data?.pages.flatMap((page) => page.items) ?? [];
     const uniqueByPhotoId = new Map<number, SearchResultItem>();
     for (const item of loaded) {
@@ -133,8 +134,26 @@ export function SearchResultGrid({
     }
     return Array.from(uniqueByPhotoId.values());
   }, [data]);
-  const total = data?.pages[0]?.total ?? 0;
+  const allItems = useMemo(
+    () => loadedItems.filter(
+      (item) => !deletedResultKeys.has(`${projectId ?? "none"}:${item.photo_id}`),
+    ),
+    [deletedResultKeys, loadedItems, projectId],
+  );
+  const total = Math.max(
+    0,
+    (data?.pages[0]?.total ?? 0) - (loadedItems.length - allItems.length),
+  );
   const debugPayload = data?.pages[0]?.debug;
+
+  function handleDeleted(photoId: number) {
+    setDeletedResultKeys((current) => {
+      const next = new Set(current);
+      next.add(`${projectId ?? "none"}:${photoId}`);
+      return next;
+    });
+    setPreviewItem(null);
+  }
 
   if (isLoading) {
     return (
@@ -213,9 +232,7 @@ export function SearchResultGrid({
         <SearchPhotoLightbox
           item={previewItem}
           projectId={projectId}
-          onDeleted={() => {
-            setPreviewItem(null);
-          }}
+          onDeleted={() => handleDeleted(previewItem.photo_id)}
           onClose={() => setPreviewItem(null)}
         />
       )}

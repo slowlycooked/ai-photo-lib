@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getLatestObserverCallback, intersectingEntry, stubIntersectionObserver } from "@/test/intersectionObserver";
 
@@ -13,12 +13,17 @@ vi.mock("@/hooks/useSearch", () => ({
 }));
 
 vi.mock("@/components/search/SearchResultMasonry", () => ({
-  SearchResultMasonry: (props: { items: SearchResultItem[] }) => {
+  SearchResultMasonry: (props: {
+    items: SearchResultItem[];
+    onPreview: (item: SearchResultItem) => void;
+  }) => {
     masonryMock(props.items.map((item) => item.photo_id));
     return (
       <div data-testid="search-masonry">
         {props.items.map((item) => (
-          <span key={item.photo_id}>photo-{item.photo_id}</span>
+          <button key={item.photo_id} onClick={() => props.onPreview(item)}>
+            photo-{item.photo_id}
+          </button>
         ))}
       </div>
     );
@@ -30,7 +35,9 @@ vi.mock("@/components/search/SearchDebugPanel", () => ({
 }));
 
 vi.mock("@/components/search/SearchPhotoLightbox", () => ({
-  SearchPhotoLightbox: () => <div data-testid="lightbox" />,
+  SearchPhotoLightbox: ({ onDeleted }: { onDeleted?: () => void }) => (
+    <button data-testid="lightbox" onClick={onDeleted}>delete-photo</button>
+  ),
 }));
 
 describe("SearchResultGrid", () => {
@@ -64,6 +71,29 @@ describe("SearchResultGrid", () => {
 
     expect(screen.getByTestId("search-masonry")).toBeInTheDocument();
     expect(masonryMock).toHaveBeenCalledWith([1, 2, 3]);
+  });
+
+  it("removes a deleted photo from the current search results", () => {
+    useSearchMock.mockReturnValue({
+      data: {
+        pages: [{ total: 2, page: 1, page_size: 50, items: [{ photo_id: 1 }, { photo_id: 2 }] }],
+      },
+      fetchNextPage: vi.fn(),
+      hasNextPage: false,
+      isFetchingNextPage: false,
+      isLoading: false,
+      isError: false,
+      error: null,
+    });
+
+    render(<SearchResultGrid query="海边" projectId={1} />);
+
+    fireEvent.click(screen.getByText("photo-1"));
+    fireEvent.click(screen.getByTestId("lightbox"));
+
+    expect(screen.queryByText("photo-1")).not.toBeInTheDocument();
+    expect(screen.getByText("photo-2")).toBeInTheDocument();
+    expect(screen.getByText(/共找到/)).toHaveTextContent("1 张照片");
   });
 
   it("prevents duplicate fetchNextPage calls while one is in flight", async () => {
