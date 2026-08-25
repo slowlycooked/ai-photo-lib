@@ -312,6 +312,7 @@ def run_keyword_auxiliary_stage(
     trace_writer.write_stage(
         "keyword_recall",
         candidates=len(keyword_results),
+        keyword_query_terms=list(execution_context.search_query_plan.recall_terms),
         top_scores=[round(candidate.keyword_score, 4) for candidate in keyword_results[:5]],
     )
     trace_writer.extend(auxiliary_recall.trace_events)
@@ -342,11 +343,58 @@ def run_vector_stage(
     """Run vector recall stage with graceful fallback signaling."""
     vector_service = VectorRecallService(db, execution_context.effective_settings)
     is_ocr_query = execution_context.search_query_plan.intent == "ocr_text_search"
+    uses_v2_contract = (
+        str(getattr(execution_context.search_query_plan, "planner_contract_version", "1"))
+        == "2"
+    )
+    semantic_plan = getattr(execution_context.search_query_plan, "semantic_plan", None) or {}
+    semantic_queries = [
+        str(item).strip()
+        for item in list(semantic_plan.get("queries") or [])
+        if str(item).strip()
+    ]
+    vector_query_text = (
+        " ".join(dict.fromkeys(semantic_queries))
+        if uses_v2_contract
+        else str(execution_context.search_query_plan.semantic_query_text or "").strip()
+    )
+    vector_query_source = (
+        str(
+            (getattr(execution_context.search_query_plan, "planner_debug", None) or {}).get(
+                "semantic_source"
+            )
+            or "qwen"
+        )
+        if uses_v2_contract
+        else (
+            "semantic_query_text" if vector_query_text else "legacy_query_fallback"
+        )
+    )
     raw_vector_top_k_per_field = max(
         1,
         int(execution_context.effective_settings.vector_top_k),
     )
     final_vector_top_k = raw_vector_top_k_per_field
+
+    if uses_v2_contract and not vector_query_text:
+        trace_writer.write_stage(
+            "vector_recall",
+            candidates=0,
+            vector_candidates=0,
+            vector_query_text="",
+            vector_query_source="none",
+            skipped=True,
+            skip_reason="semantic_queries_empty",
+            fallback=False,
+            error="",
+        )
+        return VectorStageResult(
+            vector_scores={},
+            embedding_model="",
+            fallback_reason="semantic_queries_empty",
+            stale_embedding_filtered=0,
+            error=None,
+        )
 
     logger.debug(
         "[search] vector_recall start is_ocr=%s project_id=%s",
@@ -356,9 +404,17 @@ def run_vector_stage(
 
     try:
         vector_scores, embedding_model, fallback_reason, stale_embedding_filtered = vector_service.search(
-            query=execution_context.search_query_plan.original_query,
-            normalized_query=execution_context.search_query_plan.normalized_query,
-            semantic_query_text=execution_context.search_query_plan.semantic_query_text,
+            query=(
+                vector_query_text
+                if uses_v2_contract
+                else execution_context.search_query_plan.original_query
+            ),
+            normalized_query=(
+                vector_query_text
+                if uses_v2_contract
+                else execution_context.search_query_plan.normalized_query
+            ),
+            semantic_query_text=vector_query_text,
             is_ocr_query=is_ocr_query,
             query_intent=execution_context.search_query_plan.intent,
             recommended_profile=execution_context.search_query_plan.recommended_profile,
@@ -385,6 +441,8 @@ def run_vector_stage(
             embedding_model=embedding_model,
             is_ocr=is_ocr_query,
             stale_embedding_filtered=stale_embedding_filtered,
+            vector_query_text=vector_query_text,
+            vector_query_source=vector_query_source,
             fallback=False,
             error="",
         )
@@ -412,6 +470,8 @@ def run_vector_stage(
             vector_candidates=0,
             raw_vector_top_k_per_field=raw_vector_top_k_per_field,
             final_vector_top_k=final_vector_top_k,
+            vector_query_text=vector_query_text,
+            vector_query_source=vector_query_source,
         )
         return VectorStageResult(
             vector_scores={},

@@ -126,6 +126,8 @@ class EffectiveSearchSettings:
     animal_search_min_display_evidence_level: str = "B"
     # Project-level concept taxonomy used by query understanding / concept recall.
     concept_taxonomy: List[Dict] = field(default_factory=list)
+    # V2 normally disables legacy ontology expansion; opt in only for rollback.
+    legacy_concept_recall_enabled: bool = False
     # Rule-pack selection for query understanding dictionaries/synonyms.
     query_understanding_base_pack: str = "lifestyle_default"
     query_understanding_extension_packs: List[str] = field(default_factory=list)

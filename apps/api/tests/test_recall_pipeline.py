@@ -26,6 +26,7 @@ from app.services.search.recall_pipeline import (  # noqa: E402
     run_people_stage,
     run_vector_stage,
 )
+from app.services.search.recall import recall_auxiliary_candidates  # noqa: E402
 from app.services.search.settings_resolver import SearchSettingsResolver  # noqa: E402
 from app.services.search.trace_writer import SearchDebugTraceWriter  # noqa: E402
 from app.services.search.types import SearchCandidate  # noqa: E402
@@ -267,6 +268,37 @@ class RecallPipelineStageTest(unittest.TestCase):
         self.assertEqual(result.constrained_photo_ids, set())
         self.assertEqual(result.people_results, [])
         self.assertEqual(trace[-1]["unresolved_people"], ["不存在的人"])
+
+    def test_v2_disables_legacy_concept_recall_but_keeps_people_visual(self) -> None:
+        plan = SearchQueryPlan(
+            original_query="动物",
+            normalized_query="动物",
+            planner_contract_version="2",
+            concept_terms=["动物"],
+        )
+        concept_service_cls = MagicMock()
+        people_visual_service_cls = MagicMock()
+        people_visual_service_cls.return_value.search.return_value = []
+
+        result = recall_auxiliary_candidates(
+            MagicMock(),
+            plan,
+            project_id=1,
+            settings=SearchSettingsResolver.defaults(),
+            folder_photo_subquery=None,
+            constrained_photo_ids=None,
+            concept_terms=["动物"],
+            concept_facets=[],
+            concept_entity_terms=[],
+            concept_recall_service_cls=concept_service_cls,
+            people_visual_recall_service_cls=people_visual_service_cls,
+        )
+
+        concept_service_cls.assert_not_called()
+        people_visual_service_cls.assert_called_once()
+        self.assertEqual(result.concept_results, [])
+        self.assertFalse(result.concept_debug["enabled"])
+        self.assertEqual(result.concept_debug["reason"], "disabled_for_query_plan_v2")
 
     def test_vector_stage_reports_fallback_on_embedding_error(self) -> None:
         trace: list[dict] = []

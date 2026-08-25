@@ -113,6 +113,7 @@ class SearchSettingsResolver:
             entity_object_caption_min_score=0.58,
             animal_search_min_display_evidence_level="B",
             concept_taxonomy=[],
+            legacy_concept_recall_enabled=False,
             query_understanding_base_pack=DEFAULT_BASE_PACK_ID,
             query_understanding_extension_packs=[],
             query_planner_enabled=True,
@@ -199,6 +200,9 @@ class SearchSettingsResolver:
                     _q.get("animal_search_min_display_evidence_level", "B")
                 ),
                 concept_taxonomy=_normalise_concept_taxonomy(_q.get("concept_taxonomy")),
+                legacy_concept_recall_enabled=bool(
+                    _q.get("legacy_concept_recall_enabled", False)
+                ),
                 query_understanding_base_pack=str(
                     _q.get("query_understanding_base_pack") or DEFAULT_BASE_PACK_ID
                 ).strip(),
@@ -267,6 +271,7 @@ class SearchSettingsResolver:
             enable_semantic_tag_boost=False,
             search_result_cache_ttl_seconds=DEFAULT_SEARCH_RESULT_CACHE_TTL_SECONDS,
             concept_taxonomy=[],
+            legacy_concept_recall_enabled=False,
             query_understanding_base_pack=DEFAULT_BASE_PACK_ID,
             query_understanding_extension_packs=[],
             query_planner_enabled=bool(query_planner_settings["enabled"]),
@@ -384,6 +389,7 @@ def _effective_search_sources(
         "entity_object_caption_min_score",
         "animal_search_min_display_evidence_level",
         "concept_taxonomy",
+        "legacy_concept_recall_enabled",
         "query_understanding_base_pack",
         "query_understanding_extension_packs",
     }

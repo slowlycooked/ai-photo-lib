@@ -47,13 +47,21 @@ def recall_auxiliary_candidates(
     concept_results: list[SearchCandidate] = []
     people_visual_results: list[SearchCandidate] = []
 
-    if project_id is not None:
+    uses_v2_contract = (
+        str(getattr(query_plan, "planner_contract_version", "1")) == "2"
+    )
+    concept_recall_enabled = (
+        not uses_v2_contract or settings.legacy_concept_recall_enabled
+    )
+
+    if project_id is not None and concept_recall_enabled:
         concept_results = concept_recall_service_cls(db, settings).search(
             query_plan,
             project_id=project_id,
             folder_photo_subquery=folder_photo_subquery,
             constrained_photo_ids=constrained_photo_ids,
         )
+    if project_id is not None:
         people_visual_results = people_visual_recall_service_cls(db, settings).search(
             query_plan,
             project_id=project_id,
@@ -62,8 +70,10 @@ def recall_auxiliary_candidates(
         )
 
     concept_debug = {
-        "enabled": True,
-        "reason": "connected",
+        "enabled": concept_recall_enabled,
+        "reason": (
+            "connected" if concept_recall_enabled else "disabled_for_query_plan_v2"
+        ),
         "concept_terms": concept_terms,
         "concept_facets": concept_facets,
         "entity_terms": concept_entity_terms,
@@ -73,6 +83,10 @@ def recall_auxiliary_candidates(
     trace_events = [
         {
             "stage": "concept_recall",
+            "enabled": concept_recall_enabled,
+            "reason": (
+                "connected" if concept_recall_enabled else "disabled_for_query_plan_v2"
+            ),
             "concept_terms": concept_terms,
             "concept_facets": concept_facets,
             "candidates": len(concept_results),
