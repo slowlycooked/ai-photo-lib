@@ -21,6 +21,7 @@ from ..schemas.photo_quarantine import (
     PhotoQuarantineItemResponse,
     PhotoQuarantineLabelRequest,
     PhotoQuarantineListResponse,
+    PhotoQuarantineReconciliationResponse,
     ProjectPhotoQuarantineSettingsResponse,
     ProjectPhotoQuarantineSettingsUpdate,
 )
@@ -139,6 +140,23 @@ def list_photo_quarantine_items(
         offset=offset,
     )
     return PhotoQuarantineListResponse(total=total, items=items)
+
+
+@router.post(
+    "/{project_id}/photo-quarantine/reconciliations",
+    response_model=PhotoQuarantineReconciliationResponse,
+)
+def reconcile_photo_quarantine_items(
+    project: Project = Depends(require_project),
+    db: Session = Depends(get_db),
+):
+    result = PhotoQuarantineService(db).reconcile_deleted(project_id=project.id)
+    return PhotoQuarantineReconciliationResponse(
+        checked=result.checked,
+        confirmed=result.confirmed,
+        remaining=result.remaining,
+        failed=result.failed,
+    )
 
 
 @router.post(

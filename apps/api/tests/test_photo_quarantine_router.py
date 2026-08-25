@@ -13,6 +13,7 @@ from app.routers import photo_quarantine as quarantine_router
 from app.services.photo_quarantine_service import (
     QuarantineBatchItemResult,
     QuarantineBatchResult,
+    QuarantineReconciliationResult,
 )
 
 
@@ -85,6 +86,15 @@ class _FakeQuarantineService:
         assert project_id == 1
         return []
 
+    def reconcile_deleted(self, *, project_id: int):
+        assert project_id == 1
+        return QuarantineReconciliationResult(
+            checked=3,
+            confirmed=2,
+            remaining=1,
+            failed=0,
+        )
+
 
 def _build_client(monkeypatch, *, forbidden: bool = False) -> TestClient:
     app = FastAPI()
@@ -154,6 +164,20 @@ def test_request_delete_endpoint_uses_explicit_approval_route(monkeypatch) -> No
 
     assert response.status_code == 409
     assert response.json() == {"detail": "already queued"}
+
+
+def test_reconciliation_endpoint_reports_automatic_confirmations(monkeypatch) -> None:
+    response = _build_client(monkeypatch).post(
+        "/api/projects/1/photo-quarantine/reconciliations"
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "checked": 3,
+        "confirmed": 2,
+        "remaining": 1,
+        "failed": 0,
+    }
 
 
 def test_batch_endpoint_rejects_duplicate_ids_before_service(monkeypatch) -> None:

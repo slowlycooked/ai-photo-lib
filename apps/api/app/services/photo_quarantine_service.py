@@ -60,6 +60,14 @@ class QuarantineBatchResult:
         return len(self.results) - self.succeeded
 
 
+@dataclass(frozen=True)
+class QuarantineReconciliationResult:
+    checked: int
+    confirmed: int
+    remaining: int
+    failed: int
+
+
 class PhotoQuarantineService:
     def __init__(self, db: Session, *, root: Optional[Path] = None) -> None:
         self._db = db
@@ -305,26 +313,68 @@ class PhotoQuarantineService:
         item, _photo, project = self._load_item_photo_project(project_id, item_id)
         if item.status == "deleted_confirmed":
             return item
-        if item.quarantine_path:
-            path = self._validated_quarantine_path(item.quarantine_path)
-        elif item.status == "delete_queued":
-            path = self._validated_original_path(
-                project, item.original_path, must_exist=False
-            )
-        else:
-            raise PhotoQuarantineConflict("Item has not been queued or quarantined")
-        if path.exists():
+        path, root = self._deletion_candidate_path(item, project)
+        _require_available_root(root)
+        if _path_exists(path):
             raise PhotoQuarantineConflict(
                 "Original or quarantined file still exists; this endpoint never deletes files"
             )
-        now = _now()
-        item.status = "deleted_confirmed"
-        item.deleted_confirmed_at = now
-        item.updated_at = now
-        item.last_error = None
+        self._mark_deleted_confirmed(item)
         self._db.commit()
         self._db.refresh(item)
         return item
+
+    def reconcile_deleted(self, *, project_id: int) -> QuarantineReconciliationResult:
+        project = self._db.query(Project).filter(Project.id == project_id).first()
+        if project is None:
+            raise PhotoQuarantineError("Project not found")
+        items = (
+            self._db.query(PhotoQuarantineItem)
+            .filter(
+                PhotoQuarantineItem.project_id == project_id,
+                PhotoQuarantineItem.status.in_(["delete_queued", "quarantined"]),
+            )
+            .all()
+        )
+        confirmed = 0
+        remaining = 0
+        failed = 0
+        available_roots: set[Path] = set()
+        unavailable_roots: set[Path] = set()
+        for item in items:
+            try:
+                path, root = self._deletion_candidate_path(item, project)
+                if root in unavailable_roots:
+                    failed += 1
+                    continue
+                if root not in available_roots:
+                    try:
+                        _require_available_root(root)
+                    except PhotoQuarantineError:
+                        unavailable_roots.add(root)
+                        raise
+                    available_roots.add(root)
+                if _path_exists(path):
+                    remaining += 1
+                    continue
+                self._mark_deleted_confirmed(item)
+                confirmed += 1
+            except (PhotoQuarantineError, OSError):
+                failed += 1
+                logger.warning(
+                    "photo_quarantine.reconcile_item_failed project_id=%d item_id=%d",
+                    project_id,
+                    item.id,
+                    exc_info=True,
+                )
+        if confirmed:
+            self._db.commit()
+        return QuarantineReconciliationResult(
+            checked=len(items),
+            confirmed=confirmed,
+            remaining=remaining,
+            failed=failed,
+        )
 
     def keep(
         self,
@@ -577,6 +627,29 @@ class PhotoQuarantineService:
             raise PhotoQuarantineError("Quarantine item references missing project data")
         return item, photo, project
 
+    def _deletion_candidate_path(
+        self, item: PhotoQuarantineItem, project: Project
+    ) -> tuple[Path, Path]:
+        if item.quarantine_path:
+            return self._validated_quarantine_path(item.quarantine_path), self._root
+        if item.status == "delete_queued":
+            root = Path(project.photo_library_path).expanduser().resolve()
+            return (
+                self._validated_original_path(
+                    project, item.original_path, must_exist=False
+                ),
+                root,
+            )
+        raise PhotoQuarantineConflict("Item has not been queued or quarantined")
+
+    @staticmethod
+    def _mark_deleted_confirmed(item: PhotoQuarantineItem) -> None:
+        now = _now()
+        item.status = "deleted_confirmed"
+        item.deleted_confirmed_at = now
+        item.updated_at = now
+        item.last_error = None
+
     def _reload_item(self, item_id: int) -> PhotoQuarantineItem:
         self._db.expire_all()
         item = self._db.query(PhotoQuarantineItem).filter(PhotoQuarantineItem.id == item_id).first()
@@ -667,6 +740,22 @@ def _ensure_within(path: Path, root: Path) -> Path:
     except ValueError as exc:
         raise PhotoQuarantineError(f"Path escapes managed root: {path}") from exc
     return path
+
+
+def _require_available_root(root: Path) -> None:
+    try:
+        if not root.is_dir():
+            raise PhotoQuarantineError("Managed photo root is unavailable")
+    except OSError as exc:
+        raise PhotoQuarantineError("Managed photo root is unavailable") from exc
+
+
+def _path_exists(path: Path) -> bool:
+    try:
+        path.stat()
+    except FileNotFoundError:
+        return False
+    return True
 
 
 def _sha256(path: Path) -> str:

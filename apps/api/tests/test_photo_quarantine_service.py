@@ -272,6 +272,50 @@ def test_confirm_deleted_waits_for_nas_worker(quarantine_fixture) -> None:
         assert confirmed.deleted_confirmed_at is not None
 
 
+def test_reconcile_deleted_confirms_only_files_removed_by_backend(
+    quarantine_fixture,
+) -> None:
+    engine, _library, trash, original, _digest = quarantine_fixture
+    with Session(engine) as db:
+        service = PhotoQuarantineService(db, root=trash)
+        service.move(project_id=1, item_id=100)
+
+        pending = service.reconcile_deleted(project_id=1)
+        assert pending.checked == 1
+        assert pending.confirmed == 0
+        assert pending.remaining == 1
+        assert pending.failed == 0
+
+        original.unlink()
+        reconciled = service.reconcile_deleted(project_id=1)
+        assert reconciled.checked == 1
+        assert reconciled.confirmed == 1
+        assert reconciled.remaining == 0
+        assert reconciled.failed == 0
+        item = db.query(PhotoQuarantineItem).filter(PhotoQuarantineItem.id == 100).one()
+        assert item.status == "deleted_confirmed"
+        assert item.deleted_confirmed_at is not None
+
+
+def test_reconcile_deleted_does_not_confirm_when_library_root_is_unavailable(
+    quarantine_fixture,
+) -> None:
+    engine, library, trash, original, _digest = quarantine_fixture
+    with Session(engine) as db:
+        service = PhotoQuarantineService(db, root=trash)
+        service.move(project_id=1, item_id=100)
+        original.unlink()
+        original.parent.rmdir()
+        library.rmdir()
+
+        result = service.reconcile_deleted(project_id=1)
+
+        assert result.confirmed == 0
+        assert result.failed == 1
+        item = db.query(PhotoQuarantineItem).filter(PhotoQuarantineItem.id == 100).one()
+        assert item.status == "delete_queued"
+
+
 def test_keep_records_human_decision_without_moving_file(quarantine_fixture) -> None:
     engine, _library, trash, original, _digest = quarantine_fixture
     with Session(engine) as db:

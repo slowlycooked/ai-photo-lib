@@ -107,6 +107,13 @@ class PhotoQuarantineBatchResponse(BaseModel):
     results: list[PhotoQuarantineBatchItemResponse]
 
 
+class PhotoQuarantineReconciliationResponse(BaseModel):
+    checked: int
+    confirmed: int
+    remaining: int
+    failed: int
+
+
 class PhotoQuarantineLabelRequest(BaseModel):
     label: Literal["KEEP", "TRASH"]
     note: Optional[str] = Field(default=None, max_length=2000)
