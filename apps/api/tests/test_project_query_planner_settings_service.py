@@ -25,6 +25,7 @@ from app.services.project_query_planner_settings_service import (  # noqa: E402
 
 def test_resolve_query_planner_settings_uses_table_row_first() -> None:
     row = SimpleNamespace(
+        ai_service_profile_id=None,
         enabled=True,
         provider="llama-server",
         endpoint_url="http://127.0.0.1:18084/v1/chat/completions",
@@ -57,6 +58,7 @@ def test_resolve_query_planner_settings_uses_table_row_first() -> None:
 
 def test_resolve_query_planner_settings_preserves_explicit_blank_runtime_fields() -> None:
     row = SimpleNamespace(
+        ai_service_profile_id=None,
         enabled=True,
         provider="llama-server",
         endpoint_url=None,
@@ -117,6 +119,9 @@ def test_resolve_query_planner_settings_defaults_from_env() -> None:
     assert resolved["enabled"] is True
     assert resolved["endpoint_url"] == "http://127.0.0.1:18084/v1"
     assert resolved["model_name"] == _default_query_planner_model_name()
+    assert resolved["top_p"] == 0.8
+    assert resolved["max_tokens"] == 512
+    assert resolved["planner_version"] == "llm_query_planner_v2"
 
 
 def test_get_project_query_planner_settings_rolls_back_failed_transaction() -> None:

@@ -183,7 +183,7 @@ class ProjectQueryPlannerSettings(Base):
     model_name: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     temperature: Mapped[float] = mapped_column(Float, server_default="0", nullable=False)
     top_p: Mapped[float] = mapped_column(Float, server_default="0.8", nullable=False)
-    max_tokens: Mapped[int] = mapped_column(Integer, server_default="700", nullable=False)
+    max_tokens: Mapped[int] = mapped_column(Integer, server_default="512", nullable=False)
     timeout_seconds: Mapped[int] = mapped_column(Integer, server_default="20", nullable=False)
     json_parse_strategy: Mapped[str] = mapped_column(
         Text,
@@ -192,7 +192,7 @@ class ProjectQueryPlannerSettings(Base):
     )
     planner_version: Mapped[str] = mapped_column(
         Text,
-        server_default="llm_query_planner_v1",
+        server_default="llm_query_planner_v2",
         nullable=False,
     )
     prompt_template: Mapped[Optional[str]] = mapped_column(Text, nullable=True)

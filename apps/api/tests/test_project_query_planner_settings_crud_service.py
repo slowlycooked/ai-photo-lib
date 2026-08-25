@@ -41,17 +41,18 @@ CREATE TABLE projects (
 CREATE TABLE project_query_planner_settings (
   id INTEGER PRIMARY KEY,
   project_id INTEGER NOT NULL UNIQUE,
+  ai_service_profile_id INTEGER,
   enabled BOOLEAN NOT NULL DEFAULT 0,
   provider TEXT NOT NULL DEFAULT 'llama-server',
   endpoint_url TEXT,
   api_key TEXT,
   model_name TEXT,
   temperature REAL NOT NULL DEFAULT 0,
-    top_p REAL NOT NULL DEFAULT 0.1,
-    max_tokens INTEGER NOT NULL DEFAULT 220,
+    top_p REAL NOT NULL DEFAULT 0.8,
+    max_tokens INTEGER NOT NULL DEFAULT 512,
     timeout_seconds INTEGER NOT NULL DEFAULT 3,
   json_parse_strategy TEXT NOT NULL DEFAULT 'strict_json_then_extract',
-  planner_version TEXT NOT NULL DEFAULT 'llm_query_planner_v1',
+  planner_version TEXT NOT NULL DEFAULT 'llm_query_planner_v2',
   prompt_template TEXT,
   system_prompt TEXT,
   fallback_mode TEXT NOT NULL DEFAULT 'rule_fallback',
@@ -92,7 +93,8 @@ def test_get_or_create_project_query_planner_settings_defaults() -> None:
         assert row.provider == "llama-server"
         assert row.endpoint_url == "http://127.0.0.1:18084/v1"
         assert row.model_name == "qwen3-4b-query-planner"
-        assert row.max_tokens == 220
+        assert row.max_tokens == 512
+        assert row.planner_version == "llm_query_planner_v2"
     finally:
         db.close()
 
@@ -125,6 +127,7 @@ def test_update_and_reset_project_query_planner_settings() -> None:
         assert reset.enabled is True
         assert reset.model_name == "qwen3-4b-query-planner"
         assert reset.endpoint_url == "http://127.0.0.1:18084/v1"
-        assert reset.max_tokens == 220
+        assert reset.max_tokens == 512
+        assert reset.planner_version == "llm_query_planner_v2"
     finally:
         db.close()

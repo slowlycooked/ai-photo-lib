@@ -25,6 +25,13 @@ from app.services.search.settings_resolver import SearchSettingsResolver  # noqa
 from app.services.search.query_planner.llm_client import QueryPlannerClientError  # noqa: E402
 
 
+def _v1_defaults():
+    return replace(
+        SearchSettingsResolver.defaults(),
+        query_planner_planner_version="llm_query_planner_v1",
+    )
+
+
 def test_query_plan_v2_animals() -> None:
     plan = QueryPlanV2.model_validate(
         {
@@ -186,7 +193,7 @@ def test_query_plan_v2_adapter_keeps_metadata_only_query_out_of_vector() -> None
 
 def test_qwen_v2_planner_uses_structured_contract_without_animal_guardrail() -> None:
     settings = replace(
-        SearchSettingsResolver.defaults(),
+        _v1_defaults(),
         query_planner_enabled=True,
         query_planner_endpoint_url="http://127.0.0.1:18084/v1/chat/completions",
         query_planner_model_name="qwen3-8b-query-planner",
@@ -231,7 +238,7 @@ def test_qwen_v2_planner_uses_structured_contract_without_animal_guardrail() -> 
 
 def test_qwen_v2_low_confidence_uses_raw_semantic_without_rule_merge() -> None:
     settings = replace(
-        SearchSettingsResolver.defaults(),
+        _v1_defaults(),
         query_planner_enabled=True,
         query_planner_endpoint_url="http://127.0.0.1:18084/v1/chat/completions",
         query_planner_model_name="qwen3-8b-query-planner",
@@ -265,7 +272,7 @@ def test_qwen_v2_low_confidence_uses_raw_semantic_without_rule_merge() -> None:
 
 def test_qwen_v2_failure_uses_deterministic_metadata_and_raw_semantic() -> None:
     settings = replace(
-        SearchSettingsResolver.defaults(),
+        _v1_defaults(),
         query_planner_enabled=True,
         query_planner_endpoint_url="http://127.0.0.1:18084/v1/chat/completions",
         query_planner_model_name="qwen3-8b-query-planner",
@@ -293,7 +300,7 @@ def test_qwen_v2_failure_uses_deterministic_metadata_and_raw_semantic() -> None:
 
 
 def test_llm_query_planner_disabled_uses_rule_fallback() -> None:
-    settings = replace(SearchSettingsResolver.defaults(), query_planner_enabled=False)
+    settings = replace(_v1_defaults(), query_planner_enabled=False)
 
     plan = resolve_query_plan_llm_first(
         "动物",
@@ -309,7 +316,7 @@ def test_llm_query_planner_disabled_uses_rule_fallback() -> None:
 
 def test_llm_query_planner_missing_endpoint_or_model_fallback() -> None:
     settings = replace(
-        SearchSettingsResolver.defaults(),
+        _v1_defaults(),
         query_planner_enabled=True,
         query_planner_endpoint_url="",
         query_planner_model_name="",
@@ -330,7 +337,7 @@ def test_llm_query_planner_missing_endpoint_or_model_fallback() -> None:
 
 def test_llm_query_planner_maps_output_and_merges_deterministic_metadata() -> None:
     settings = replace(
-        SearchSettingsResolver.defaults(),
+        _v1_defaults(),
         query_planner_enabled=True,
         query_planner_endpoint_url="http://127.0.0.1:18084/v1/chat/completions",
         query_planner_model_name="qwen3-4b-query-planner",
@@ -415,7 +422,7 @@ def test_llm_query_planner_maps_output_and_merges_deterministic_metadata() -> No
 
 def test_llm_query_planner_accepts_empty_list_for_scalar_filters() -> None:
     settings = replace(
-        SearchSettingsResolver.defaults(),
+        _v1_defaults(),
         query_planner_enabled=True,
         query_planner_endpoint_url="http://127.0.0.1:18084/v1/chat/completions",
         query_planner_model_name="qwen3-4b-query-planner",
@@ -500,7 +507,7 @@ def test_llm_query_planner_accepts_empty_list_for_scalar_filters() -> None:
 
 def test_llm_query_planner_uses_configured_timeout_without_hard_cap() -> None:
     settings = replace(
-        SearchSettingsResolver.defaults(),
+        _v1_defaults(),
         query_planner_enabled=True,
         query_planner_endpoint_url="http://127.0.0.1:18084/v1/chat/completions",
         query_planner_model_name="qwen3-4b-query-planner",
@@ -582,7 +589,7 @@ def test_llm_query_planner_uses_configured_timeout_without_hard_cap() -> None:
 
 def test_llm_query_planner_normalizes_metadata_month_range_string() -> None:
     settings = replace(
-        SearchSettingsResolver.defaults(),
+        _v1_defaults(),
         query_planner_enabled=True,
         query_planner_endpoint_url="http://127.0.0.1:18084/v1/chat/completions",
         query_planner_model_name="qwen3-4b-query-planner",
@@ -663,7 +670,7 @@ def test_llm_query_planner_normalizes_metadata_month_range_string() -> None:
 
 def test_llm_query_planner_uses_rule_fast_path_for_clear_short_query() -> None:
     settings = replace(
-        SearchSettingsResolver.defaults(),
+        _v1_defaults(),
         query_planner_enabled=True,
         query_planner_endpoint_url="http://127.0.0.1:18084/v1/chat/completions",
         query_planner_model_name="qwen3-4b-query-planner",
@@ -687,7 +694,7 @@ def test_llm_query_planner_uses_rule_fast_path_for_clear_short_query() -> None:
 
 def test_llm_query_planner_returns_cached_plan_for_complex_query() -> None:
     settings = replace(
-        SearchSettingsResolver.defaults(),
+        _v1_defaults(),
         query_planner_enabled=True,
         query_planner_endpoint_url="http://127.0.0.1:18084/v1/chat/completions",
         query_planner_model_name="qwen3-4b-query-planner",
@@ -744,7 +751,7 @@ def test_llm_query_planner_returns_cached_plan_for_complex_query() -> None:
 
 def test_llm_query_planner_cache_key_includes_runtime_context() -> None:
     settings = replace(
-        SearchSettingsResolver.defaults(),
+        _v1_defaults(),
         query_planner_enabled=True,
         query_planner_endpoint_url="http://127.0.0.1:18084/v1/chat/completions",
         query_planner_model_name="qwen3-4b-query-planner",
@@ -795,7 +802,7 @@ def test_compound_metadata_semantic_query_must_call_llm() -> None:
     Acceptance criterion: used_fallback=false, parsed=true, latency_ms>0.
     """
     settings = replace(
-        SearchSettingsResolver.defaults(),
+        _v1_defaults(),
         query_planner_enabled=True,
         query_planner_endpoint_url="http://127.0.0.1:18084/v1/chat/completions",
         query_planner_model_name="qwen3-4b-query-planner",
@@ -885,7 +892,7 @@ def test_compound_metadata_semantic_query_must_call_llm() -> None:
 def test_pure_metadata_query_calls_llm_when_planner_available() -> None:
     """'去年' is pure metadata, but planner-primary mode should still call LLM."""
     settings = replace(
-        SearchSettingsResolver.defaults(),
+        _v1_defaults(),
         query_planner_enabled=True,
         query_planner_endpoint_url="http://127.0.0.1:18084/v1/chat/completions",
         query_planner_model_name="qwen3-4b-query-planner",
@@ -953,7 +960,7 @@ def test_pure_metadata_query_calls_llm_when_planner_available() -> None:
 def test_high_confidence_llm_plan_not_overridden_by_rule_intent() -> None:
     """Rule fallback must not rewrite high-confidence LLM intent or matched keys."""
     settings = replace(
-        SearchSettingsResolver.defaults(),
+        _v1_defaults(),
         query_planner_enabled=True,
         query_planner_endpoint_url="http://127.0.0.1:18084/v1/chat/completions",
         query_planner_model_name="qwen3-4b-query-planner",
@@ -1032,7 +1039,7 @@ def test_high_confidence_llm_plan_not_overridden_by_rule_intent() -> None:
 
 def test_planner_parse_failure_recovers_location_terms_from_raw_output() -> None:
     settings = replace(
-        SearchSettingsResolver.defaults(),
+        _v1_defaults(),
         query_planner_enabled=True,
         query_planner_endpoint_url="http://127.0.0.1:18084/v1/chat/completions",
         query_planner_model_name="qwen3-4b-query-planner",
@@ -1076,7 +1083,7 @@ def test_mapper_llm_exact_terms_not_polluted_by_fallback_sentence() -> None:
     exact_terms — only the LLM-decomposed anchors should be present.
     """
     settings = replace(
-        SearchSettingsResolver.defaults(),
+        _v1_defaults(),
         query_planner_enabled=True,
         query_planner_endpoint_url="http://127.0.0.1:18084/v1/chat/completions",
         query_planner_model_name="qwen3-4b-query-planner",
@@ -1139,7 +1146,7 @@ def test_mapper_llm_exact_terms_not_polluted_by_fallback_sentence() -> None:
 
 def test_llm_query_planner_maps_dynamic_filter_and_sort_controls() -> None:
     settings = replace(
-        SearchSettingsResolver.defaults(),
+        _v1_defaults(),
         query_planner_enabled=True,
         query_planner_endpoint_url="http://127.0.0.1:18084/v1/chat/completions",
         query_planner_model_name="qwen3.8:27b",

@@ -243,8 +243,8 @@ export default function ProjectQueryPlannerSettingsPanel({ projectId }: Props) {
             min="1"
             max="4096"
             className="border rounded px-2 py-1"
-            value={effective.max_tokens ?? 700}
-            onChange={(e) => setField("max_tokens", parseInt(e.target.value, 10) || 700)}
+            value={effective.max_tokens ?? 512}
+            onChange={(e) => setField("max_tokens", parseInt(e.target.value, 10) || 512)}
           />
         </label>
         <label className="flex flex-col gap-1 text-xs">
@@ -270,7 +270,7 @@ export default function ProjectQueryPlannerSettingsPanel({ projectId }: Props) {
           <span className="text-gray-600">Planner Version</span>
           <input
             className="border rounded px-2 py-1"
-            value={effective.planner_version ?? "llm_query_planner_v1"}
+            value={effective.planner_version ?? "llm_query_planner_v2"}
             onChange={(e) => setField("planner_version", e.target.value)}
           />
         </label>

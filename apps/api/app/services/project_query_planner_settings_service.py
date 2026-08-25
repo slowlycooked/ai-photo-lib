@@ -98,11 +98,11 @@ def get_or_create_project_query_planner_settings(
         api_key=global_settings.openai_api_key,
         model_name=_default_query_planner_model_name(),
         temperature=0.0,
-        top_p=0.1,
-        max_tokens=220,
+        top_p=0.8,
+        max_tokens=512,
         timeout_seconds=20,
         json_parse_strategy="strict_json_then_extract",
-        planner_version="llm_query_planner_v1",
+        planner_version="llm_query_planner_v2",
         prompt_template="",
         system_prompt="",
         fallback_mode="rule_fallback",
@@ -187,11 +187,11 @@ def resolve_query_planner_settings(
         "api_key": "",
         "model_name": _default_query_planner_model_name(),
         "temperature": 0.0,
-        "top_p": 0.1,
-        "max_tokens": 220,
+        "top_p": 0.8,
+        "max_tokens": 512,
         "timeout_seconds": 20,
         "json_parse_strategy": "strict_json_then_extract",
-        "planner_version": "llm_query_planner_v1",
+        "planner_version": "llm_query_planner_v2",
         "prompt_template": "",
         "system_prompt": "",
         "fallback_mode": "rule_fallback",
@@ -203,11 +203,12 @@ def resolve_query_planner_settings(
         api_key = _as_text(row.api_key, defaults["api_key"])
         model_name = _as_text(row.model_name)
         provider = _as_text(row.provider, defaults["provider"])
-        if row.ai_service_profile_id is not None:
+        ai_service_profile_id = getattr(row, "ai_service_profile_id", None)
+        if ai_service_profile_id is not None:
             profile = (
                 db.query(AIServiceProfile)
                 .filter(
-                    AIServiceProfile.id == row.ai_service_profile_id,
+                    AIServiceProfile.id == ai_service_profile_id,
                     AIServiceProfile.enabled.is_(True),
                 )
                 .first()
@@ -216,7 +217,7 @@ def resolve_query_planner_settings(
                 logger.warning(
                     "Query planner AI service profile unavailable. project_id=%s profile_id=%s",
                     project_id,
-                    row.ai_service_profile_id,
+                    ai_service_profile_id,
                 )
             elif profile.capability != "query_planner":
                 logger.warning(

@@ -138,11 +138,11 @@ class EffectiveSearchSettings:
     query_planner_api_key: str = ""
     query_planner_model_name: str = global_settings.query_planner_alias
     query_planner_temperature: float = 0.0
-    query_planner_top_p: float = 0.1
-    query_planner_max_tokens: int = 220
+    query_planner_top_p: float = 0.8
+    query_planner_max_tokens: int = 512
     query_planner_timeout_seconds: int = 20
     query_planner_json_parse_strategy: str = "strict_json_then_extract"
-    query_planner_planner_version: str = "llm_query_planner_v1"
+    query_planner_planner_version: str = "llm_query_planner_v2"
     query_planner_prompt_template: str = ""
     query_planner_system_prompt: str = ""
     query_planner_fallback_mode: str = "rule_fallback"
