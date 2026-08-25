@@ -1,6 +1,7 @@
 """Map validated LLM planner output to SearchQueryPlan."""
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from ...query_understanding_service import SearchQueryPlan
@@ -44,6 +45,26 @@ _ANIMAL_GUARDRAIL_TERMS = {
     "animals",
 }
 
+_NON_ENTITY_PEOPLE_TERMS = {
+    "班级",
+    "班集体",
+    "全班",
+    "同学",
+    "同学们",
+    "多人",
+    "人群",
+    "集体",
+    "团体",
+    "朋友们",
+}
+
+_PEOPLE_COUNT_CONTROL_RE = re.compile(
+    r"人数\s*(?:大于|超过|不少于|至少|大于等于|小于|少于|不超过|至多|小于等于|等于|为|是)\s*\d+"
+    r"|(?:至少|不少于|超过|少于|不超过|至多|正好|恰好|大于|小于|大于等于|小于等于)\s*\d+\s*人(?:的)?"
+    r"|\d+\s*人(?:以上|以下)(?:的)?"
+)
+_PHOTO_TERM_SUFFIX_RE = re.compile(r"(?:的)?(?:照片|图片|相片)$")
+
 
 def _dedupe_terms(terms: list[str]) -> list[str]:
     seen: set[str] = set()
@@ -66,6 +87,27 @@ def _fallback_exact_terms(query: str) -> list[str]:
         return split_terms
     text = query.strip()
     return [text] if text else []
+
+
+def _strip_people_count_controls(
+    terms: list[str],
+    filter_clauses: list[dict],
+) -> list[str]:
+    if not any(clause.get("field") == "people_count" for clause in filter_clauses):
+        return _dedupe_terms(terms)
+
+    residual_terms: list[str] = []
+    for term in terms:
+        residual = _PEOPLE_COUNT_CONTROL_RE.sub(" ", str(term or ""))
+        residual = _PHOTO_TERM_SUFFIX_RE.sub("", residual.strip())
+        residual = residual.strip(" 的,，;；")
+        if residual:
+            residual_terms.append(residual)
+    return _dedupe_terms(residual_terms)
+
+
+def _is_non_entity_people_term(value: str) -> bool:
+    return str(value or "").strip().lower() in _NON_ENTITY_PEOPLE_TERMS
 
 
 def normalize_intent(raw_intent: Any, fallback_intent: str) -> str:
@@ -372,11 +414,28 @@ def planner_v2_output_to_query_plan(
     meaning, intent and evidence policy are derived from V2 without consulting
     the legacy rule planner.
     """
-    lexical_required = _dedupe_terms(output.lexical.required)
-    lexical_preferred = _dedupe_terms(output.lexical.preferred)
+    filter_clauses = _merge_control_dicts(
+        [item.model_dump() for item in output.filter_clauses],
+        deterministic_plan.filter_clauses,
+    )
+    sort_specs = _merge_control_dicts(
+        [item.model_dump() for item in output.ranking.sort],
+        deterministic_plan.sort,
+    )
+    lexical_required = _strip_people_count_controls(
+        output.lexical.required,
+        filter_clauses,
+    )
+    lexical_preferred = _strip_people_count_controls(
+        output.lexical.preferred,
+        filter_clauses,
+    )
     lexical_excluded = _dedupe_terms(output.lexical.excluded)
     semantic_concepts = _dedupe_terms(output.semantic.concepts)
-    semantic_queries = _dedupe_terms(output.semantic.queries)
+    semantic_queries = _strip_people_count_controls(
+        output.semantic.queries,
+        filter_clauses,
+    )
     visual_objects = _dedupe_terms(output.visual.objects)
     visual_scenes = _dedupe_terms(output.visual.scenes)
     visual_activities = _dedupe_terms(output.visual.activities)
@@ -389,6 +448,24 @@ def planner_v2_output_to_query_plan(
     deterministic_metadata_only = bool(
         deterministic_metadata.get("metadata_only")
     )
+    entity_people = [
+        item
+        for item in output.filters.people
+        if not _is_non_entity_people_term(item.name)
+    ]
+    generic_people_terms = _dedupe_terms(
+        [
+            item.name
+            for item in output.filters.people
+            if _is_non_entity_people_term(item.name)
+        ]
+    )
+    unresolved_entities = output.unresolved.model_dump()
+    unresolved_entities["people"] = [
+        name
+        for name in unresolved_entities.get("people", [])
+        if not _is_non_entity_people_term(name)
+    ]
     low_confidence = float(output.confidence or 0.0) < 0.6
     if deterministic_metadata_only:
         lexical_required = []
@@ -403,16 +480,32 @@ def planner_v2_output_to_query_plan(
         visual_terms = []
     elif low_confidence:
         lexical_required = []
-        lexical_preferred = _fallback_exact_terms(query)
+        lexical_preferred = _strip_people_count_controls(
+            _fallback_exact_terms(query),
+            filter_clauses,
+        )
         semantic_concepts = []
-        semantic_queries = _fallback_exact_terms(query)
+        semantic_queries = _strip_people_count_controls(
+            _fallback_exact_terms(query),
+            filter_clauses,
+        )
         visual_objects = []
         visual_scenes = []
         visual_activities = []
         visual_attributes = []
         visual_terms = []
+    else:
+        semantic_concepts = _merge_list_terms(
+            semantic_concepts,
+            generic_people_terms,
+        )
+        semantic_queries = _merge_list_terms(
+            semantic_queries,
+            generic_people_terms,
+        )
 
     planner_filters = output.filters.model_dump()
+    planner_filters["people"] = [item.model_dump() for item in entity_people]
     required_time_ranges = [item for item in output.filters.time_ranges]
     deterministic_date_from = deterministic_metadata.get("date_from")
     deterministic_date_to = deterministic_metadata.get("date_to")
@@ -458,10 +551,11 @@ def planner_v2_output_to_query_plan(
         required_time_ranges
         or required_locations
         or required_cameras
-        or output.filters.people
+        or entity_people
         or output.filters.has_gps is not None
         or output.filters.media_types
         or output.filters.albums
+        or filter_clauses
     )
     metadata_seed["metadata_only"] = bool(
         has_factual_constraints and not has_semantic_residual
@@ -531,10 +625,12 @@ def planner_v2_output_to_query_plan(
             ),
             "semantic_queries": semantic_queries,
             "filters": planner_filters,
+            "filter_clauses": filter_clauses,
+            "sort": sort_specs,
             "lexical": effective_lexical_plan,
             "semantic": effective_semantic_plan,
             "visual": effective_visual_plan,
-            "unresolved": output.unresolved.model_dump(),
+            "unresolved": unresolved_entities,
         }
     )
 
@@ -553,8 +649,8 @@ def planner_v2_output_to_query_plan(
         intent=("ocr_text_search" if output.intent == "ocr_search" else "semantic_photo_search"),
         search_mode="hybrid",
         filters={},
-        filter_clauses=[],
-        sort=[item.model_dump() for item in output.ranking.sort],
+        filter_clauses=filter_clauses,
+        sort=sort_specs,
         recommended_profile=(
             "ocr_text" if output.intent == "ocr_search" else "default_semantic"
         ),
@@ -570,5 +666,5 @@ def planner_v2_output_to_query_plan(
         lexical_plan=effective_lexical_plan,
         semantic_plan=effective_semantic_plan,
         visual_plan=effective_visual_plan,
-        unresolved_entities=output.unresolved.model_dump(),
+        unresolved_entities=unresolved_entities,
     )

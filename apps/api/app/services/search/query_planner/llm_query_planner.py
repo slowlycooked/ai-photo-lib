@@ -51,6 +51,7 @@ _DEFAULT_V2_SYSTEM_PROMPT = (
     "把用户自然语言转换成 QueryPlan V2 JSON。"
     "时间、人物、明确地点、相机和 GPS 是事实约束；"
     "物体、场景、活动和视觉属性属于视觉语义；抽象描述进入 semantic。"
+    "用户未提及时间或 GPS 时，不得根据 current_date 或常识补充时间、GPS 条件。"
     "不要枚举概念的子类型，不要生成 SQL、照片 ID 或数据库实体 ID。"
     "相对日期必须根据运行时 current_date 转成绝对的半开日期区间。"
     "只输出符合 QueryPlan V2 schema 的 JSON，不输出解释或 Markdown。"
@@ -139,13 +140,15 @@ project_id: {{project_id}}
 
 约束：
 1. filters 只放事实条件：time_ranges、locations、people、camera、has_gps、media_types、albums。
-2. lexical 只表达 required、preferred、excluded，不输出检索权重。
-3. semantic 只放 concepts 和适合向量召回的 queries；不要重复时间、人物、地点、相机等事实词。
-4. visual 只放 objects、scenes、activities、attributes。
-5. 顶层 intent 只允许 photo_search 或 ocr_search。
-6. 不确定的人物或地点名称放入 unresolved；不要猜 entity ID。
-7. 纯 metadata 查询必须保持 semantic.queries 为空。
-8. 不要把抽象概念展开成猫、狗、鸟等子类词表。
+2. 人数、ISO 等可比较事实条件放入 filter_clauses，格式为 {field, operator, value}；例如“至少10人”输出 {"field":"people_count","operator":"gte","value":10}。
+3. filters.people 只允许可被人物库解析的具体人名、亲属称呼或人物别名；“班级、同学、多人、人群、集体”等群体概念属于 semantic/visual，不能放入 filters.people 或 unresolved.people。
+4. lexical 只表达 required、preferred、excluded，不输出检索权重。
+5. semantic 只放 concepts 和适合向量召回的 queries；不要重复时间、人物、地点、相机、人数等事实词。
+6. visual 只放 objects、scenes、activities、attributes。
+7. 顶层 intent 只允许 photo_search 或 ocr_search。
+8. 不确定的具体人物或地点名称放入 unresolved；不要猜 entity ID。
+9. 纯事实条件查询必须保持 semantic.queries 为空。
+10. 不要把抽象概念展开成猫、狗、鸟等子类词表。
 """
 
 _FILTER_SCALAR_FIELDS = {
@@ -217,6 +220,60 @@ def _extract_json_object(raw_text: str) -> dict:
                 raise ValueError("Extracted planner JSON is not an object")
 
     raise ValueError("Unable to extract complete planner JSON object")
+
+
+def _normalize_v2_planner_output(
+    raw_json: dict,
+    *,
+    deterministic_plan: SearchQueryPlan,
+    planner_debug: dict,
+) -> dict:
+    """Remove unsupported factual constraints before strict V2 validation.
+
+    The LLM may produce schema-shaped facts that were never present in the
+    query (for example, today's date or has_gps=true). Deterministic parsing
+    is the authority for whether those factual dimensions were requested.
+    """
+    normalized = copy.deepcopy(raw_json)
+    filters = normalized.get("filters")
+    if not isinstance(filters, dict):
+        return normalized
+
+    metadata_filters = deterministic_plan.metadata_filters or {}
+    has_temporal_constraint = any(
+        metadata_filters.get(key) not in (None, "", [], {})
+        for key in ("year", "month", "date_from", "date_to", "season")
+    )
+
+    raw_time_ranges = filters.get("time_ranges")
+    if isinstance(raw_time_ranges, list):
+        valid_time_ranges: list[dict] = []
+        for item in raw_time_ranges:
+            if not has_temporal_constraint or not isinstance(item, dict):
+                continue
+            try:
+                start = date.fromisoformat(str(item.get("start") or ""))
+                end = date.fromisoformat(str(item.get("end") or ""))
+            except ValueError:
+                continue
+            if start < end:
+                valid_time_ranges.append(item)
+        dropped_count = len(raw_time_ranges) - len(valid_time_ranges)
+        if dropped_count:
+            planner_debug["v2_dropped_time_ranges"] = (
+                int(planner_debug.get("v2_dropped_time_ranges", 0)) + dropped_count
+            )
+        filters["time_ranges"] = valid_time_ranges
+
+    deterministic_has_gps = metadata_filters.get("has_gps")
+    if filters.get("has_gps") is not None and deterministic_has_gps is None:
+        filters["has_gps"] = None
+        planner_debug["v2_dropped_has_gps"] = True
+    elif deterministic_has_gps is not None:
+        filters["has_gps"] = bool(deterministic_has_gps)
+
+    normalized["filters"] = filters
+    return normalized
 
 
 def _render_prompt(
@@ -519,6 +576,12 @@ def resolve_query_plan_llm_first(
             planner_debug=planner_debug,
         )
 
+    def apply_fallback_debug(plan: SearchQueryPlan) -> SearchQueryPlan:
+        merged_debug = dict(plan.planner_debug or {})
+        merged_debug.update(planner_debug)
+        plan.planner_debug = merged_debug
+        return plan
+
     if not settings.query_planner_enabled:
         planner_debug["used_fallback"] = True
         planner_debug["fallback_reason"] = "query_planner_disabled"
@@ -550,8 +613,7 @@ def resolve_query_plan_llm_first(
             planner_debug["fallback_reason"] = f"rule_fast_path:{fast_path_reason}"
             planner_debug["fast_path"] = True
             planner_debug["planner_route"] = "rule_fast_path"
-            fallback_plan.planner_debug = dict(planner_debug)
-            return fallback_plan
+            return apply_fallback_debug(fallback_plan)
 
         cache_key = _build_cache_key(
             query=query,
@@ -585,8 +647,7 @@ def resolve_query_plan_llm_first(
         planner_debug["used_fallback"] = True
         planner_debug["fallback_reason"] = "query_planner_missing_endpoint_or_model"
         planner_debug["planner_route"] = "rule_only"
-        fallback_plan.planner_debug = dict(planner_debug)
-        return fallback_plan
+        return apply_fallback_debug(fallback_plan)
 
     user_prompt = _render_prompt(
         user_prompt_template,
@@ -623,6 +684,11 @@ def resolve_query_plan_llm_first(
         try:
             raw_json = _extract_json_object(raw_text)
             if uses_v2_contract:
+                raw_json = _normalize_v2_planner_output(
+                    raw_json,
+                    deterministic_plan=fallback_plan,
+                    planner_debug=planner_debug,
+                )
                 parsed = QueryPlanV2.model_validate(raw_json)
             else:
                 raw_json = _normalize_empty_list_scalars(raw_json)
@@ -636,6 +702,11 @@ def resolve_query_plan_llm_first(
             )
             raw_json = _extract_json_object(repaired_text)
             if uses_v2_contract:
+                raw_json = _normalize_v2_planner_output(
+                    raw_json,
+                    deterministic_plan=fallback_plan,
+                    planner_debug=planner_debug,
+                )
                 parsed = QueryPlanV2.model_validate(raw_json)
             else:
                 raw_json = _normalize_empty_list_scalars(raw_json)
@@ -722,7 +793,7 @@ def resolve_query_plan_llm_first(
                 planner_debug["recovered_location_terms"] = merged_terms
                 planner_debug["recovered_from_raw_output"] = True
 
-        fallback_plan.planner_debug = dict(planner_debug)
+        apply_fallback_debug(fallback_plan)
         logger.warning(
             "LLM query planner failed; fallback to rule planner. project_id=%s error=%s",
             project_id,

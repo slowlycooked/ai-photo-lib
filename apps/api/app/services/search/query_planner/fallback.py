@@ -48,9 +48,29 @@ def build_fallback_plan_v2(
     # The legacy normalized_query may already contain taxonomy/synonym
     # expansion. V2 fallback deliberately keeps only raw normalization.
     normalized_query = str(query or "").strip()
-    metadata_only = bool(metadata_filters.get("metadata_only"))
-    semantic_query_text = "" if metadata_only else normalized_query
-    preferred_terms = [normalized_query] if normalized_query else []
+    filter_clauses = list(deterministic.filter_clauses or [])
+    sort_specs = list(deterministic.sort or [])
+    has_dynamic_controls = bool(filter_clauses or sort_specs)
+    semantic_residual = (
+        deterministic.semantic_query_text
+        if has_dynamic_controls
+        else normalized_query
+    )
+    metadata_only = bool(
+        metadata_filters.get("metadata_only")
+        or (has_dynamic_controls and not semantic_residual)
+    )
+    metadata_filters["metadata_only"] = metadata_only
+    semantic_query_text = (
+        ""
+        if metadata_only
+        else semantic_residual
+    )
+    preferred_terms = (
+        list(deterministic.exact_terms or [])
+        if has_dynamic_controls
+        else ([normalized_query] if normalized_query else [])
+    )
     debug = dict(planner_debug)
     debug.update(
         {
@@ -59,7 +79,7 @@ def build_fallback_plan_v2(
                 "metadata_only" if metadata_only else "raw_query_fallback"
             ),
             "semantic_queries": (
-                [] if metadata_only or not normalized_query else [normalized_query]
+                [] if metadata_only or not semantic_query_text else [semantic_query_text]
             ),
         }
     )
@@ -75,6 +95,8 @@ def build_fallback_plan_v2(
         negative_terms=[],
         intent="semantic_photo_search",
         search_mode="hybrid",
+        filter_clauses=filter_clauses,
+        sort=sort_specs,
         query_constraints={
             "requires_visual_evidence": not metadata_only,
             "allow_weak_only_match": False,

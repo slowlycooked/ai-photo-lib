@@ -62,7 +62,14 @@ _NOISE_PREFIXES = re.compile(
 
 _DYNAMIC_FILTER_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"人数\s*(?:大于|超过)\s*(\d+)|超过\s*(\d+)\s*人"), "gt"),
-    (re.compile(r"人数\s*(?:不少于|至少|大于等于)\s*(\d+)|(\d+)\s*人以上"), "gte"),
+    (
+        re.compile(
+            r"人数\s*(?:不少于|至少|大于等于)\s*(\d+)"
+            r"|(?:至少|不少于)\s*(\d+)\s*人(?:的)?"
+            r"|(\d+)\s*人以上(?:的)?"
+        ),
+        "gte",
+    ),
     (re.compile(r"人数\s*(?:小于|少于)\s*(\d+)|少于\s*(\d+)\s*人"), "lt"),
     (re.compile(r"人数\s*(?:不超过|至多|小于等于)\s*(\d+)|(\d+)\s*人以下"), "lte"),
     (re.compile(r"人数\s*(?:等于|为|是)\s*(\d+)|(?:正好|恰好)\s*(\d+)\s*人"), "eq"),

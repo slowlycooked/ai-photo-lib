@@ -159,6 +159,58 @@ class PostFusionPipelineTest(unittest.TestCase):
         self.assertEqual([c.photo_id for c in result.candidates], [2])
         self.assertTrue(any(c.filter_reason == "query_constraints:no_vector_only_weak_match" for c in result.filtered_out))
 
+    def test_query_constraints_allow_strict_vector_only_match_when_enabled(self) -> None:
+        settings = replace(
+            SearchSettingsResolver.defaults(),
+            enable_evidence_filter=True,
+            min_display_evidence_level="C",
+            enable_semantic_tag_boost=False,
+            vector_strict_score=0.4,
+        )
+        plan = SearchQueryPlan(
+            original_query="班级照片",
+            normalized_query="班级照片",
+            exact_terms=[],
+            intent="semantic_photo_search",
+            planner_contract_version="2",
+            core_facets=[],
+            query_constraints={
+                "requires_visual_evidence": True,
+                "allow_weak_only_match": False,
+                "allow_vector_only_match": True,
+                "min_evidence_level": "C",
+                "query_core_facets": [],
+            },
+        )
+        candidates = [
+            SearchCandidate(
+                photo_id=1,
+                final_score=0.5,
+                rrf_score=0.5,
+                vector_score=0.5,
+                keyword_score=0.0,
+            ),
+            SearchCandidate(
+                photo_id=2,
+                final_score=0.3,
+                rrf_score=0.3,
+                vector_score=0.3,
+                keyword_score=0.0,
+            ),
+        ]
+
+        result = apply_post_fusion_pipeline(
+            db=MagicMock(),
+            candidates=candidates,
+            query_plan=plan,
+            settings=settings,
+            project_id=1,
+        )
+
+        self.assertEqual([c.photo_id for c in result.candidates], [1])
+        self.assertEqual(result.filtered_out[0].photo_id, 2)
+        self.assertTrue(result.trace_events[0]["allow_vector_only_match"])
+
     def test_entity_object_vector_only_gate_rejects_low_tag_and_caption(self) -> None:
         settings = replace(
             SearchSettingsResolver.defaults(),

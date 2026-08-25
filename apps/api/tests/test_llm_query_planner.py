@@ -125,6 +125,14 @@ def test_query_plan_v2_abstract_semantic() -> None:
     assert plan.semantic.queries == ["宁静的氛围"]
 
 
+def test_query_plan_v2_missing_confidence_uses_validated_default() -> None:
+    plan = QueryPlanV2.model_validate(
+        {"semantic": {"concepts": ["班级"], "queries": ["多人", "集体"]}}
+    )
+
+    assert plan.confidence == 0.8
+
+
 def test_query_plan_v2_negative() -> None:
     plan = QueryPlanV2.model_validate(
         {"lexical": {"preferred": ["海边"], "excluded": ["下雨"]}}
@@ -164,6 +172,34 @@ def test_query_plan_v2_adapter_maps_facts_and_semantics_without_taxonomy() -> No
     assert plan.semantic_query_text == "滑雪"
     assert plan.expanded_terms == ["滑雪"]
     assert plan.support_terms == ["雪地", "滑雪"]
+
+
+def test_query_plan_v2_adapter_backfills_dynamic_people_count() -> None:
+    output = QueryPlanV2.model_validate(
+        {
+            "filters": {"people": [{"name": "班级", "required": True}]},
+            "lexical": {"required": ["至少10人"]},
+            "semantic": {"concepts": ["班级"], "queries": ["多人", "集体"]},
+            "unresolved": {"people": ["班级"]},
+        }
+    )
+    deterministic = understand_query("至少10人的班级照片", project_id=1)
+
+    plan = planner_v2_output_to_query_plan(
+        query="至少10人的班级照片",
+        output=output,
+        planner_debug={"parsed": True, "confidence": output.confidence},
+        deterministic_plan=deterministic,
+    )
+
+    assert plan.semantic_query_text == "多人 集体 班级"
+    assert plan.filter_clauses == [
+        {"field": "people_count", "operator": "gte", "value": 10}
+    ]
+    assert plan.exact_terms == []
+    assert plan.planner_filters["people"] == []
+    assert plan.unresolved_entities["people"] == []
+    assert plan.query_constraints["requires_metadata_evidence"] is True
 
 
 def test_query_plan_v2_adapter_keeps_metadata_only_query_out_of_vector() -> None:
@@ -270,6 +306,137 @@ def test_qwen_v2_low_confidence_uses_raw_semantic_without_rule_merge() -> None:
     assert plan.semantic_plan == {"concepts": [], "queries": ["动物"]}
     assert plan.planner_debug["semantic_fallback_reason"] == "low_confidence"
     assert plan.intent == "semantic_photo_search"
+
+
+def test_qwen_v2_group_count_query_preserves_semantics_and_dynamic_filter() -> None:
+    settings = replace(
+        _v1_defaults(),
+        query_planner_enabled=True,
+        query_planner_endpoint_url="http://127.0.0.1:18084/v1/chat/completions",
+        query_planner_model_name="qwen3-8b-query-planner",
+        query_planner_planner_version="v2",
+    )
+    llm_json = """
+    {
+      "version": "2",
+      "intent": "photo_search",
+      "filters": {
+        "people": [{"name": "班级", "required": true}],
+        "media_types": ["photo"]
+      },
+      "lexical": {"required": ["至少10人"]},
+      "semantic": {"concepts": ["班级"], "queries": ["多人", "集体"]},
+      "visual": {"objects": [], "scenes": [], "activities": [], "attributes": []},
+      "unresolved": {"people": ["班级"], "locations": []}
+    }
+    """
+
+    with patch(
+        "app.services.search.query_planner.llm_query_planner.call_chat_completion",
+        return_value=llm_json,
+    ):
+        plan = resolve_query_plan_llm_first(
+            "至少10人的班级照片",
+            project_id=1,
+            settings=settings,
+            understander=understand_query,
+            include_raw_output=True,
+        )
+
+    assert plan.planner_debug["confidence"] == 0.8
+    assert plan.planner_debug["semantic_source"] == "qwen"
+    assert plan.semantic_query_text == "多人 集体 班级"
+    assert plan.filter_clauses == [
+        {"field": "people_count", "operator": "gte", "value": 10}
+    ]
+    assert plan.exact_terms == []
+    assert plan.planner_filters["people"] == []
+    assert plan.unresolved_entities["people"] == []
+
+
+def test_qwen_v2_drops_hallucinated_time_and_gps_without_fallback() -> None:
+    settings = replace(
+        _v1_defaults(),
+        query_planner_enabled=True,
+        query_planner_endpoint_url="http://127.0.0.1:18084/v1/chat/completions",
+        query_planner_model_name="qwen3-8b-query-planner",
+        query_planner_planner_version="v2",
+    )
+    llm_json = """
+    {
+      "version": "2",
+      "intent": "photo_search",
+      "filters": {
+        "time_ranges": [{"start": "2026-08-26", "end": "2026-08-26"}],
+        "people": [],
+        "camera": [],
+        "has_gps": true,
+        "media_types": ["photo"],
+        "albums": []
+      },
+      "filter_clauses": [
+        {"field": "people_count", "operator": "gte", "value": 10}
+      ],
+      "lexical": {"required": [], "preferred": ["班级照片"], "excluded": []},
+      "semantic": {"concepts": ["班级照片"], "queries": ["班级照片"]},
+      "visual": {"objects": [], "scenes": [], "activities": [], "attributes": []},
+      "ranking": {"sort": []},
+      "confidence": 0.95,
+      "unresolved": {"people": [], "locations": []}
+    }
+    """
+
+    with patch(
+        "app.services.search.query_planner.llm_query_planner.call_chat_completion",
+        return_value=llm_json,
+    ) as planner_call:
+        plan = resolve_query_plan_llm_first(
+            "至少10人的班级照片",
+            project_id=1,
+            settings=settings,
+            understander=understand_query,
+            include_raw_output=True,
+        )
+
+    planner_call.assert_called_once()
+    assert plan.planner_debug["planner_route"] == "llm"
+    assert plan.planner_debug["used_fallback"] is False
+    assert plan.planner_debug["repair_attempted"] is False
+    assert plan.planner_debug["v2_dropped_time_ranges"] == 1
+    assert plan.planner_debug["v2_dropped_has_gps"] is True
+    assert plan.metadata_filters.get("date_from") is None
+    assert plan.metadata_filters.get("date_to") is None
+    assert plan.metadata_filters.get("has_gps") is None
+    assert plan.semantic_query_text == "班级"
+    assert plan.filter_clauses == [
+        {"field": "people_count", "operator": "gte", "value": 10}
+    ]
+
+
+def test_qwen_v2_fallback_keeps_control_only_query_out_of_semantic_recall() -> None:
+    settings = replace(
+        _v1_defaults(),
+        query_planner_enabled=True,
+        query_planner_endpoint_url="",
+        query_planner_model_name="",
+        query_planner_planner_version="v2",
+    )
+
+    plan = resolve_query_plan_llm_first(
+        "人数大于10，时间倒序",
+        project_id=1,
+        settings=settings,
+        understander=understand_query,
+        include_raw_output=True,
+    )
+
+    assert plan.semantic_query_text == ""
+    assert plan.planner_debug["semantic_queries"] == []
+    assert plan.metadata_filters["metadata_only"] is True
+    assert plan.filter_clauses == [
+        {"field": "people_count", "operator": "gt", "value": 10}
+    ]
+    assert plan.sort == [{"field": "taken_at", "order": "desc"}]
 
 
 def test_qwen_v2_metadata_only_normalizes_range_without_semantic_fallback() -> None:

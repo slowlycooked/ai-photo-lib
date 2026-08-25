@@ -83,6 +83,7 @@ def apply_post_fusion_pipeline(
     query_constraints = query_plan.query_constraints or {}
     requires_visual_evidence = bool(query_constraints.get("requires_visual_evidence", True))
     allow_weak_only_match = bool(query_constraints.get("allow_weak_only_match", False))
+    allow_vector_only_match = bool(query_constraints.get("allow_vector_only_match", False))
     is_entity_object_query = _is_entity_object_query(query_plan)
 
     # Detect whether metadata filters are actively constraining the result set.
@@ -125,9 +126,14 @@ def apply_post_fusion_pipeline(
 
         if requires_visual_evidence and not allow_weak_only_match:
             if candidate.evidence_level == "C" and float(candidate.keyword_score or 0.0) <= 0.0:
-                # Allow through when metadata is strongly active AND vector score is high:
-                # evidence chain = time/place metadata hit + high visual vector → reliable
-                if metadata_filter_active and float(candidate.vector_score or 0.0) >= settings.vector_strict_score:
+                vector_score = float(candidate.vector_score or 0.0)
+                # A high-confidence semantic vector is sufficient when the
+                # planner explicitly permits vector-only matches. Metadata can
+                # independently provide the same strong evidence chain.
+                if (
+                    (allow_vector_only_match or metadata_filter_active)
+                    and vector_score >= settings.vector_strict_score
+                ):
                     kept.append(candidate)
                     continue
                 candidate.filter_reason = "query_constraints:no_vector_only_weak_match"
@@ -158,6 +164,7 @@ def apply_post_fusion_pipeline(
             "min_display_level": min_level,
             "requires_visual_evidence": requires_visual_evidence,
             "allow_weak_only_match": allow_weak_only_match,
+            "allow_vector_only_match": allow_vector_only_match,
             "vector_only_rejected_count": vector_only_rejected_count,
             "vector_only_reject_reasons": vector_only_reject_reasons,
             "filtered_count": filtered_count,

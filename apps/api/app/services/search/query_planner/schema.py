@@ -317,11 +317,12 @@ class QueryPlanV2(BaseModel):
     version: Literal["2"] = "2"
     intent: Literal["photo_search", "ocr_search"] = "photo_search"
     filters: SearchFilters = Field(default_factory=SearchFilters)
+    filter_clauses: list[PlannerFilterClause] = Field(default_factory=list)
     lexical: LexicalPlan = Field(default_factory=LexicalPlan)
     semantic: SemanticPlan = Field(default_factory=SemanticPlan)
     visual: VisualPlan = Field(default_factory=VisualPlan)
     ranking: RankingPlan = Field(default_factory=RankingPlan)
-    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    confidence: float = Field(default=0.8, ge=0.0, le=1.0)
     unresolved: UnresolvedEntities = Field(default_factory=UnresolvedEntities)
 
 

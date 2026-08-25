@@ -35,6 +35,15 @@ class TestUnderstandQuery:
         ]
         assert plan.sort == [{"field": "taken_at", "order": "desc"}]
 
+    def test_extracts_prefix_people_count_without_polluting_semantics(self):
+        plan = understand_query("至少10人的班级照片")
+
+        assert "班级" in plan.semantic_query_text
+        assert "至少10人" not in plan.semantic_query_text
+        assert plan.filter_clauses == [
+            {"field": "people_count", "operator": "gte", "value": 10}
+        ]
+
     def test_keeps_open_ended_semantics_without_inventing_controls(self):
         plan = understand_query("海边划船多人")
 
