@@ -11,6 +11,7 @@ from typing import Optional
 from sqlalchemy.orm import Session
 
 from ..config import settings
+from ..models.folder import ProjectFolder  # noqa: F401 - register Photo.folder_id target
 from ..models.photo import Photo
 from ..models.photo_quarantine import PhotoQuarantineItem, ProjectPhotoQuarantineSettings
 from ..models.project import Project

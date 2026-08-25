@@ -13,7 +13,6 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.database import Base
 from app.models.photo import Photo
-from app.models.folder import ProjectFolder
 from app.models.photo_quarantine import PhotoQuarantineItem
 from app.models.project import Project
 from app.services.photo_quarantine_service import (
