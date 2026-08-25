@@ -100,6 +100,17 @@ People Recognition 已经从“只读调试阶段”进入“人工纠错闭环�
 
 - [Design-document/faceDetectionDesgin.md](Design-document/faceDetectionDesgin.md)
 
+## 原片删除边界
+
+应用进程不会直接移动或删除照片库中的原片。普通照片删除和“待删除图片审核”页面共用同一条后台处理链路：
+
+1. 页面操作更新应用内记录，并把原片信息追加到 `ai-photo-data/pending-original-trash.jsonl`。
+2. 原片此时仍留在照片库中；应用只把它从正常照片查询中隐藏。
+3. NAS 后台运行 `deleteMartinLib.sh`，由 `nas-trash-deleted-photos.py` 按 JSONL 清单把原片移入 NAS 回收目录。
+4. 后台脚本处理完成后，可在审核页面确认该项已处理。
+
+`/projects/{project_id}/photo-quarantine/items/{item_id}/move` 和批量 `MOVE` 为兼容现有客户端而保留名称；其当前语义是“加入后台删除队列”，不是由 API 进程移动文件。旧版本已经移动到应用隔离目录的记录仍支持从页面放回。
+
 ## 第 4 周发布分层：能力成熟度标记
 
 以下能力在 UI 与文档统一使用三档成熟度：`稳定` / `实验` / `待收敛`。

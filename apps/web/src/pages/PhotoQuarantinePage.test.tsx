@@ -108,7 +108,7 @@ describe("PhotoQuarantinePage", () => {
     });
     listMock.mockResolvedValue({ total: 1, items: [item] });
     restoreMock.mockResolvedValue({ ...item, status: "restored" });
-    moveMock.mockResolvedValue({ ...item, status: "quarantined" });
+    moveMock.mockResolvedValue({ ...item, status: "delete_queued", quarantine_path: null });
     batchMock.mockResolvedValue({ requested: 1, succeeded: 1, failed: 0, results: [] });
     calibrationMock.mockResolvedValue({
       labeled_total: 42,
@@ -137,7 +137,7 @@ describe("PhotoQuarantinePage", () => {
     const user = userEvent.setup();
     renderPage();
 
-    expect(await screen.findByText("系统只移动文件，不会永久删除；放回时绝不覆盖原位置已有文件。")).toBeInTheDocument();
+    expect(await screen.findByText("页面只写入删除清单，不会移动或删除原片；原片由 NAS 后台脚本统一处理。")).toBeInTheDocument();
     expect(await screen.findByText("明显误触且没有可保留内容")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "放回原处" }));
 
@@ -187,7 +187,7 @@ describe("PhotoQuarantinePage", () => {
     expect(await screen.findByText(/最近分析任务：running · 已分析 12 张 · 待审核 3 张/)).toBeInTheDocument();
   });
 
-  it("lets a human move review-only screenshots to quarantine", async () => {
+  it("lets a human queue review-only screenshots for backend deletion", async () => {
     const user = userEvent.setup();
     listMock.mockResolvedValue({
       total: 1,
@@ -195,7 +195,7 @@ describe("PhotoQuarantinePage", () => {
     });
     renderPage();
 
-    await user.click(await screen.findByRole("button", { name: "移至待删除区" }));
+    await user.click(await screen.findByRole("button", { name: "加入后台删除队列" }));
 
     await waitFor(() => expect(moveMock).toHaveBeenCalledWith(1, 7));
   });

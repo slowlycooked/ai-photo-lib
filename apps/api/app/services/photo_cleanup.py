@@ -75,7 +75,13 @@ def _ai_photo_data_root() -> Path:
     return Path(settings.thumbnail_path).expanduser().resolve().parent
 
 
-def _queue_original_trash_request(db: Session, *, project_id: int, photo: Photo) -> bool:
+def queue_original_trash_request(db: Session, *, project_id: int, photo: Photo) -> bool:
+    """Append an original-photo deletion request for the NAS-side worker.
+
+    The application never moves or deletes an original photo directly. Both the
+    regular photo-delete flow and the quarantine review flow use this manifest
+    boundary so the NAS-side script remains the only original-file mutator.
+    """
     project = (
         db.query(Project)
         .filter(Project.id == project_id, Project.deleted_at.is_(None))
@@ -126,7 +132,7 @@ def delete_photo_record(
         raise ValueError("Photo does not belong to project")
 
     if delete_original:
-        queued_original_for_trash = _queue_original_trash_request(
+        queued_original_for_trash = queue_original_trash_request(
             db,
             project_id=project_id,
             photo=photo,

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import hashlib
+import json
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -8,6 +10,7 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.database import Base
 from app.models.photo import Photo
 from app.models.folder import ProjectFolder
@@ -20,7 +23,8 @@ from app.services.photo_quarantine_service import (
 
 
 @pytest.fixture()
-def quarantine_fixture(tmp_path: Path):
+def quarantine_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(settings, "thumbnail_path", str(tmp_path / "thumbs"))
     engine = create_engine("sqlite:///:memory:")
     with engine.begin() as connection:
         connection.exec_driver_sql("CREATE TABLE project_folders (id INTEGER PRIMARY KEY)")
@@ -83,37 +87,60 @@ def quarantine_fixture(tmp_path: Path):
     return engine, library, trash, original, digest
 
 
-def test_move_and_restore_preserve_photo_record(quarantine_fixture) -> None:
+def _mark_legacy_quarantined(
+    db: Session, *, trash: Path, original: Path
+) -> tuple[PhotoQuarantineItem, Path]:
+    item = db.query(PhotoQuarantineItem).filter(PhotoQuarantineItem.id == 100).one()
+    photo = db.query(Photo).filter(Photo.id == 10).one()
+    moved_path = trash / "legacy" / original.name
+    moved_path.parent.mkdir(parents=True)
+    original.replace(moved_path)
+    now = datetime.now(timezone.utc)
+    item.status = "quarantined"
+    item.quarantine_path = str(moved_path)
+    item.moved_at = now
+    photo.status = "quarantined"
+    photo.deleted_at = now
+    db.commit()
+    return item, moved_path
+
+
+def test_move_queues_original_for_nas_worker(quarantine_fixture) -> None:
     engine, _library, trash, original, digest = quarantine_fixture
     with Session(engine) as db:
         service = PhotoQuarantineService(db, root=trash)
         result = service.move(project_id=1, item_id=100)
-        moved_path = Path(result.item.quarantine_path or "")
-        assert result.moved is True
-        assert moved_path == trash / "project-1" / result.item.moved_at.date().isoformat() / "100" / original.name
-        assert moved_path.read_bytes() == b"test-photo-content"
-        assert not original.exists()
+        assert result.moved is False
+        assert result.item.status == "delete_queued"
+        assert result.item.quarantine_path is None
+        assert original.read_bytes() == b"test-photo-content"
         assert result.item.content_hash == digest
+
+        repeated = service.move(project_id=1, item_id=100)
+        assert repeated.moved is False
+
+        manifest = original.parents[2] / "pending-original-trash.jsonl"
+        entries = [json.loads(line) for line in manifest.read_text().splitlines()]
+        assert len(entries) == 1
+        assert entries[0]["action"] == "move_original_to_trash"
+        assert entries[0]["photo_id"] == 10
+        assert entries[0]["relative_path"] == "album/IMG_0001.jpg"
 
         photo = db.query(Photo).filter(Photo.id == 10).one()
         assert photo.status == "quarantined"
         assert photo.deleted_at is not None
 
-        restored = service.restore(project_id=1, item_id=100)
-        assert restored.status == "restored"
-        assert original.read_bytes() == b"test-photo-content"
-        assert not moved_path.exists()
-        db.refresh(photo)
-        assert photo.status == "indexed"
-        assert photo.deleted_at is None
+        with pytest.raises(PhotoQuarantineConflict, match="cannot be restored"):
+            service.restore(project_id=1, item_id=100)
 
 
 def test_restore_never_overwrites_occupied_original_path(quarantine_fixture) -> None:
     engine, _library, trash, original, _digest = quarantine_fixture
     with Session(engine) as db:
         service = PhotoQuarantineService(db, root=trash)
-        item = service.move(project_id=1, item_id=100).item
-        moved_path = Path(item.quarantine_path or "")
+        item, moved_path = _mark_legacy_quarantined(
+            db, trash=trash, original=original
+        )
         original.parent.mkdir(parents=True, exist_ok=True)
         original.write_bytes(b"new-file-at-original-path")
 
@@ -126,18 +153,17 @@ def test_restore_never_overwrites_occupied_original_path(quarantine_fixture) -> 
         assert item.status == "restore_conflict"
 
 
-def test_confirm_deleted_refuses_to_delete_existing_file(quarantine_fixture) -> None:
-    engine, _library, trash, _original, _digest = quarantine_fixture
+def test_confirm_deleted_waits_for_nas_worker(quarantine_fixture) -> None:
+    engine, _library, trash, original, _digest = quarantine_fixture
     with Session(engine) as db:
         service = PhotoQuarantineService(db, root=trash)
-        item = service.move(project_id=1, item_id=100).item
-        path = Path(item.quarantine_path or "")
+        service.move(project_id=1, item_id=100)
 
         with pytest.raises(PhotoQuarantineConflict, match="never deletes files"):
             service.confirm_deleted(project_id=1, item_id=100)
-        assert path.exists()
+        assert original.exists()
 
-        path.unlink()
+        original.unlink()
         confirmed = service.confirm_deleted(project_id=1, item_id=100)
         assert confirmed.status == "deleted_confirmed"
         assert confirmed.deleted_confirmed_at is not None
@@ -262,10 +288,10 @@ def test_calibration_report_flags_model_false_positive(quarantine_fixture) -> No
 
 
 def test_restore_records_put_back_as_keep_feedback(quarantine_fixture) -> None:
-    engine, _library, trash, _original, _digest = quarantine_fixture
+    engine, _library, trash, original, _digest = quarantine_fixture
     with Session(engine) as db:
         service = PhotoQuarantineService(db, root=trash)
-        service.move(project_id=1, item_id=100)
+        _mark_legacy_quarantined(db, trash=trash, original=original)
         restored = service.restore(project_id=1, item_id=100, labeled_by="martin")
 
         assert restored.human_label == "KEEP"

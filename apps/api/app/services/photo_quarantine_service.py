@@ -14,6 +14,7 @@ from ..config import settings
 from ..models.photo import Photo
 from ..models.photo_quarantine import PhotoQuarantineItem, ProjectPhotoQuarantineSettings
 from ..models.project import Project
+from .photo_cleanup import queue_original_trash_request
 
 
 logger = logging.getLogger(__name__)
@@ -151,32 +152,16 @@ class PhotoQuarantineService:
         labeled_by: Optional[str] = None,
     ) -> QuarantineMoveResult:
         item, photo, project = self._load_item_photo_project(project_id, item_id)
-        if item.status == "quarantined":
+        if item.status in {"delete_queued", "quarantined"}:
             if labeled_by:
                 self._save_label(item, label="TRASH", labeled_by=labeled_by)
             return QuarantineMoveResult(item=item, moved=False)
-        if item.status not in {"review", "moving", "move_failed"}:
+        if item.status not in {"review", "moving", "move_failed", "queue_failed"}:
             raise PhotoQuarantineConflict(
-                f"Item status {item.status!r} cannot be moved to quarantine"
+                f"Item status {item.status!r} cannot be queued for deletion"
             )
 
         source = self._validated_original_path(project, item.original_path, must_exist=False)
-        destination = (
-            self._validated_quarantine_path(item.quarantine_path)
-            if item.quarantine_path
-            else self._destination(item, source.name)
-        )
-        if not source.exists() and destination.exists():
-            destination_hash = _sha256(destination)
-            expected_hash = item.content_hash or photo.file_hash
-            if expected_hash and destination_hash != expected_hash:
-                raise PhotoQuarantineConflict(
-                    "Recovered quarantine file hash does not match the audit record"
-                )
-            moved_item = self._finalize_move(item.id, destination_hash)
-            if labeled_by:
-                self._save_label(moved_item, label="TRASH", labeled_by=labeled_by)
-            return QuarantineMoveResult(item=moved_item, moved=False)
         if not source.exists():
             raise PhotoQuarantineError("Original file is missing")
 
@@ -185,40 +170,23 @@ class PhotoQuarantineService:
         if expected_hash and source_hash != expected_hash:
             raise PhotoQuarantineConflict("Original file hash changed since classification")
 
-        item.status = "moving"
-        item.quarantine_path = str(destination)
-        item.content_hash = source_hash
-        item.previous_photo_status = item.previous_photo_status or photo.status
-        item.last_error = None
-        item.updated_at = _now()
-        self._db.commit()
-
         try:
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            if destination.exists():
-                if _sha256(destination) != source_hash:
-                    raise PhotoQuarantineConflict("Quarantine destination already exists")
-                if source.exists():
-                    raise PhotoQuarantineConflict("Source and destination both exist")
-            elif source.exists():
-                os.replace(source, destination)
-            else:
-                raise PhotoQuarantineError("Original file disappeared before move")
-
-            if _sha256(destination) != source_hash:
-                raise PhotoQuarantineError("Quarantine file hash verification failed")
+            queue_original_trash_request(
+                self._db,
+                project_id=project_id,
+                photo=photo,
+            )
         except Exception as exc:
-            item = self._reload_item(item.id)
-            item.status = "move_failed"
+            item.status = "queue_failed"
             item.last_error = str(exc)
             item.updated_at = _now()
             self._db.commit()
             raise
 
-        moved_item = self._finalize_move(item.id, source_hash)
+        queued_item = self._finalize_delete_queue(item.id, source_hash)
         if labeled_by:
-            self._save_label(moved_item, label="TRASH", labeled_by=labeled_by)
-        return QuarantineMoveResult(item=moved_item, moved=True)
+            self._save_label(queued_item, label="TRASH", labeled_by=labeled_by)
+        return QuarantineMoveResult(item=queued_item, moved=False)
 
     def restore(
         self,
@@ -294,15 +262,20 @@ class PhotoQuarantineService:
         return restored
 
     def confirm_deleted(self, *, project_id: int, item_id: int) -> PhotoQuarantineItem:
-        item, _photo, _project = self._load_item_photo_project(project_id, item_id)
+        item, _photo, project = self._load_item_photo_project(project_id, item_id)
         if item.status == "deleted_confirmed":
             return item
-        if not item.quarantine_path:
-            raise PhotoQuarantineConflict("Item has never been moved to quarantine")
-        path = self._validated_quarantine_path(item.quarantine_path)
+        if item.quarantine_path:
+            path = self._validated_quarantine_path(item.quarantine_path)
+        elif item.status == "delete_queued":
+            path = self._validated_original_path(
+                project, item.original_path, must_exist=False
+            )
+        else:
+            raise PhotoQuarantineConflict("Item has not been queued or quarantined")
         if path.exists():
             raise PhotoQuarantineConflict(
-                "Quarantine file still exists; this endpoint never deletes files"
+                "Original or quarantined file still exists; this endpoint never deletes files"
             )
         now = _now()
         item.status = "deleted_confirmed"
@@ -574,6 +547,28 @@ class PhotoQuarantineService:
         item.moved_at = item.moved_at or now
         item.last_error = None
         item.updated_at = now
+        self._db.commit()
+        self._db.refresh(item)
+        return item
+
+    def _finalize_delete_queue(
+        self, item_id: int, content_hash: str
+    ) -> PhotoQuarantineItem:
+        item = self._reload_item(item_id)
+        photo = self._db.query(Photo).filter(Photo.id == item.photo_id).first()
+        if photo is None:
+            raise PhotoQuarantineError("Photo record disappeared after deletion was queued")
+        now = _now()
+        item.previous_photo_status = item.previous_photo_status or photo.status
+        item.status = "delete_queued"
+        item.quarantine_path = None
+        item.content_hash = content_hash
+        item.moved_at = item.moved_at or now
+        item.last_error = None
+        item.updated_at = now
+        photo.status = "quarantined"
+        photo.deleted_at = now
+        photo.updated_at = now
         self._db.commit()
         self._db.refresh(item)
         return item
