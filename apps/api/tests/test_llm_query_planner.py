@@ -22,6 +22,7 @@ from app.services.search.query_planner.mapper import (  # noqa: E402
 )
 from app.services.query_understanding_service import understand_query  # noqa: E402
 from app.services.search.settings_resolver import SearchSettingsResolver  # noqa: E402
+from app.services.search.query_planner.llm_client import QueryPlannerClientError  # noqa: E402
 
 
 def test_query_plan_v2_animals() -> None:
@@ -181,6 +182,114 @@ def test_query_plan_v2_adapter_keeps_metadata_only_query_out_of_vector() -> None
     assert plan.metadata_filters["camera_make"] == "Apple"
     assert plan.metadata_filters["camera_model"] == "iPhone"
     assert plan.semantic_query_text == ""
+
+
+def test_qwen_v2_planner_uses_structured_contract_without_animal_guardrail() -> None:
+    settings = replace(
+        SearchSettingsResolver.defaults(),
+        query_planner_enabled=True,
+        query_planner_endpoint_url="http://127.0.0.1:18084/v1/chat/completions",
+        query_planner_model_name="qwen3-8b-query-planner",
+        query_planner_planner_version="llm_query_planner_v2",
+    )
+    llm_json = """
+    {
+      "version": "2",
+      "intent": "photo_search",
+      "filters": {},
+      "lexical": {"required": [], "preferred": ["动物"], "excluded": []},
+      "semantic": {"concepts": ["动物"], "queries": ["动物"]},
+      "visual": {"objects": ["动物"], "scenes": [], "activities": [], "attributes": []},
+      "ranking": {"sort": []},
+      "confidence": 0.95,
+      "unresolved": {"people": [], "locations": []}
+    }
+    """
+
+    with patch(
+        "app.services.search.query_planner.llm_query_planner.call_chat_completion",
+        return_value=llm_json,
+    ) as planner_call:
+        plan = resolve_query_plan_llm_first(
+            "动物",
+            project_id=1,
+            settings=settings,
+            understander=understand_query,
+            include_raw_output=True,
+        )
+
+    planner_call.assert_called_once()
+    assert planner_call.call_args.kwargs["json_schema"]["title"] == "QueryPlanV2"
+    assert "current_date:" in planner_call.call_args.kwargs["user_prompt"]
+    assert "timezone:" in planner_call.call_args.kwargs["user_prompt"]
+    assert plan.planner_contract_version == "2"
+    assert plan.intent == "semantic_photo_search"
+    assert plan.concept_terms == ["动物"]
+    assert plan.semantic_plan["queries"] == ["动物"]
+    assert not ({"猫", "狗", "鸟", "马"} & set(plan.expanded_terms))
+
+
+def test_qwen_v2_low_confidence_uses_raw_semantic_without_rule_merge() -> None:
+    settings = replace(
+        SearchSettingsResolver.defaults(),
+        query_planner_enabled=True,
+        query_planner_endpoint_url="http://127.0.0.1:18084/v1/chat/completions",
+        query_planner_model_name="qwen3-8b-query-planner",
+        query_planner_planner_version="v2",
+    )
+    llm_json = """
+    {
+      "version": "2",
+      "semantic": {"concepts": ["动物"], "queries": ["宠物 猫 狗"]},
+      "confidence": 0.2
+    }
+    """
+
+    with patch(
+        "app.services.search.query_planner.llm_query_planner.call_chat_completion",
+        return_value=llm_json,
+    ):
+        plan = resolve_query_plan_llm_first(
+            "动物",
+            project_id=1,
+            settings=settings,
+            understander=understand_query,
+            include_raw_output=True,
+        )
+
+    assert plan.semantic_query_text == "动物"
+    assert plan.semantic_plan == {"concepts": [], "queries": ["动物"]}
+    assert plan.planner_debug["semantic_fallback_reason"] == "low_confidence"
+    assert plan.intent == "semantic_photo_search"
+
+
+def test_qwen_v2_failure_uses_deterministic_metadata_and_raw_semantic() -> None:
+    settings = replace(
+        SearchSettingsResolver.defaults(),
+        query_planner_enabled=True,
+        query_planner_endpoint_url="http://127.0.0.1:18084/v1/chat/completions",
+        query_planner_model_name="qwen3-8b-query-planner",
+        query_planner_planner_version="v2",
+    )
+
+    with patch(
+        "app.services.search.query_planner.llm_query_planner.call_chat_completion",
+        side_effect=QueryPlannerClientError("request timed out"),
+    ):
+        plan = resolve_query_plan_llm_first(
+            "动物",
+            project_id=1,
+            settings=settings,
+            understander=understand_query,
+            include_raw_output=True,
+        )
+
+    assert plan.planner_contract_version == "2"
+    assert plan.intent == "semantic_photo_search"
+    assert plan.concept_terms == []
+    assert plan.expanded_terms == ["动物"]
+    assert plan.semantic_query_text == "动物"
+    assert plan.planner_debug["fallback_reason"] == "planner_timeout_fallback"
 
 
 def test_llm_query_planner_disabled_uses_rule_fallback() -> None:

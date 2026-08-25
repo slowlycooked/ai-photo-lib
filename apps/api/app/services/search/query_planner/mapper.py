@@ -385,6 +385,18 @@ def planner_v2_output_to_query_plan(
         visual_objects + visual_scenes + visual_activities + visual_attributes
     )
 
+    low_confidence = float(output.confidence or 0.0) < 0.6
+    if low_confidence:
+        lexical_required = []
+        lexical_preferred = _fallback_exact_terms(query)
+        semantic_concepts = []
+        semantic_queries = _fallback_exact_terms(query)
+        visual_objects = []
+        visual_scenes = []
+        visual_activities = []
+        visual_attributes = []
+        visual_terms = []
+
     planner_filters = output.filters.model_dump()
     required_time_ranges = [item for item in output.filters.time_ranges]
     required_locations = [item for item in output.filters.locations if item.required]
@@ -432,7 +444,7 @@ def planner_v2_output_to_query_plan(
     )
 
     semantic_query_text = " ".join(semantic_queries).strip()
-    semantic_source = "qwen"
+    semantic_source = "raw_query_fallback" if low_confidence else "qwen"
     if not semantic_query_text and not metadata_filters.get("metadata_only"):
         semantic_query_text = query.strip()
         semantic_source = "raw_query_fallback"
@@ -455,17 +467,33 @@ def planner_v2_output_to_query_plan(
         "query_core_facets": [],
         "requires_metadata_evidence": has_factual_constraints,
     }
+    effective_lexical_plan = {
+        "required": lexical_required,
+        "preferred": lexical_preferred,
+        "excluded": lexical_excluded,
+    }
+    effective_semantic_plan = {
+        "concepts": semantic_concepts,
+        "queries": semantic_queries,
+    }
+    effective_visual_plan = {
+        "objects": visual_objects,
+        "scenes": visual_scenes,
+        "activities": visual_activities,
+        "attributes": visual_attributes,
+    }
 
     debug = dict(planner_debug)
     debug.update(
         {
             "planner_contract_version": "2",
             "semantic_source": semantic_source,
+            "semantic_fallback_reason": "low_confidence" if low_confidence else "",
             "semantic_queries": semantic_queries,
             "filters": planner_filters,
-            "lexical": output.lexical.model_dump(),
-            "semantic": output.semantic.model_dump(),
-            "visual": output.visual.model_dump(),
+            "lexical": effective_lexical_plan,
+            "semantic": effective_semantic_plan,
+            "visual": effective_visual_plan,
             "unresolved": output.unresolved.model_dump(),
         }
     )
@@ -497,8 +525,8 @@ def planner_v2_output_to_query_plan(
         planner_debug=debug,
         planner_contract_version="2",
         planner_filters=planner_filters,
-        lexical_plan=output.lexical.model_dump(),
-        semantic_plan=output.semantic.model_dump(),
-        visual_plan=output.visual.model_dump(),
+        lexical_plan=effective_lexical_plan,
+        semantic_plan=effective_semantic_plan,
+        visual_plan=effective_visual_plan,
         unresolved_entities=output.unresolved.model_dump(),
     )

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import threading
-from typing import Any
+from typing import Any, Optional
 
 import httpx
 
@@ -63,6 +63,7 @@ def call_chat_completion(
     top_p: float,
     max_tokens: int,
     timeout_seconds: int,
+    json_schema: Optional[dict[str, Any]] = None,
 ) -> str:
     """Call OpenAI-compatible chat completions and return response text."""
     url = normalize_chat_url(endpoint_url)
@@ -81,7 +82,18 @@ def call_chat_completion(
         "top_p": float(top_p),
         "max_tokens": int(max_tokens),
         "stream": False,
-        "response_format": {"type": "json_object"},
+        "response_format": (
+            {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "query_plan_v2",
+                    "strict": True,
+                    "schema": json_schema,
+                },
+            }
+            if json_schema is not None
+            else {"type": "json_object"}
+        ),
         "chat_template_kwargs": {"enable_thinking": False},
     }
 
@@ -95,7 +107,14 @@ def call_chat_completion(
         response = client.post(url, json=payload, headers=headers)
         if response.status_code == 400:
             body = response.text.lower()
-            if "response_format" in body:
+            if json_schema is not None and (
+                "json_schema" in body or "response_format" in body
+            ):
+                compat_payload = dict(payload)
+                compat_payload["response_format"] = {"type": "json_object"}
+                response = client.post(url, json=compat_payload, headers=headers)
+                body = response.text.lower()
+            if response.status_code == 400 and "response_format" in body:
                 compat_payload = dict(payload)
                 compat_payload.pop("response_format", None)
                 response = client.post(url, json=compat_payload, headers=headers)

@@ -15,10 +15,10 @@ from typing import Callable, Optional
 from ....config import settings as global_settings
 from ...query_understanding_service import SearchQueryPlan
 from ..types import EffectiveSearchSettings
-from .fallback import build_fallback_plan
+from .fallback import build_fallback_plan, build_fallback_plan_v2
 from .llm_client import QueryPlannerClientError, call_chat_completion
-from .mapper import planner_output_to_query_plan
-from .schema import LLMQueryPlannerOutput
+from .mapper import planner_output_to_query_plan, planner_v2_output_to_query_plan
+from .schema import LLMQueryPlannerOutput, QueryPlanV2
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +44,16 @@ _DEFAULT_SYSTEM_PROMPT = (
     "你是 ai-photo-lib 的照片搜索 Query Planner。"
     "你的任务是把用户自然语言查询转换成严格 JSON 搜索计划。"
     "不能输出解释、Markdown、代码块或 JSON 之外的任何文本。"
+)
+
+_DEFAULT_V2_SYSTEM_PROMPT = (
+    "你是照片搜索 Query Planner。"
+    "把用户自然语言转换成 QueryPlan V2 JSON。"
+    "时间、人物、明确地点、相机和 GPS 是事实约束；"
+    "物体、场景、活动和视觉属性属于视觉语义；抽象描述进入 semantic。"
+    "不要枚举概念的子类型，不要生成 SQL、照片 ID 或数据库实体 ID。"
+    "相对日期必须根据运行时 current_date 转成绝对的半开日期区间。"
+    "只输出符合 QueryPlan V2 schema 的 JSON，不输出解释或 Markdown。"
 )
 
 _REPAIR_SYSTEM_PROMPT = (
@@ -119,6 +129,25 @@ confidence, fallback_reason。
 其他字段可省略（缺失字段会由系统默认值补齐）。
 """
 
+_DEFAULT_V2_USER_PROMPT_TEMPLATE = """请生成 QueryPlan V2。
+
+query: {{query}}
+current_date: {{today}}
+timezone: {{timezone}}
+locale: {{locale}}
+project_id: {{project_id}}
+
+约束：
+1. filters 只放事实条件：time_ranges、locations、people、camera、has_gps、media_types、albums。
+2. lexical 只表达 required、preferred、excluded，不输出检索权重。
+3. semantic 只放 concepts 和适合向量召回的 queries；不要重复时间、人物、地点、相机等事实词。
+4. visual 只放 objects、scenes、activities、attributes。
+5. 顶层 intent 只允许 photo_search 或 ocr_search。
+6. 不确定的人物或地点名称放入 unresolved；不要猜 entity ID。
+7. 纯 metadata 查询必须保持 semantic.queries 为空。
+8. 不要把抽象概念展开成猫、狗、鸟等子类词表。
+"""
+
 _FILTER_SCALAR_FIELDS = {
     "people_count_min",
     "people_count_max",
@@ -190,12 +219,31 @@ def _extract_json_object(raw_text: str) -> dict:
     raise ValueError("Unable to extract complete planner JSON object")
 
 
-def _render_prompt(template: str, *, query: str, project_id: Optional[int]) -> str:
+def _render_prompt(
+    template: str,
+    *,
+    query: str,
+    project_id: Optional[int],
+    current_date: Optional[str] = None,
+    timezone_name: str = "",
+    locale: str = "zh-CN",
+) -> str:
     rendered = template
     rendered = rendered.replace("{{query}}", query)
-    rendered = rendered.replace("{{today}}", str(date.today()))
+    rendered = rendered.replace("{{today}}", current_date or str(date.today()))
+    rendered = rendered.replace("{{timezone}}", timezone_name)
+    rendered = rendered.replace("{{locale}}", locale)
     rendered = rendered.replace("{{project_id}}", str(project_id or ""))
     return rendered
+
+
+def _uses_v2_contract(planner_version: str) -> bool:
+    return str(planner_version or "").strip().lower() in {
+        "2",
+        "v2",
+        "query_plan_v2",
+        "llm_query_planner_v2",
+    }
 
 
 def _extract_quoted_strings(raw: str) -> list[str]:
@@ -226,6 +274,7 @@ def _repair_planner_json_text(
     *,
     raw_text: str,
     settings: EffectiveSearchSettings,
+    json_schema: Optional[dict] = None,
 ) -> str:
     repair_prompt = _REPAIR_USER_PROMPT_TEMPLATE.replace("{{raw_output}}", raw_text)
     planner_timeout_seconds = max(1, int(settings.query_planner_timeout_seconds))
@@ -239,6 +288,7 @@ def _repair_planner_json_text(
         top_p=0.1,
         max_tokens=min(max(256, int(settings.query_planner_max_tokens)), 512),
         timeout_seconds=planner_timeout_seconds,
+        json_schema=json_schema,
     )
 
 
@@ -295,7 +345,7 @@ def _build_cache_key(
     system_prompt: str,
     user_prompt_template: str,
 ) -> tuple:
-    return (
+    cache_key = (
         int(project_id or 0),
         query.strip().lower(),
         settings.query_planner_provider,
@@ -311,8 +361,10 @@ def _build_cache_key(
         int(settings.query_planner_max_tokens),
         _hash_cache_fragment(system_prompt),
         _hash_cache_fragment(user_prompt_template),
-        _hash_cache_fragment(settings.concept_taxonomy),
     )
+    if _uses_v2_contract(settings.query_planner_planner_version):
+        return cache_key
+    return cache_key + (_hash_cache_fragment(settings.concept_taxonomy),)
 
 
 def _cache_get(cache_key: tuple) -> Optional[SearchQueryPlan]:
@@ -430,6 +482,9 @@ def resolve_query_plan_llm_first(
     include_raw_output: bool = False,
 ) -> SearchQueryPlan:
     """Resolve SearchQueryPlan through LLM first, then fallback to rules."""
+    uses_v2_contract = _uses_v2_contract(
+        settings.query_planner_planner_version
+    )
     planner_debug: dict = {
         "provider": settings.query_planner_provider,
         "model": settings.query_planner_model_name,
@@ -441,12 +496,19 @@ def resolve_query_plan_llm_first(
         "parsed": False,
         "confidence": 0.0,
         "enabled": settings.query_planner_enabled,
+        "planner_contract_version": "2" if uses_v2_contract else "1",
     }
 
-    if not settings.query_planner_enabled:
-        planner_debug["used_fallback"] = True
-        planner_debug["fallback_reason"] = "query_planner_disabled"
-        planner_debug["planner_route"] = "rule_only"
+    def build_runtime_fallback() -> SearchQueryPlan:
+        if uses_v2_contract:
+            return build_fallback_plan_v2(
+                query=query,
+                project_id=project_id,
+                understander=understander,
+                rule_base_pack_id=settings.query_understanding_base_pack,
+                rule_extension_pack_ids=settings.query_understanding_extension_packs,
+                planner_debug=planner_debug,
+            )
         return build_fallback_plan(
             query=query,
             project_id=project_id,
@@ -457,25 +519,32 @@ def resolve_query_plan_llm_first(
             planner_debug=planner_debug,
         )
 
-    fallback_plan = build_fallback_plan(
-        query=query,
-        project_id=project_id,
-        understander=understander,
-        concept_taxonomy=settings.concept_taxonomy,
-        rule_base_pack_id=settings.query_understanding_base_pack,
-        rule_extension_pack_ids=settings.query_understanding_extension_packs,
-        planner_debug=planner_debug,
-    )
+    if not settings.query_planner_enabled:
+        planner_debug["used_fallback"] = True
+        planner_debug["fallback_reason"] = "query_planner_disabled"
+        planner_debug["planner_route"] = "rule_only"
+        return build_runtime_fallback()
+
+    fallback_plan = build_runtime_fallback()
 
     local_now = datetime.now().astimezone()
     local_date = local_now.date().isoformat()
-    timezone_name = local_now.tzname() or ""
-    system_prompt = settings.query_planner_system_prompt.strip() or _DEFAULT_SYSTEM_PROMPT
-    user_prompt_template = settings.query_planner_prompt_template.strip() or _DEFAULT_USER_PROMPT_TEMPLATE
+    timezone_name = str(local_now.tzinfo or local_now.tzname() or "")
+    system_prompt = settings.query_planner_system_prompt.strip() or (
+        _DEFAULT_V2_SYSTEM_PROMPT if uses_v2_contract else _DEFAULT_SYSTEM_PROMPT
+    )
+    user_prompt_template = settings.query_planner_prompt_template.strip() or (
+        _DEFAULT_V2_USER_PROMPT_TEMPLATE
+        if uses_v2_contract
+        else _DEFAULT_USER_PROMPT_TEMPLATE
+    )
 
     cache_key: Optional[tuple] = None
     if not include_raw_output:
         use_rule_fast_path, fast_path_reason = _should_use_rule_fast_path(query, fallback_plan)
+        if uses_v2_contract and query.strip():
+            use_rule_fast_path = False
+            fast_path_reason = ""
         if use_rule_fast_path:
             planner_debug["used_fallback"] = True
             planner_debug["fallback_reason"] = f"rule_fast_path:{fast_path_reason}"
@@ -523,6 +592,9 @@ def resolve_query_plan_llm_first(
         user_prompt_template,
         query=query,
         project_id=project_id,
+        current_date=local_date,
+        timezone_name=timezone_name,
+        locale="zh-CN",
     )
 
     started = time.monotonic()
@@ -540,6 +612,7 @@ def resolve_query_plan_llm_first(
             top_p=settings.query_planner_top_p,
             max_tokens=settings.query_planner_max_tokens,
             timeout_seconds=planner_timeout_seconds,
+            json_schema=(QueryPlanV2.model_json_schema() if uses_v2_contract else None),
         )
         planner_debug["latency_ms"] = int((time.monotonic() - started) * 1000)
         planner_debug["raw_output_preview"] = _sanitize_preview(raw_text)
@@ -549,14 +622,24 @@ def resolve_query_plan_llm_first(
         planner_debug["repair_attempted"] = False
         try:
             raw_json = _extract_json_object(raw_text)
-            raw_json = _normalize_empty_list_scalars(raw_json)
-            parsed = LLMQueryPlannerOutput.model_validate(raw_json)
+            if uses_v2_contract:
+                parsed = QueryPlanV2.model_validate(raw_json)
+            else:
+                raw_json = _normalize_empty_list_scalars(raw_json)
+                parsed = LLMQueryPlannerOutput.model_validate(raw_json)
         except Exception:
             planner_debug["repair_attempted"] = True
-            repaired_text = _repair_planner_json_text(raw_text=raw_text, settings=settings)
+            repaired_text = _repair_planner_json_text(
+                raw_text=raw_text,
+                settings=settings,
+                json_schema=(QueryPlanV2.model_json_schema() if uses_v2_contract else None),
+            )
             raw_json = _extract_json_object(repaired_text)
-            raw_json = _normalize_empty_list_scalars(raw_json)
-            parsed = LLMQueryPlannerOutput.model_validate(raw_json)
+            if uses_v2_contract:
+                parsed = QueryPlanV2.model_validate(raw_json)
+            else:
+                raw_json = _normalize_empty_list_scalars(raw_json)
+                parsed = LLMQueryPlannerOutput.model_validate(raw_json)
 
         planner_debug["parsed"] = True
         planner_debug["confidence"] = float(parsed.confidence or 0.0)
@@ -564,12 +647,20 @@ def resolve_query_plan_llm_first(
         planner_debug["fallback_reason"] = ""
         planner_debug["planner_route"] = "llm"
 
-        query_plan = planner_output_to_query_plan(
-            query=query,
-            output=parsed,
-            planner_debug=planner_debug,
-            fallback_plan=fallback_plan,
-        )
+        if uses_v2_contract:
+            query_plan = planner_v2_output_to_query_plan(
+                query=query,
+                output=parsed,
+                planner_debug=planner_debug,
+                deterministic_plan=fallback_plan,
+            )
+        else:
+            query_plan = planner_output_to_query_plan(
+                query=query,
+                output=parsed,
+                planner_debug=planner_debug,
+                fallback_plan=fallback_plan,
+            )
         if cache_key is not None:
             _cache_put(cache_key, query_plan)
         return query_plan
@@ -585,7 +676,11 @@ def resolve_query_plan_llm_first(
         planner_debug["planner_route"] = "fallback_after_error"
         planner_debug["error"] = str(exc)
 
-        recovered_terms = _recover_location_terms_from_raw_output(raw_text) if raw_text else []
+        recovered_terms = (
+            _recover_location_terms_from_raw_output(raw_text)
+            if raw_text and not uses_v2_contract
+            else []
+        )
         if recovered_terms and (_query_has_location_cue(query) or "location" in raw_text.lower()):
             metadata_filters = dict(fallback_plan.metadata_filters or {})
             existing_terms = list(metadata_filters.get("place_terms") or [])
