@@ -515,8 +515,10 @@ def planner_v2_output_to_query_plan(
         filters={},
         filter_clauses=[],
         sort=[item.model_dump() for item in output.ranking.sort],
-        recommended_profile=deterministic_plan.recommended_profile,
-        penalize_tags=list(deterministic_plan.penalize_tags),
+        recommended_profile=(
+            "ocr_text" if output.intent == "ocr_search" else "default_semantic"
+        ),
+        penalize_tags=[],
         matched_keys=_dedupe_terms(lexical_required + lexical_preferred),
         concept_terms=semantic_concepts,
         core_facets=[],

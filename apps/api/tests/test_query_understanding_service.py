@@ -272,6 +272,14 @@ def test_query_understanding_behavior_contract_metadata_only_query():
     assert metadata["has_gps"] is True
 
 
+def test_query_understanding_parses_camera_next_to_chinese_text():
+    metadata = understand_query("去年1月iPhone拍的照片").metadata_filters
+
+    assert metadata["camera_make"] == "Apple"
+    assert metadata["camera_model"] == "iPhone"
+    assert metadata["place_terms"] == []
+
+
 def test_query_understanding_behavior_contract_time_and_place_query():
     plan = understand_query("2024年5月 杭州的照片")
     metadata = plan.metadata_filters

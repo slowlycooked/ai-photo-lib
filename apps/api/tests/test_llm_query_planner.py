@@ -233,6 +233,8 @@ def test_qwen_v2_planner_uses_structured_contract_without_animal_guardrail() -> 
     assert plan.intent == "semantic_photo_search"
     assert plan.concept_terms == ["动物"]
     assert plan.semantic_plan["queries"] == ["动物"]
+    assert plan.recommended_profile == "default_semantic"
+    assert plan.penalize_tags == []
     assert not ({"猫", "狗", "鸟", "马"} & set(plan.expanded_terms))
 
 
@@ -297,6 +299,97 @@ def test_qwen_v2_failure_uses_deterministic_metadata_and_raw_semantic() -> None:
     assert plan.expanded_terms == ["动物"]
     assert plan.semantic_query_text == "动物"
     assert plan.planner_debug["fallback_reason"] == "planner_timeout_fallback"
+
+
+def test_qwen_v2_invalid_json_repairs_once_then_falls_back() -> None:
+    settings = replace(
+        SearchSettingsResolver.defaults(),
+        query_planner_enabled=True,
+        query_planner_endpoint_url="http://127.0.0.1:18084/v1/chat/completions",
+        query_planner_model_name="qwen3-8b-query-planner",
+    )
+
+    with patch(
+        "app.services.search.query_planner.llm_query_planner.call_chat_completion",
+        side_effect=["{invalid", "still invalid"],
+    ) as planner_call:
+        plan = resolve_query_plan_llm_first(
+            "去年1月iPhone拍的照片",
+            project_id=1,
+            settings=settings,
+            understander=understand_query,
+            include_raw_output=True,
+        )
+
+    assert planner_call.call_count == 2
+    assert plan.planner_contract_version == "2"
+    assert plan.planner_debug["used_fallback"] is True
+    assert plan.metadata_filters["camera_make"] == "Apple"
+    assert plan.metadata_filters["month"] == 1
+
+
+def test_qwen_v2_connection_failure_falls_back_without_error() -> None:
+    settings = replace(
+        SearchSettingsResolver.defaults(),
+        query_planner_enabled=True,
+        query_planner_endpoint_url="http://127.0.0.1:18084/v1/chat/completions",
+        query_planner_model_name="qwen3-8b-query-planner",
+    )
+
+    with patch(
+        "app.services.search.query_planner.llm_query_planner.call_chat_completion",
+        side_effect=QueryPlannerClientError("connection refused"),
+    ) as planner_call:
+        plan = resolve_query_plan_llm_first(
+            "上海夜景",
+            project_id=1,
+            settings=settings,
+            understander=understand_query,
+            include_raw_output=True,
+        )
+
+    planner_call.assert_called_once()
+    assert plan.planner_contract_version == "2"
+    assert plan.planner_debug["used_fallback"] is True
+    assert plan.semantic_plan["queries"] == ["上海夜景"]
+
+
+def test_qwen_v2_people_compound_calls_planner_once() -> None:
+    settings = replace(
+        SearchSettingsResolver.defaults(),
+        query_planner_enabled=True,
+        query_planner_endpoint_url="http://127.0.0.1:18084/v1/chat/completions",
+        query_planner_model_name="qwen3-8b-query-planner",
+    )
+    llm_json = """
+    {
+      "version": "2",
+      "filters": {
+        "time_ranges": [{"start": "2025-01-01", "end": "2026-01-01"}],
+        "people": [{"name": "老王", "required": true}]
+      },
+      "lexical": {"preferred": ["滑雪"]},
+      "semantic": {"concepts": ["滑雪"], "queries": ["滑雪"]},
+      "visual": {"activities": ["滑雪"]},
+      "confidence": 0.96
+    }
+    """
+
+    with patch(
+        "app.services.search.query_planner.llm_query_planner.call_chat_completion",
+        return_value=llm_json,
+    ) as planner_call:
+        plan = resolve_query_plan_llm_first(
+            "老王去年滑雪",
+            project_id=1,
+            settings=settings,
+            understander=understand_query,
+            include_raw_output=True,
+        )
+
+    planner_call.assert_called_once()
+    assert plan.planner_filters["people"] == [{"name": "老王", "required": True}]
+    assert plan.semantic_plan["queries"] == ["滑雪"]
 
 
 def test_llm_query_planner_disabled_uses_rule_fallback() -> None:

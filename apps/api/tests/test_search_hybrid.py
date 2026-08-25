@@ -36,6 +36,7 @@ from app.services.embedding_client import EmbeddingRequestError  # noqa: E402
 from app.services.search.app_service import search_photos  # noqa: E402
 from app.services.search.app_service import _core_facet_passes  # noqa: E402
 from app.services.search.keyword_recall import _score_result  # noqa: E402
+from app.services.search.post_fusion_pipeline import apply_post_fusion_pipeline  # noqa: E402
 
 
 def _default_settings() -> EffectiveSearchSettings:
@@ -94,6 +95,46 @@ class RRFMergeTest(unittest.TestCase):
     def test_both_empty_returns_empty(self) -> None:
         merged = rrf_merge([], {}, _default_settings())
         self.assertEqual(merged, [])
+
+    def test_v2_does_not_apply_legacy_entity_object_vector_thresholds(self) -> None:
+        settings = replace(
+            _default_settings(),
+            enable_evidence_filter=False,
+            min_display_evidence_level="F",
+            entity_object_vector_only_min_score=0.95,
+            entity_object_tag_min_score=0.95,
+            entity_object_caption_min_score=0.95,
+        )
+        plan = SearchQueryPlan(
+            original_query="动物",
+            normalized_query="动物",
+            semantic_query_text="动物",
+            intent="semantic_photo_search",
+            recommended_profile="entity_object",
+            planner_contract_version="2",
+            query_constraints={
+                "requires_visual_evidence": True,
+                "allow_weak_only_match": True,
+                "min_evidence_level": "F",
+            },
+        )
+        candidate = SearchCandidate(
+            photo_id=1,
+            vector_score=0.6,
+            final_score=0.6,
+            vector_explain={"tag": 0.2, "caption": 0.2},
+        )
+
+        result = apply_post_fusion_pipeline(
+            MagicMock(),
+            [candidate],
+            query_plan=plan,
+            settings=settings,
+            project_id=None,
+        )
+
+        self.assertEqual([item.photo_id for item in result.candidates], [1])
+        self.assertEqual(result.vector_only_rejected_count, 0)
 
     def test_people_stream_participates_in_rrf(self) -> None:
         keyword = [SearchCandidate(photo_id=1, keyword_score=0.8)]
@@ -417,6 +458,196 @@ class SearchPhotosTest(unittest.TestCase):
 
     def _make_candidate(self, photo_id: int = 9, score: float = 0.7) -> SearchCandidate:
         return SearchCandidate(photo_id=photo_id, keyword_score=score, final_score=score)
+
+    @staticmethod
+    def _hydrate_candidate_ids(_db, candidates, **_kwargs):
+        return (
+            len(candidates),
+            [
+                {"photo_id": candidate.photo_id, "score": candidate.final_score}
+                for candidate in candidates
+            ],
+        )
+
+    def test_v2_people_location_activity_hard_constraints_rank_fixture_a_first(self) -> None:
+        settings = replace(
+            _default_settings(),
+            search_result_cache_ttl_seconds=0,
+            enable_evidence_filter=False,
+            min_display_evidence_level="F",
+        )
+        plan = SearchQueryPlan(
+            original_query="去年张家口和老王一起滑雪",
+            normalized_query="去年张家口和老王一起滑雪",
+            semantic_query_text="滑雪",
+            expanded_terms=["滑雪"],
+            intent="semantic_photo_search",
+            metadata_filters={
+                "date_from": "2025-01-01",
+                "date_to": "2026-01-01",
+                "place_terms": ["张家口"],
+                "metadata_only": False,
+            },
+            query_constraints={
+                "requires_visual_evidence": True,
+                "allow_weak_only_match": True,
+                "min_evidence_level": "F",
+            },
+            planner_contract_version="2",
+            planner_filters={
+                "time_ranges": [{"start": "2025-01-01", "end": "2026-01-01"}],
+                "locations": [{"name": "张家口", "required": True}],
+                "people": [{"name": "老王", "required": True}],
+            },
+            lexical_plan={"required": [], "preferred": ["滑雪"], "excluded": []},
+            semantic_plan={"concepts": ["滑雪"], "queries": ["滑雪"]},
+            visual_plan={"objects": [], "scenes": [], "activities": ["滑雪"], "attributes": []},
+        )
+        resolution = PeopleQueryResolution(
+            query=plan.original_query,
+            residual_query="滑雪",
+            people_filter_mode="any",
+            matched_people=[
+                ResolvedPersonRef(
+                    person_id=101,
+                    display_name="老王",
+                    normalized_name="老王",
+                    matched_term="老王",
+                )
+            ],
+        )
+        people_candidates = [
+            SearchCandidate(photo_id=1, people_score=1.0),  # A: 老王/张家口/滑雪
+            SearchCandidate(photo_id=4, people_score=0.9),  # D: 老王/张家口/吃饭
+        ]
+
+        def keyword_recall(_service, _plan, **kwargs):
+            self.assertEqual(kwargs["constrained_photo_ids"], {1, 4})
+            return [
+                SearchCandidate(photo_id=1, keyword_score=0.95, match_source=["keyword"]),
+                SearchCandidate(photo_id=4, keyword_score=0.15, match_source=["keyword"]),
+            ]
+
+        def vector_recall(_service, **kwargs):
+            self.assertEqual(kwargs["constrained_photo_ids"], {1, 4})
+            return (
+                {
+                    1: VectorMatchScores(total_score=0.92, tag_score=0.92),
+                    4: VectorMatchScores(total_score=0.30, tag_score=0.30),
+                },
+                "test-model",
+                "",
+                0,
+            )
+
+        with (
+            patch("app.services.search.app_service.SearchSettingsResolver.resolve", return_value=settings),
+            patch("app.services.search.app_service.resolve_search_query_plan", return_value=plan),
+            patch("app.services.search.app_service.resolve_people_query", return_value=resolution),
+            patch("app.services.search.app_service.build_folder_photo_ids_subquery", return_value=None),
+            patch("app.services.search.recall_pipeline.MetadataRecallService.resolve_photo_ids", return_value={1, 3, 4}),
+            patch(
+                "app.services.search.recall_pipeline.PeopleRecallService.recall",
+                return_value=PeopleRecallResult(
+                    candidates=people_candidates,
+                    photo_ids={1, 4},
+                    matched_person_ids=[101],
+                ),
+            ) as people_recall,
+            patch("app.services.search.recall_pipeline.KeywordRecallService.search", autospec=True, side_effect=keyword_recall),
+            patch("app.services.search.recall_pipeline.VectorRecallService.search", autospec=True, side_effect=vector_recall),
+            patch("app.services.search.app_service.build_result_items", side_effect=self._hydrate_candidate_ids),
+        ):
+            total, items, debug_payload = search_photos(
+                db=self._db(),
+                query=plan.original_query,
+                project_id=1,
+                mode="hybrid",
+                debug=True,
+            )
+
+        self.assertEqual(people_recall.call_args.kwargs["constrained_photo_ids"], {1, 3, 4})
+        self.assertEqual(total, 2)
+        self.assertEqual([item["photo_id"] for item in items], [1, 4])
+        self.assertNotIn(2, [item["photo_id"] for item in items])  # B: wrong location
+        self.assertNotIn(3, [item["photo_id"] for item in items])  # C: wrong person
+        assert debug_payload is not None
+        self.assertEqual(debug_payload["retrieval_queries"]["vector_query_text"], "滑雪")
+
+    def test_v2_shanghai_night_hard_constraint_excludes_beijing(self) -> None:
+        settings = replace(
+            _default_settings(),
+            search_result_cache_ttl_seconds=0,
+            enable_evidence_filter=False,
+            min_display_evidence_level="F",
+        )
+        plan = SearchQueryPlan(
+            original_query="上海夜景",
+            normalized_query="上海夜景",
+            semantic_query_text="城市夜景",
+            expanded_terms=["夜景"],
+            intent="semantic_photo_search",
+            metadata_filters={"place_terms": ["上海"], "metadata_only": False},
+            query_constraints={
+                "requires_visual_evidence": True,
+                "allow_weak_only_match": True,
+                "min_evidence_level": "F",
+            },
+            planner_contract_version="2",
+            planner_filters={"locations": [{"name": "上海", "required": True}]},
+            lexical_plan={"required": [], "preferred": ["夜景"], "excluded": []},
+            semantic_plan={"concepts": ["夜景"], "queries": ["城市夜景"]},
+            visual_plan={"objects": [], "scenes": ["夜景"], "activities": [], "attributes": []},
+        )
+
+        def keyword_recall(_service, _plan, **kwargs):
+            self.assertEqual(kwargs["constrained_photo_ids"], {1, 3})
+            return [
+                SearchCandidate(photo_id=1, keyword_score=0.9, match_source=["keyword"]),
+                SearchCandidate(photo_id=3, keyword_score=0.2, match_source=["keyword"]),
+            ]
+
+        def vector_recall(_service, **kwargs):
+            self.assertEqual(kwargs["constrained_photo_ids"], {1, 3})
+            return (
+                {
+                    1: VectorMatchScores(total_score=0.94, tag_score=0.94),
+                    3: VectorMatchScores(total_score=0.35, tag_score=0.35),
+                },
+                "test-model",
+                "",
+                0,
+            )
+
+        with (
+            patch("app.services.search.app_service.SearchSettingsResolver.resolve", return_value=settings),
+            patch("app.services.search.app_service.resolve_search_query_plan", return_value=plan),
+            patch(
+                "app.services.search.app_service.resolve_people_query",
+                return_value=PeopleQueryResolution(
+                    query=plan.original_query,
+                    residual_query="城市夜景",
+                    people_filter_mode="none",
+                    matched_people=[],
+                ),
+            ),
+            patch("app.services.search.app_service.build_folder_photo_ids_subquery", return_value=None),
+            patch("app.services.search.recall_pipeline.MetadataRecallService.resolve_photo_ids", return_value={1, 3}),
+            patch("app.services.search.recall_pipeline.KeywordRecallService.search", autospec=True, side_effect=keyword_recall),
+            patch("app.services.search.recall_pipeline.VectorRecallService.search", autospec=True, side_effect=vector_recall),
+            patch("app.services.search.app_service.build_result_items", side_effect=self._hydrate_candidate_ids),
+        ):
+            total, items, _debug = search_photos(
+                db=self._db(),
+                query=plan.original_query,
+                project_id=1,
+                mode="hybrid",
+                debug=True,
+            )
+
+        self.assertEqual(total, 2)
+        self.assertEqual([item["photo_id"] for item in items], [1, 3])
+        self.assertNotIn(2, [item["photo_id"] for item in items])  # B: 北京夜景
 
     def test_hybrid_falls_back_to_keyword_when_vector_fails(self) -> None:
         candidate = self._make_candidate()

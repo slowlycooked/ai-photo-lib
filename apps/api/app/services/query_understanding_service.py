@@ -546,18 +546,18 @@ def _parse_metadata_filters(original_query: str) -> dict:
 
     # ── Camera make / model ───────────────────────────────────────────────
     _CAMERA_PATTERNS = [
-        (r"\biphone\b", "Apple", "iPhone"),
-        (r"\bapple\b|苹果手机", "Apple", None),
-        (r"\bsony\b|索尼", "Sony", None),
-        (r"\bcanon\b|佳能", "Canon", None),
-        (r"\bnikon\b|尼康", "Nikon", None),
-        (r"\bdji\b|大疆", "DJI", None),
-        (r"\bhuawei\b|华为", "Huawei", None),
-        (r"\bsamsung\b|三星", "Samsung", None),
-        (r"\bfuji(?:film)?\b|富士", "FUJIFILM", None),
-        (r"\bpanasonic\b|松下", "Panasonic", None),
-        (r"\bolympus\b|奥林巴斯", "Olympus", None),
-        (r"\bleica\b|徕卡", "Leica", None),
+        (r"(?<![A-Za-z0-9])iphone(?![A-Za-z0-9])", "Apple", "iPhone"),
+        (r"(?<![A-Za-z0-9])apple(?![A-Za-z0-9])|苹果手机", "Apple", None),
+        (r"(?<![A-Za-z0-9])sony(?![A-Za-z0-9])|索尼", "Sony", None),
+        (r"(?<![A-Za-z0-9])canon(?![A-Za-z0-9])|佳能", "Canon", None),
+        (r"(?<![A-Za-z0-9])nikon(?![A-Za-z0-9])|尼康", "Nikon", None),
+        (r"(?<![A-Za-z0-9])dji(?![A-Za-z0-9])|大疆", "DJI", None),
+        (r"(?<![A-Za-z0-9])huawei(?![A-Za-z0-9])|华为", "Huawei", None),
+        (r"(?<![A-Za-z0-9])samsung(?![A-Za-z0-9])|三星", "Samsung", None),
+        (r"(?<![A-Za-z0-9])fuji(?:film)?(?![A-Za-z0-9])|富士", "FUJIFILM", None),
+        (r"(?<![A-Za-z0-9])panasonic(?![A-Za-z0-9])|松下", "Panasonic", None),
+        (r"(?<![A-Za-z0-9])olympus(?![A-Za-z0-9])|奥林巴斯", "Olympus", None),
+        (r"(?<![A-Za-z0-9])leica(?![A-Za-z0-9])|徕卡", "Leica", None),
     ]
     for cp, make, model_hint in _CAMERA_PATTERNS:
         cm = re.search(cp, q, re.IGNORECASE)

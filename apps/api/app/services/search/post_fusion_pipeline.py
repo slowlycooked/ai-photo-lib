@@ -38,6 +38,8 @@ def _resolve_min_display_level(settings: EffectiveSearchSettings, query_plan: Se
 
 
 def _is_entity_object_query(query_plan: SearchQueryPlan) -> bool:
+    if str(getattr(query_plan, "planner_contract_version", "1")) == "2":
+        return False
     return query_plan.intent == "animal_search" or query_plan.recommended_profile == "entity_object"
 
 
