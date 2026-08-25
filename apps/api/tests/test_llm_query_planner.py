@@ -17,6 +17,9 @@ from app.services.search.query_planner.llm_query_planner import (  # noqa: E402
     resolve_query_plan_llm_first,
 )
 from app.services.search.query_planner.schema import QueryPlanV2  # noqa: E402
+from app.services.search.query_planner.mapper import (  # noqa: E402
+    planner_v2_output_to_query_plan,
+)
 from app.services.query_understanding_service import understand_query  # noqa: E402
 from app.services.search.settings_resolver import SearchSettingsResolver  # noqa: E402
 
@@ -120,6 +123,64 @@ def test_query_plan_v2_negative() -> None:
     )
 
     assert plan.lexical.excluded == ["下雨"]
+
+
+def test_query_plan_v2_adapter_maps_facts_and_semantics_without_taxonomy() -> None:
+    output = QueryPlanV2.model_validate(
+        {
+            "filters": {
+                "time_ranges": [{"start": "2025-01-01", "end": "2026-01-01"}],
+                "locations": [{"name": "张家口"}],
+                "people": [{"name": "老王"}],
+            },
+            "lexical": {"preferred": ["滑雪"]},
+            "semantic": {"concepts": ["滑雪"], "queries": ["滑雪"]},
+            "visual": {"scenes": ["雪地"], "activities": ["滑雪"]},
+            "confidence": 0.96,
+        }
+    )
+    deterministic = understand_query("去年张家口和老王一起滑雪", project_id=1)
+
+    plan = planner_v2_output_to_query_plan(
+        query="去年张家口和老王一起滑雪",
+        output=output,
+        planner_debug={"parsed": True, "confidence": 0.96},
+        deterministic_plan=deterministic,
+    )
+
+    assert plan.planner_contract_version == "2"
+    assert plan.metadata_filters["date_from"] == "2025-01-01"
+    assert plan.metadata_filters["date_to"] == "2026-01-01"
+    assert plan.metadata_filters["place_terms"] == ["张家口"]
+    assert plan.planner_filters["people"] == [{"name": "老王", "required": True}]
+    assert plan.semantic_query_text == "滑雪"
+    assert plan.expanded_terms == ["滑雪"]
+    assert plan.support_terms == ["雪地", "滑雪"]
+
+
+def test_query_plan_v2_adapter_keeps_metadata_only_query_out_of_vector() -> None:
+    output = QueryPlanV2.model_validate(
+        {
+            "filters": {
+                "time_ranges": [{"start": "2025-01-01", "end": "2025-02-01"}],
+                "camera": [{"make": "Apple", "model_contains": "iPhone"}],
+            },
+            "confidence": 0.94,
+        }
+    )
+    deterministic = understand_query("去年1月iPhone拍的照片", project_id=1)
+
+    plan = planner_v2_output_to_query_plan(
+        query="去年1月iPhone拍的照片",
+        output=output,
+        planner_debug={"parsed": True, "confidence": 0.94},
+        deterministic_plan=deterministic,
+    )
+
+    assert plan.metadata_filters["metadata_only"] is True
+    assert plan.metadata_filters["camera_make"] == "Apple"
+    assert plan.metadata_filters["camera_model"] == "iPhone"
+    assert plan.semantic_query_text == ""
 
 
 def test_llm_query_planner_disabled_uses_rule_fallback() -> None:

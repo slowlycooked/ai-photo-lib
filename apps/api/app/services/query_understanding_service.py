@@ -911,6 +911,13 @@ class SearchQueryPlan:
     metadata_filters: dict = field(default_factory=dict)
     # ── Query planner diagnostics (LLM vs fallback) ───────────────────────────
     planner_debug: dict = field(default_factory=dict)
+    # ── V2 planner contract carried through the legacy execution adapter ─────
+    planner_contract_version: str = "1"
+    planner_filters: dict = field(default_factory=dict)
+    lexical_plan: dict = field(default_factory=dict)
+    semantic_plan: dict = field(default_factory=dict)
+    visual_plan: dict = field(default_factory=dict)
+    unresolved_entities: dict = field(default_factory=dict)
 
     # ── convenience aliases ───────────────────────────────────────────────────
 

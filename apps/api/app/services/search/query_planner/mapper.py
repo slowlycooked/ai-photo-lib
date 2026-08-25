@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import Any
 
 from ...query_understanding_service import SearchQueryPlan
-from .schema import LLMQueryPlannerOutput
+from .schema import LLMQueryPlannerOutput, QueryPlanV2
 
 _ALLOWED_INTENTS = {
     "semantic_photo_search",
@@ -356,4 +356,149 @@ def planner_output_to_query_plan(
         core_facet_evidence=core_facet_evidence,
         metadata_filters=metadata_filters,
         planner_debug=planner_debug,
+    )
+
+
+def planner_v2_output_to_query_plan(
+    *,
+    query: str,
+    output: QueryPlanV2,
+    planner_debug: dict,
+    deterministic_plan: SearchQueryPlan,
+) -> SearchQueryPlan:
+    """Adapt QueryPlan V2 to the existing search execution contract.
+
+    Only deterministic factual metadata is backfilled. Semantic terms, visual
+    meaning, intent and evidence policy are derived from V2 without consulting
+    the legacy rule planner.
+    """
+    lexical_required = _dedupe_terms(output.lexical.required)
+    lexical_preferred = _dedupe_terms(output.lexical.preferred)
+    lexical_excluded = _dedupe_terms(output.lexical.excluded)
+    semantic_concepts = _dedupe_terms(output.semantic.concepts)
+    semantic_queries = _dedupe_terms(output.semantic.queries)
+    visual_objects = _dedupe_terms(output.visual.objects)
+    visual_scenes = _dedupe_terms(output.visual.scenes)
+    visual_activities = _dedupe_terms(output.visual.activities)
+    visual_attributes = _dedupe_terms(output.visual.attributes)
+    visual_terms = _dedupe_terms(
+        visual_objects + visual_scenes + visual_activities + visual_attributes
+    )
+
+    planner_filters = output.filters.model_dump()
+    required_time_ranges = [item for item in output.filters.time_ranges]
+    required_locations = [item for item in output.filters.locations if item.required]
+    required_cameras = [item for item in output.filters.camera if item.required]
+
+    metadata_seed: dict[str, Any] = {
+        "place_terms": _dedupe_terms([item.name for item in required_locations]),
+        "has_gps": output.filters.has_gps,
+        "matched_metadata_terms": _dedupe_terms(
+            [item.name for item in required_locations]
+            + [item.make or "" for item in required_cameras]
+            + [item.model_contains or "" for item in required_cameras]
+        ),
+    }
+    if required_time_ranges:
+        metadata_seed["date_from"] = required_time_ranges[0].start
+        metadata_seed["date_to"] = required_time_ranges[0].end
+    if required_cameras:
+        camera = required_cameras[0]
+        metadata_seed["camera_make"] = camera.make
+        metadata_seed["camera_model"] = camera.model_contains
+
+    has_semantic_residual = bool(
+        lexical_required
+        or lexical_preferred
+        or semantic_concepts
+        or semantic_queries
+        or visual_terms
+    )
+    has_factual_constraints = bool(
+        required_time_ranges
+        or required_locations
+        or required_cameras
+        or output.filters.people
+        or output.filters.has_gps is not None
+        or output.filters.media_types
+        or output.filters.albums
+    )
+    metadata_seed["metadata_only"] = bool(
+        has_factual_constraints and not has_semantic_residual
+    )
+    metadata_filters = merge_metadata_filters(
+        metadata_seed,
+        deterministic_plan.metadata_filters or {},
+    )
+
+    semantic_query_text = " ".join(semantic_queries).strip()
+    semantic_source = "qwen"
+    if not semantic_query_text and not metadata_filters.get("metadata_only"):
+        semantic_query_text = query.strip()
+        semantic_source = "raw_query_fallback"
+
+    intent_facets = {
+        key: values
+        for key, values in {
+            "object": visual_objects,
+            "scene": visual_scenes,
+            "activity": visual_activities,
+            "attribute": visual_attributes,
+        }.items()
+        if values
+    }
+    query_constraints = {
+        "requires_visual_evidence": has_semantic_residual,
+        "allow_weak_only_match": False,
+        "allow_vector_only_match": True,
+        "min_evidence_level": "C",
+        "query_core_facets": [],
+        "requires_metadata_evidence": has_factual_constraints,
+    }
+
+    debug = dict(planner_debug)
+    debug.update(
+        {
+            "planner_contract_version": "2",
+            "semantic_source": semantic_source,
+            "semantic_queries": semantic_queries,
+            "filters": planner_filters,
+            "lexical": output.lexical.model_dump(),
+            "semantic": output.semantic.model_dump(),
+            "visual": output.visual.model_dump(),
+            "unresolved": output.unresolved.model_dump(),
+        }
+    )
+
+    return SearchQueryPlan(
+        original_query=query,
+        normalized_query=query.strip(),
+        semantic_query_text=semantic_query_text,
+        exact_terms=lexical_required,
+        expanded_terms=lexical_preferred,
+        support_terms=visual_terms,
+        broad_terms=semantic_concepts,
+        negative_terms=lexical_excluded,
+        intent_facets=intent_facets,
+        query_constraints=query_constraints,
+        semantic_tags=_dedupe_terms(semantic_concepts + visual_terms),
+        intent=("ocr_text_search" if output.intent == "ocr_search" else "semantic_photo_search"),
+        search_mode="hybrid",
+        filters={},
+        filter_clauses=[],
+        sort=[item.model_dump() for item in output.ranking.sort],
+        recommended_profile=deterministic_plan.recommended_profile,
+        penalize_tags=list(deterministic_plan.penalize_tags),
+        matched_keys=_dedupe_terms(lexical_required + lexical_preferred),
+        concept_terms=semantic_concepts,
+        core_facets=[],
+        core_facet_evidence={},
+        metadata_filters=metadata_filters,
+        planner_debug=debug,
+        planner_contract_version="2",
+        planner_filters=planner_filters,
+        lexical_plan=output.lexical.model_dump(),
+        semantic_plan=output.semantic.model_dump(),
+        visual_plan=output.visual.model_dump(),
+        unresolved_entities=output.unresolved.model_dump(),
     )
