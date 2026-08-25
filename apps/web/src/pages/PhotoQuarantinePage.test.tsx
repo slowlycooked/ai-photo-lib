@@ -14,6 +14,8 @@ const keepMock = vi.fn();
 const batchMock = vi.fn();
 const calibrationMock = vi.fn();
 const taskListMock = vi.fn();
+const startRunMock = vi.fn();
+const cancelTaskMock = vi.fn();
 const setCurrentProjectIdMock = vi.fn();
 
 vi.mock("@/api", async () => {
@@ -31,10 +33,12 @@ vi.mock("@/api", async () => {
         keep: (...args: unknown[]) => keepMock(...args),
         batch: (...args: unknown[]) => batchMock(...args),
         getCalibration: (...args: unknown[]) => calibrationMock(...args),
+        startRun: (...args: unknown[]) => startRunMock(...args),
       },
       projectTasks: {
         ...actual.api.projectTasks,
         list: (...args: unknown[]) => taskListMock(...args),
+        cancel: (...args: unknown[]) => cancelTaskMock(...args),
       },
     },
   };
@@ -131,6 +135,51 @@ describe("PhotoQuarantinePage", () => {
       categories: [],
     });
     taskListMock.mockResolvedValue({ total: 0, items: [] });
+    startRunMock.mockResolvedValue({
+      id: 88,
+      project_id: 1,
+      task_type: "photo_quarantine_analysis",
+      status: "queued",
+      progress_payload: { running: false },
+      result_payload: null,
+      error_message: null,
+    });
+    cancelTaskMock.mockResolvedValue({
+      id: 88,
+      project_id: 1,
+      task_type: "photo_quarantine_analysis",
+      status: "running",
+      progress_payload: { running: true, cancel_requested: true },
+      result_payload: null,
+      error_message: null,
+    });
+  });
+
+  it("changes immediate analysis into a manual stop control", async () => {
+    const user = userEvent.setup();
+    const activeTask = {
+      id: 88,
+      project_id: 1,
+      task_type: "photo_quarantine_analysis",
+      status: "running",
+      progress_payload: { running: true, analyzed: 1 },
+      result_payload: null,
+      error_message: null,
+    };
+    taskListMock
+      .mockResolvedValueOnce({ total: 0, items: [] })
+      .mockResolvedValue({ total: 1, items: [activeTask] });
+    startRunMock.mockResolvedValue(activeTask);
+    renderPage();
+
+    await user.click(await screen.findByRole("button", { name: "立即分析" }));
+
+    await waitFor(() => expect(startRunMock).toHaveBeenCalledWith(1));
+    await user.click(await screen.findByRole("button", { name: "停止分析" }));
+
+    await waitFor(() => expect(cancelTaskMock).toHaveBeenCalledWith(1, 88));
+    expect(await screen.findByRole("button", { name: "正在停止" })).toBeDisabled();
+    expect(screen.getByText("正在停止分析，将在当前图片处理完成后退出")).toBeInTheDocument();
   });
 
   it("shows the recoverability guarantee and restores an item", async () => {

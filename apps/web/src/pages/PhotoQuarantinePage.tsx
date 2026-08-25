@@ -9,6 +9,7 @@ import {
   RefreshCw,
   Save,
   ShieldCheck,
+  Square,
   Trash2,
 } from "lucide-react";
 import { Navigate, useParams } from "react-router-dom";
@@ -133,6 +134,9 @@ export function PhotoQuarantinePage() {
       return task && (task.status === "queued" || task.status === "running") ? 3_000 : 15_000;
     },
   });
+  const latestTask = taskQuery.data?.items[0];
+  const analysisActive = latestTask?.status === "queued" || latestTask?.status === "running";
+  const cancelRequested = latestTask?.progress_payload?.cancel_requested === true;
 
   useEffect(() => {
     const value = settingsQuery.data;
@@ -209,12 +213,28 @@ export function PhotoQuarantinePage() {
   });
   const runMutation = useMutation({
     mutationFn: () => api.photoQuarantine.startRun(selectedProjectId!),
-    onSuccess: () => {
+    onSuccess: (task) => {
       setMessage("分析任务已进入队列，可在任务页查看进度");
+      queryClient.setQueryData(
+        ["photo-quarantine-latest-task", selectedProjectId],
+        { total: 1, items: [task] },
+      );
       queryClient.invalidateQueries({ queryKey: queryKeys.projectTasks(selectedProjectId) });
       queryClient.invalidateQueries({ queryKey: ["photo-quarantine-latest-task", selectedProjectId] });
     },
     onError: (error: Error) => setMessage(`启动失败：${error.message}`),
+  });
+  const stopMutation = useMutation({
+    mutationFn: () => api.projectTasks.cancel(selectedProjectId!, latestTask!.id),
+    onSuccess: (task) => {
+      setMessage(task.status === "cancelled" ? "分析任务已停止" : "正在停止分析，将在当前图片处理完成后退出");
+      queryClient.setQueryData(
+        ["photo-quarantine-latest-task", selectedProjectId],
+        { total: 1, items: [task] },
+      );
+      queryClient.invalidateQueries({ queryKey: queryKeys.projectTasks(selectedProjectId) });
+    },
+    onError: (error: Error) => setMessage(`停止失败：${error.message}`),
   });
   const itemMutation = useMutation({
     mutationFn: ({ item, action }: { item: PhotoQuarantineItem; action: "requestDelete" | "restore" | "confirm" | "keep" }) => {
@@ -291,7 +311,6 @@ export function PhotoQuarantinePage() {
   );
   const retryingQueuedOnly = deleteRequestSelected.length > 0
     && deleteRequestSelected.every((item) => item.status === "delete_queued");
-  const latestTask = taskQuery.data?.items[0];
   const taskProgress = latestTask?.progress_payload ?? latestTask?.result_payload;
   const calibration = calibrationQuery.data;
 
@@ -312,15 +331,29 @@ export function PhotoQuarantinePage() {
           </p>
         </div>
         {canManage && (
-          <button
-            type="button"
-            onClick={() => runMutation.mutate()}
-            disabled={runMutation.isPending}
-            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md bg-primary text-white text-btn-sm font-bold disabled:opacity-50"
-          >
-            {runMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
-            立即分析
-          </button>
+          analysisActive ? (
+            <button
+              type="button"
+              onClick={() => stopMutation.mutate()}
+              disabled={stopMutation.isPending || cancelRequested}
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md bg-danger text-white text-btn-sm font-bold disabled:opacity-50"
+            >
+              {stopMutation.isPending || cancelRequested
+                ? <Loader2 className="w-4 h-4 animate-spin" />
+                : <Square className="w-4 h-4" />}
+              {stopMutation.isPending || cancelRequested ? "正在停止" : "停止分析"}
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => runMutation.mutate()}
+              disabled={runMutation.isPending}
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md bg-primary text-white text-btn-sm font-bold disabled:opacity-50"
+            >
+              {runMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
+              {runMutation.isPending ? "正在启动" : "立即分析"}
+            </button>
+          )
         )}
       </div>
 
