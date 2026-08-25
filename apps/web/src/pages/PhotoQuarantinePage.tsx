@@ -38,12 +38,8 @@ const PAGE_SIZE = 24;
 
 const STATUS_OPTIONS = [
   { value: PENDING_STATUSES, label: "待处理" },
-  { value: "review", label: "待审核" },
-  { value: "delete_queued", label: "后台删除队列" },
-  { value: "quarantined", label: "已移入待删除区" },
-  { value: "restored", label: "已放回" },
-  { value: "kept", label: "已保留" },
-  { value: "deleted_confirmed", label: "已确认删除" },
+  { value: "delete_queued,quarantined,deleted_confirmed", label: "已提交删除" },
+  { value: "kept,restored", label: "已保留" },
   { value: "analysis_failed,queue_failed,move_failed,restore_conflict,restore_failed", label: "异常" },
 ] as const;
 

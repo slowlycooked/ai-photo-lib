@@ -316,7 +316,7 @@ describe("PhotoQuarantinePage", () => {
     });
     renderPage();
 
-    expect(await screen.findByText("已提交删除")).toBeInTheDocument();
+    expect(await screen.findByLabelText("已提交删除，等待后台处理")).toBeInTheDocument();
     expect(screen.getByText("等待 NAS 后台处理")).toBeInTheDocument();
   });
 
