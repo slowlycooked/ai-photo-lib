@@ -90,6 +90,12 @@ class BuildPlanStage:
             execution_context=execution_context,
             trace_writer=trace_writer,
         )
+        self._resolve_structured_filters(
+            db,
+            request=request,
+            execution_context=execution_context,
+            trace_writer=trace_writer,
+        )
         self._prepare_concept_debug(request.project_id, execution_context)
 
         return BuildPlanStageResult(
@@ -291,3 +297,33 @@ class BuildPlanStage:
             "candidates": execution_context.concept_candidates_count,
             "top_scores": [],
         }
+
+    def _resolve_structured_filters(
+        self,
+        db: Session,
+        *,
+        request: SearchPipelineRequest,
+        execution_context: SearchExecutionContext,
+        trace_writer: SearchDebugTraceWriter,
+    ) -> None:
+        clauses = list(getattr(execution_context.search_query_plan, "filter_clauses", None) or [])
+        if request.project_id is None or not clauses:
+            return
+
+        matched_photo_ids = self._deps.resolve_structured_filter_photo_ids(
+            db,
+            project_id=request.project_id,
+            filter_clauses=clauses,
+            folder_photo_subquery=execution_context.folder_photo_subquery,
+        )
+        execution_context.constrained_photo_ids = (
+            matched_photo_ids
+            if execution_context.constrained_photo_ids is None
+            else execution_context.constrained_photo_ids & matched_photo_ids
+        )
+        trace_writer.write_stage(
+            "structured_filter",
+            filters=clauses,
+            matched_count=len(matched_photo_ids),
+            constrained_count=len(execution_context.constrained_photo_ids),
+        )

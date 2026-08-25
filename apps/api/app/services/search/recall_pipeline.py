@@ -132,6 +132,12 @@ def run_metadata_stage(
             metadata_filters=execution_context.metadata_filters,
             folder_photo_subquery=execution_context.folder_photo_subquery,
         )
+        if execution_context.constrained_photo_ids is not None:
+            metadata_results = [
+                candidate
+                for candidate in metadata_results
+                if candidate.photo_id in execution_context.constrained_photo_ids
+            ]
         trace_writer.write_stage(
             "metadata_filter",
             path="metadata-only",

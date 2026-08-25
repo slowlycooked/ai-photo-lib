@@ -10,6 +10,7 @@ from sqlalchemy.sql import Select
 
 from ...models.ai import PhotoAIAnalysis
 from ...models.face import FaceDetection, Person, PersonFaceAssignment
+from ...models.photo import Photo
 from ...services.folder_service import build_folder_photo_ids_subquery
 from .query_understanding import SearchQueryPlan
 from .types import (
@@ -198,6 +199,78 @@ def resolve_face_filter_photo_ids(
         photo_ids = photo_ids & unnamed_photo_ids if has_unnamed_people else photo_ids - unnamed_photo_ids
 
     return photo_ids
+
+
+_STRUCTURED_FILTER_FIELDS = {
+    "people_count": PhotoAIAnalysis.people_count,
+    "taken_at": Photo.taken_at,
+    "created_at": Photo.created_at,
+    "camera_make": Photo.camera_make,
+    "camera_model": Photo.camera_model,
+    "iso": Photo.iso,
+}
+
+
+def _apply_structured_operator(query, expression, operator: str, value):
+    if operator == "eq":
+        return query.filter(expression == value)
+    if operator == "ne":
+        return query.filter(expression != value)
+    if operator == "gt":
+        return query.filter(expression > value)
+    if operator == "gte":
+        return query.filter(expression >= value)
+    if operator == "lt":
+        return query.filter(expression < value)
+    if operator == "lte":
+        return query.filter(expression <= value)
+    if operator == "contains":
+        return query.filter(expression.ilike(f"%{value}%"))
+    if operator == "in" and isinstance(value, list):
+        return query.filter(expression.in_(value))
+    return query
+
+
+def resolve_structured_filter_photo_ids(
+    db: Session,
+    *,
+    project_id: int,
+    filter_clauses: list[dict],
+    folder_photo_subquery: Optional[Select] = None,
+) -> set[int]:
+    """Resolve validated dynamic filter clauses through an allow-listed registry."""
+    query = (
+        db.query(Photo.id)
+        .outerjoin(
+            PhotoAIAnalysis,
+            (PhotoAIAnalysis.photo_id == Photo.id)
+            & (PhotoAIAnalysis.project_id == Photo.project_id),
+        )
+        .filter(Photo.project_id == project_id, Photo.deleted_at.is_(None))
+    )
+
+    for clause in filter_clauses:
+        field = str(clause.get("field") or "")
+        operator = str(clause.get("operator") or "")
+        value = clause.get("value")
+        if field == "has_gps" and operator in {"eq", "ne"} and isinstance(value, bool):
+            has_gps = value if operator == "eq" else not value
+            gps_condition = sa.and_(
+                Photo.gps_latitude.is_not(None),
+                Photo.gps_longitude.is_not(None),
+            )
+            query = query.filter(gps_condition if has_gps else sa.not_(gps_condition))
+            continue
+
+        expression = _STRUCTURED_FILTER_FIELDS.get(field)
+        if expression is None:
+            continue
+        query = _apply_structured_operator(query, expression, operator, value)
+
+    if folder_photo_subquery is not None:
+        query = query.filter(Photo.id.in_(folder_photo_subquery))
+
+    return {int(row[0]) for row in query.all()}
 
 
 def is_explicit_indoor_query(query_plan: SearchQueryPlan) -> bool:

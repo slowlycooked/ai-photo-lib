@@ -91,6 +91,23 @@ def _merge_list_terms(primary: list[str], fallback: list[str]) -> list[str]:
     return _dedupe_terms(list(primary or []) + list(fallback or []))
 
 
+def _merge_control_dicts(primary: list[dict], fallback: list[dict]) -> list[dict]:
+    merged: list[dict] = []
+    seen: set[tuple[str, str, str]] = set()
+    for item in list(primary or []) + list(fallback or []):
+        value = dict(item or {})
+        key = (
+            str(value.get("field") or ""),
+            str(value.get("operator") or value.get("order") or ""),
+            repr(value.get("value")),
+        )
+        if not key[0] or key in seen:
+            continue
+        seen.add(key)
+        merged.append(value)
+    return merged
+
+
 def _merge_core_facet_evidence(primary: dict[str, Any], fallback: dict[str, Any]) -> dict[str, Any]:
     merged: dict[str, Any] = {}
     all_keys = set((fallback or {}).keys()) | set((primary or {}).keys())
@@ -293,6 +310,15 @@ def planner_output_to_query_plan(
         )
     )
 
+    filter_clauses = _merge_control_dicts(
+        [item.model_dump() for item in output.filter_clauses],
+        fallback_plan.filter_clauses,
+    )
+    sort_specs = _merge_control_dicts(
+        [item.model_dump() for item in output.sort],
+        fallback_plan.sort,
+    )
+
     return SearchQueryPlan(
         original_query=query,
         normalized_query=output.normalized_query.strip() or fallback_plan.normalized_query,
@@ -316,6 +342,8 @@ def planner_output_to_query_plan(
             else fallback_plan.search_mode
         ),
         filters=filters,
+        filter_clauses=filter_clauses,
+        sort=sort_specs,
         recommended_profile=fallback_plan.recommended_profile,
         penalize_tags=fallback_plan.penalize_tags,
         matched_keys=matched_keys,

@@ -58,6 +58,8 @@ def build_query_plan_trace_event(
         "negative_terms": query_plan.negative_terms,
         "matched_keys": query_plan.matched_keys,
         "core_facets": query_plan.core_facets,
+        "filter_clauses": query_plan.filter_clauses,
+        "sort": query_plan.sort,
     }
     if include_recommended_profile:
         event["recommended_profile"] = query_plan.recommended_profile

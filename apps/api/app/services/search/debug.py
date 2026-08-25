@@ -164,6 +164,8 @@ def build_debug_payload(
             "exact_terms": query_plan.exact_terms,
             "expanded_terms": query_plan.expanded_terms,
             "semantic_query_text": query_plan.semantic_query_text,
+            "filter_clauses": query_plan.filter_clauses,
+            "sort": query_plan.sort,
             "query_planner": query_plan.planner_debug,
         },
         "original_query": query_plan.original_query,
@@ -186,6 +188,8 @@ def build_debug_payload(
         "intent_facets": query_plan.intent_facets,
         "matched_keys": query_plan.matched_keys,
         "query_constraints": query_plan.query_constraints,
+        "filter_clauses": query_plan.filter_clauses,
+        "sort": query_plan.sort,
         "core_facets": query_plan.core_facets,
         "query_planner": query_plan.planner_debug,
         # Penalise tags snapshot

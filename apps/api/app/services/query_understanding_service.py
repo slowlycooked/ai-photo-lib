@@ -60,6 +60,55 @@ _NOISE_PREFIXES = re.compile(
     r"^(搜索|找一下|帮我找|请找|查找|给我看)"
 )
 
+_DYNAMIC_FILTER_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"人数\s*(?:大于|超过)\s*(\d+)|超过\s*(\d+)\s*人"), "gt"),
+    (re.compile(r"人数\s*(?:不少于|至少|大于等于)\s*(\d+)|(\d+)\s*人以上"), "gte"),
+    (re.compile(r"人数\s*(?:小于|少于)\s*(\d+)|少于\s*(\d+)\s*人"), "lt"),
+    (re.compile(r"人数\s*(?:不超过|至多|小于等于)\s*(\d+)|(\d+)\s*人以下"), "lte"),
+    (re.compile(r"人数\s*(?:等于|为|是)\s*(\d+)|(?:正好|恰好)\s*(\d+)\s*人"), "eq"),
+)
+
+_SORT_PATTERNS: tuple[tuple[re.Pattern[str], dict[str, str]], ...] = (
+    (
+        re.compile(r"(?:按)?(?:拍摄)?时间(?:倒序|降序)|最新(?:优先|的?在前)|最近(?:优先|的?在前)"),
+        {"field": "taken_at", "order": "desc"},
+    ),
+    (
+        re.compile(r"(?:按)?(?:拍摄)?时间(?:正序|升序)|最早(?:优先|的?在前)|最旧(?:优先|的?在前)"),
+        {"field": "taken_at", "order": "asc"},
+    ),
+)
+
+
+def _parse_dynamic_query_controls(query: str) -> tuple[str, list[dict], list[dict]]:
+    """Extract deterministic controls while preserving the semantic residual."""
+    residual = query
+    filter_clauses: list[dict] = []
+    sort_specs: list[dict] = []
+
+    for pattern, operator in _DYNAMIC_FILTER_PATTERNS:
+        match = pattern.search(residual)
+        if match is None:
+            continue
+        raw_value = next((value for value in match.groups() if value is not None), None)
+        if raw_value is not None:
+            filter_clauses.append(
+                {"field": "people_count", "operator": operator, "value": int(raw_value)}
+            )
+        residual = pattern.sub(" ", residual)
+        break
+
+    for pattern, sort_spec in _SORT_PATTERNS:
+        if pattern.search(residual) is None:
+            continue
+        sort_specs.append(dict(sort_spec))
+        residual = pattern.sub(" ", residual)
+        break
+
+    residual = re.sub(r"[,，;；]+", " ", residual)
+    residual = re.sub(r"\s+", " ", residual).strip()
+    return residual, filter_clauses, sort_specs
+
 
 def _clean_chinese_query(query: str) -> str:
     """Strip common Chinese noise words that add no search value."""
@@ -843,6 +892,10 @@ class SearchQueryPlan:
     intent: str = "semantic_photo_search"
     search_mode: Literal["keyword", "vector", "hybrid"] = "hybrid"
     filters: dict = field(default_factory=dict)
+    # Generic, validated query controls. Legacy fixed filters remain above for
+    # compatibility with existing planners and filter policy.
+    filter_clauses: list[dict] = field(default_factory=list)
+    sort: list[dict] = field(default_factory=list)
     recommended_profile: str = "default_semantic"
     penalize_tags: list[str] = field(default_factory=list)
     # ── debug / explain ───────────────────────────────────────────────────────
@@ -925,9 +978,14 @@ def understand_query(
     if not original_query:
         return SearchQueryPlan(original_query=original_query, normalized_query=original_query)
 
+    semantic_residual, filter_clauses, sort_specs = _parse_dynamic_query_controls(original_query)
+
     # Clean Chinese noise words BEFORE tokenisation so they don't become
     # spurious exact_terms (e.g. "的照片" should not end up in exact_terms).
-    query = _clean_chinese_query(original_query)
+    has_dynamic_controls = bool(filter_clauses or sort_specs)
+    query = _clean_chinese_query(
+        semantic_residual if has_dynamic_controls else original_query
+    )
 
     extension_pack_ids = normalise_extension_pack_ids(rule_extension_pack_ids)
     rule_set = build_rule_set(
@@ -1188,6 +1246,8 @@ def understand_query(
         expanded_terms=expanded_terms,
         broad_terms=broad_terms,
     )
+    if has_dynamic_controls and not query:
+        semantic_query_text = ""
 
     semantic_tags: list[str] = {
         "animal_search": ["动物", "宠物", "野生动物"],
@@ -1258,6 +1318,8 @@ def understand_query(
         intent=intent,
         search_mode=search_mode,
         filters=filters,
+        filter_clauses=filter_clauses,
+        sort=sort_specs,
         recommended_profile=profile,
         penalize_tags=penalize_tags,
         matched_keys=matched_keys_set,

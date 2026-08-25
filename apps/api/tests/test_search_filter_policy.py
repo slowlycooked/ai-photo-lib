@@ -4,6 +4,7 @@ import os
 import unittest
 from dataclasses import replace
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 os.environ.setdefault("DATABASE_URL", "sqlite:///ignored.db")
 os.environ.setdefault("PHOTO_LIBRARY_PATH", "/tmp")
@@ -14,12 +15,35 @@ os.environ.setdefault("OPENAI_MODEL", "test-model")
 os.environ.setdefault("OPENAI_VISION_MODEL", "test-model")
 
 from app.services.query_understanding_service import understand_query  # noqa: E402
-from app.services.search.filter_policy import core_facet_passes  # noqa: E402
+from app.services.search.filter_policy import (  # noqa: E402
+    core_facet_passes,
+    resolve_structured_filter_photo_ids,
+)
 from app.services.search.settings_resolver import SearchSettingsResolver  # noqa: E402
 from app.services.search.types import SearchCandidate  # noqa: E402
 
 
 class SearchFilterPolicyTest(unittest.TestCase):
+    def test_dynamic_filter_registry_resolves_matching_photo_ids(self) -> None:
+        db = MagicMock()
+        query = MagicMock()
+        db.query.return_value = query
+        query.outerjoin.return_value = query
+        query.filter.return_value = query
+        query.all.return_value = [(12,), (27,)]
+
+        photo_ids = resolve_structured_filter_photo_ids(
+            db,
+            project_id=3,
+            filter_clauses=[
+                {"field": "people_count", "operator": "gt", "value": 10},
+                {"field": "camera_make", "operator": "contains", "value": "Sony"},
+            ],
+        )
+
+        self.assertEqual(photo_ids, {12, 27})
+        self.assertGreaterEqual(query.filter.call_count, 3)
+
     def test_night_core_facet_uses_architecture_pack_positive_terms(self) -> None:
         settings = replace(
             SearchSettingsResolver.defaults(),

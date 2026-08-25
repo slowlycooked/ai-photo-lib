@@ -4,6 +4,7 @@ import os
 import unittest
 from collections import namedtuple
 from dataclasses import replace
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -24,6 +25,7 @@ from app.services.search.people_query_resolver import (  # noqa: E402
 )
 from app.services.search.people_recall import PeopleRecallResult  # noqa: E402
 from app.services.search.result_cache import _SEARCH_RESULT_CACHE  # noqa: E402
+from app.services.search.result_hydrator import _sort_candidates  # noqa: E402
 from app.services.search.types import (  # noqa: E402
     EffectiveSearchSettings,
     SearchCandidate,
@@ -107,6 +109,32 @@ class RRFMergeTest(unittest.TestCase):
         merged = rrf_merge(keyword, vector, _default_settings(), people_results=people)
         ids = {item.photo_id for item in merged}
         self.assertEqual(ids, {1, 2, 3})
+
+    def test_explicit_time_sort_reorders_candidates_before_pagination(self) -> None:
+        db = MagicMock()
+        query = MagicMock()
+        db.query.return_value = query
+        query.filter.return_value = query
+        query.all.return_value = [
+            (1, datetime(2024, 1, 1, tzinfo=timezone.utc), datetime(2024, 1, 2, tzinfo=timezone.utc)),
+            (2, datetime(2025, 1, 1, tzinfo=timezone.utc), datetime(2025, 1, 2, tzinfo=timezone.utc)),
+            (3, None, datetime(2026, 1, 2, tzinfo=timezone.utc)),
+        ]
+        candidates = [
+            SearchCandidate(photo_id=1, final_score=0.9),
+            SearchCandidate(photo_id=2, final_score=0.3),
+            SearchCandidate(photo_id=3, final_score=0.8),
+        ]
+
+        ordered = _sort_candidates(
+            db,
+            candidates,
+            project_id=7,
+            mode="hybrid",
+            sort_specs=[{"field": "taken_at", "order": "desc"}],
+        )
+
+        self.assertEqual([candidate.photo_id for candidate in ordered], [2, 1, 3])
 
 
 class VectorRecallServiceTest(unittest.TestCase):
@@ -492,6 +520,64 @@ class SearchPhotosTest(unittest.TestCase):
         self.assertEqual(items[0]["photo_id"], 9)
         resolve_face_filter.assert_called_once()
         self.assertEqual(keyword_search.call_args.kwargs["constrained_photo_ids"], {9})
+
+    def test_dynamic_filter_clauses_constrain_all_recall_paths(self) -> None:
+        candidate = self._make_candidate(photo_id=9)
+        query_plan = SearchQueryPlan(
+            original_query="同学合照，人数大于10",
+            normalized_query="同学合照",
+            semantic_query_text="同学合照",
+            exact_terms=["同学", "合照"],
+            intent="group_photo_search",
+            filter_clauses=[{"field": "people_count", "operator": "gt", "value": 10}],
+            sort=[{"field": "taken_at", "order": "desc"}],
+        )
+
+        with (
+            patch(
+                "app.services.search.app_service.SearchSettingsResolver.resolve",
+                return_value=self._settings(),
+            ),
+            patch(
+                "app.services.search.app_service.understand_query",
+                return_value=query_plan,
+            ),
+            patch(
+                "app.services.search.app_service._resolve_structured_filter_photo_ids",
+                return_value={9},
+            ) as resolve_structured,
+            patch(
+                "app.services.search.app_service.build_folder_photo_ids_subquery",
+                return_value=None,
+            ),
+            patch(
+                "app.services.search.recall_pipeline.KeywordRecallService.search",
+                return_value=[candidate],
+            ) as keyword_search,
+            patch(
+                "app.services.search.recall_pipeline.VectorRecallService.search",
+                side_effect=EmbeddingRequestError("down"),
+            ),
+            patch(
+                "app.services.search.app_service.build_result_items",
+                return_value=(1, [{"photo_id": 9, "score": 0.7}]),
+            ) as build_items,
+        ):
+            total, items, _debug = search_photos(
+                db=self._db(),
+                query=query_plan.original_query,
+                project_id=1,
+                mode="hybrid",
+            )
+
+        self.assertEqual(total, 1)
+        self.assertEqual(items[0]["photo_id"], 9)
+        resolve_structured.assert_called_once()
+        self.assertEqual(keyword_search.call_args.kwargs["constrained_photo_ids"], {9})
+        self.assertEqual(
+            build_items.call_args.kwargs["sort_specs"],
+            [{"field": "taken_at", "order": "desc"}],
+        )
 
     def test_vector_fallback_debug_has_error(self) -> None:
         candidate = self._make_candidate()

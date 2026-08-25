@@ -109,6 +109,7 @@ class SearchPipelineRunner:
             result = self._hydration_stage.people_only_result(
                 self._db,
                 people_stage.people_only_candidates,
+                execution_context=execution_context,
                 project_id=project_id or 0,
                 page=page,
                 page_size=page_size,
@@ -243,6 +244,7 @@ class SearchPipelineRunner:
         result = self._hydration_stage.hybrid_result(
             self._db,
             merged,
+            execution_context=execution_context,
             project_id=project_id or 0,
             page=page,
             page_size=page_size,

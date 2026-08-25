@@ -29,6 +29,7 @@ from .facet_evidence_policy import FacetEvidencePolicy
 from .fallback_policy import SearchFallbackPolicy
 from .filter_policy import (
     resolve_face_filter_photo_ids as resolve_face_filter_photo_ids_policy,
+    resolve_structured_filter_photo_ids as resolve_structured_filter_photo_ids_policy,
 )
 from .fusion import fuse_hybrid_candidates
 from .keyword_recall import KeywordRecallService
@@ -78,6 +79,7 @@ def _build_orchestrator_deps() -> SearchOrchestratorDeps:
         people_resolution_cls=PeopleQueryResolution,
         resolve_folder_photo_subquery=_resolve_folder_photo_subquery,
         resolve_face_filter_photo_ids=_resolve_face_filter_photo_ids,
+        resolve_structured_filter_photo_ids=_resolve_structured_filter_photo_ids,
         derive_concept_query_context=derive_concept_query_context,
         run_metadata_stage=run_metadata_stage,
         run_people_stage=run_people_stage,
@@ -158,6 +160,21 @@ def _resolve_face_filter_photo_ids(
         face_count_max=face_count_max,
         has_review_pending=has_review_pending,
         has_unnamed_people=has_unnamed_people,
+    )
+
+
+def _resolve_structured_filter_photo_ids(
+    db: Session,
+    *,
+    project_id: int,
+    filter_clauses: list[dict],
+    folder_photo_subquery: Optional[Select],
+) -> set[int]:
+    return resolve_structured_filter_photo_ids_policy(
+        db,
+        project_id=project_id,
+        filter_clauses=filter_clauses,
+        folder_photo_subquery=folder_photo_subquery,
     )
 
 

@@ -99,6 +99,35 @@ class RecallPipelineStageTest(unittest.TestCase):
         self.assertEqual(trace[-1]["stage"], "metadata_filter")
         self.assertEqual(trace[-1]["path"], "metadata-only")
 
+    def test_metadata_only_stage_preserves_dynamic_candidate_constraints(self) -> None:
+        trace: list[dict] = []
+        context = self._build_context(
+            metadata_filters={"metadata_only": True, "year": 2024},
+            metadata_filter_active=True,
+            metadata_only_requested=True,
+            metadata_only_allowed=True,
+            constrained_photo_ids={7},
+        )
+
+        with patch(
+            "app.services.search.recall_pipeline.MetadataRecallService.search",
+            return_value=[
+                SearchCandidate(photo_id=7, final_score=0.8),
+                SearchCandidate(photo_id=8, final_score=0.9),
+            ],
+        ):
+            result = run_metadata_stage(
+                db=MagicMock(),
+                execution_context=context,
+                trace_writer=SearchDebugTraceWriter(trace),
+            )
+
+        assert result.metadata_only_candidates is not None
+        self.assertEqual(
+            [candidate.photo_id for candidate in result.metadata_only_candidates],
+            [7],
+        )
+
     def test_metadata_mixed_stage_intersects_existing_constraints(self) -> None:
         trace: list[dict] = []
         writer = SearchDebugTraceWriter(trace)

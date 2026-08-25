@@ -31,11 +31,19 @@ def build_result_items(
     page: int,
     page_size: int,
     debug: bool,
+    sort_specs: Optional[list[dict]] = None,
 ) -> tuple[int, list[dict]]:
     """Paginate *candidates* and load photo rows.
 
     Returns (total_count, page_items).
     """
+    candidates = _sort_candidates(
+        db,
+        candidates,
+        project_id=project_id,
+        mode=mode,
+        sort_specs=sort_specs or [],
+    )
     total = len(candidates)
     if total == 0:
         return 0, []
@@ -180,6 +188,78 @@ def build_result_items(
     return total, items
 
 
+def _candidate_relevance(candidate: SearchCandidate, mode: SearchMode) -> float:
+    if mode == "vector":
+        return float(candidate.vector_score)
+    if mode == "hybrid":
+        return float(candidate.final_score)
+    return float(candidate.keyword_score)
+
+
+def _sort_candidates(
+    db: Session,
+    candidates: list[SearchCandidate],
+    *,
+    project_id: int,
+    mode: SearchMode,
+    sort_specs: list[dict],
+) -> list[SearchCandidate]:
+    """Apply validated sort specs before pagination; preserve relevance by default."""
+    if not candidates or not sort_specs:
+        return candidates
+
+    supported_specs = [
+        spec for spec in sort_specs
+        if spec.get("field") in {"relevance", "taken_at", "created_at"}
+        and spec.get("order") in {"asc", "desc"}
+    ]
+    if not supported_specs:
+        return candidates
+
+    timestamp_fields = {
+        str(spec["field"])
+        for spec in supported_specs
+        if spec.get("field") in {"taken_at", "created_at"}
+    }
+    timestamps: dict[int, dict[str, object]] = {}
+    if timestamp_fields:
+        rows = (
+            db.query(Photo.id, Photo.taken_at, Photo.created_at)
+            .filter(
+                Photo.project_id == project_id,
+                Photo.deleted_at.is_(None),
+                Photo.id.in_([candidate.photo_id for candidate in candidates]),
+            )
+            .all()
+        )
+        timestamps = {
+            int(photo_id): {"taken_at": taken_at, "created_at": created_at}
+            for photo_id, taken_at, created_at in rows
+        }
+
+    ordered = list(candidates)
+    for spec in reversed(supported_specs):
+        field = str(spec["field"])
+        reverse = spec["order"] == "desc"
+        if field == "relevance":
+            ordered.sort(key=lambda candidate: _candidate_relevance(candidate, mode), reverse=reverse)
+            continue
+
+        with_value = [
+            candidate
+            for candidate in ordered
+            if timestamps.get(candidate.photo_id, {}).get(field) is not None
+        ]
+        with_value_ids = {candidate.photo_id for candidate in with_value}
+        without_value = [candidate for candidate in ordered if candidate.photo_id not in with_value_ids]
+        with_value.sort(
+            key=lambda candidate: timestamps[candidate.photo_id][field],
+            reverse=reverse,
+        )
+        ordered = with_value + without_value
+    return ordered
+
+
 def build_result_response(
     db: Session,
     candidates: list[SearchCandidate],
@@ -193,6 +273,7 @@ def build_result_response(
     trace: list[dict],
     debug_factory: Optional[Callable[..., dict]] = None,
     debug_kwargs: Optional[dict] = None,
+    sort_specs: Optional[list[dict]] = None,
 ) -> tuple[int, list[dict], Optional[dict]]:
     """Hydrate candidates, append result trace, and optionally build debug payload."""
     total, items = build_result_items(
@@ -203,6 +284,7 @@ def build_result_response(
         page=page,
         page_size=page_size,
         debug=debug,
+        sort_specs=sort_specs,
     )
     trace.append(
         {

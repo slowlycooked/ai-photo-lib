@@ -863,3 +863,44 @@ def test_mapper_llm_exact_terms_not_polluted_by_fallback_sentence() -> None:
     # LLM expanded terms should not be merged with fallback
     assert "滑雪场" in plan.expanded_terms
     assert "雪地" in plan.expanded_terms
+
+
+def test_llm_query_planner_maps_dynamic_filter_and_sort_controls() -> None:
+    settings = replace(
+        SearchSettingsResolver.defaults(),
+        query_planner_enabled=True,
+        query_planner_endpoint_url="http://127.0.0.1:18084/v1/chat/completions",
+        query_planner_model_name="qwen3.8:27b",
+    )
+    llm_json = """
+    {
+      "intent": "group_photo_search",
+      "search_mode": "hybrid",
+      "normalized_query": "同学合照",
+      "semantic_query_text": "同学合照",
+      "terms": {"exact": ["同学", "合照"], "expanded": ["集体照"]},
+      "filter_clauses": [
+        {"field": "people_count", "operator": "gt", "value": 10}
+      ],
+      "sort": [{"field": "taken_at", "order": "desc"}],
+      "confidence": 0.95
+    }
+    """
+
+    with patch(
+        "app.services.search.query_planner.llm_query_planner.call_chat_completion",
+        return_value=llm_json,
+    ):
+        plan = resolve_query_plan_llm_first(
+            "同学合照，人数大于10，时间倒序",
+            project_id=1,
+            settings=settings,
+            understander=understand_query,
+            include_raw_output=True,
+        )
+
+    assert plan.semantic_query_text == "同学合照"
+    assert plan.filter_clauses == [
+        {"field": "people_count", "operator": "gt", "value": 10}
+    ]
+    assert plan.sort == [{"field": "taken_at", "order": "desc"}]

@@ -70,10 +70,18 @@ _DEFAULT_USER_PROMPT_TEMPLATE = """请为以下照片搜索请求生成 JSON 搜
 分析步骤（必须按顺序执行）：
 1. 识别 metadata 条件：时间（年/月/季节/日期范围）、地点（place_terms）、相机型号、GPS。
 2. 去掉 metadata 词后，剩余的核心视觉语义是什么（semantic residual）。
-3. 若 semantic residual 为空 → metadata_filters.metadata_only=true；否则 false。
-4. 将 semantic residual 展开为 facets（activity/scene/object/people/weather/time/location）和 terms。
-5. semantic_query_text：只描述视觉内容，不重复 metadata 词，供向量检索使用。
-6. 复合查询（既有 metadata 又有 semantic residual）时，query_constraints.allow_weak_only_match=true。
+3. 识别精确过滤条件，输出 filter_clauses 数组；不要把过滤词放进 semantic_query_text。
+4. 识别用户明确指定的排序，输出 sort 数组；未指定排序时输出空数组。
+5. 若 semantic residual 为空 → metadata_filters.metadata_only=true；否则 false。
+6. 将 semantic residual 展开为 facets（activity/scene/object/people/weather/time/location）和 terms。
+7. semantic_query_text：只描述视觉内容，不重复 metadata、过滤和排序词，供向量检索使用。
+8. 复合查询时，query_constraints.allow_weak_only_match=true。
+
+动态控制格式：
+- filter_clauses: [{field, operator, value}]。operator 仅允许 eq/ne/gt/gte/lt/lte/contains/in。
+- sort: [{field, order}]。field 仅允许 relevance/taken_at/created_at；order 仅允许 asc/desc。
+- 示例："人数大于10" → {field:"people_count", operator:"gt", value:10}。
+- 示例："时间倒序" → {field:"taken_at", order:"desc"}。
 
 terms 规则：
 - exact：核心视觉语义锚点词，不含 metadata 词，不含整句原文。示例：["滑雪","张家口"]
@@ -104,7 +112,8 @@ query_constraints.allow_weak_only_match: false
 
 必须输出合法 JSON。优先输出最小必要字段：
 intent, search_mode, normalized_query, semantic_query_text,
-terms(exact, expanded), metadata_filters(place_terms, metadata_only, matched_metadata_terms),
+terms(exact, expanded), filter_clauses, sort,
+metadata_filters(place_terms, metadata_only, matched_metadata_terms),
 query_constraints(requires_visual_evidence, allow_weak_only_match, min_evidence_level),
 confidence, fallback_reason。
 其他字段可省略（缺失字段会由系统默认值补齐）。

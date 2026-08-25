@@ -11,6 +11,35 @@ class TestUnderstandQuery:
         plan = understand_query("dog in park")
         assert isinstance(plan, SearchQueryPlan)
 
+    def test_extracts_dynamic_controls_from_semantic_query(self):
+        plan = understand_query("同学合照，人数大于10，时间倒序")
+
+        assert "同学合照" in plan.semantic_query_text
+        assert "人数大于10" not in plan.semantic_query_text
+        assert "时间倒序" not in plan.semantic_query_text
+        assert plan.filter_clauses == [
+            {"field": "people_count", "operator": "gt", "value": 10}
+        ]
+        assert plan.sort == [{"field": "taken_at", "order": "desc"}]
+
+    def test_control_only_query_does_not_restore_controls_as_semantic_text(self):
+        plan = understand_query("人数大于10，时间倒序")
+
+        assert plan.semantic_query_text == ""
+        assert plan.exact_terms == []
+        assert plan.filter_clauses == [
+            {"field": "people_count", "operator": "gt", "value": 10}
+        ]
+        assert plan.sort == [{"field": "taken_at", "order": "desc"}]
+
+    def test_keeps_open_ended_semantics_without_inventing_controls(self):
+        plan = understand_query("海边划船多人")
+
+        assert "海边" in plan.semantic_query_text
+        assert "划船" in plan.semantic_query_text
+        assert plan.filter_clauses == []
+        assert plan.sort == []
+
     def test_original_query_preserved(self):
         plan = understand_query("sunset photo")
         assert plan.original_query == "sunset photo"

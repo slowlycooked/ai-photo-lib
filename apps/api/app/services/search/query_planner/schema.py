@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -101,6 +101,67 @@ class PlannerFilters(BaseModel):
         return _coerce_empty_list_to_none(cls, data)
 
 
+PlannerFilterValue = Union[str, int, float, bool, list[str], list[int]]
+
+
+class PlannerFilterClause(BaseModel):
+    """Validated dynamic filter emitted by the query planner.
+
+    Fields and operators are intentionally allow-listed. The model describes
+    intent only; it can never emit executable SQL or arbitrary column names.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    field: Literal[
+        "people_count",
+        "taken_at",
+        "created_at",
+        "camera_make",
+        "camera_model",
+        "iso",
+        "has_gps",
+    ]
+    operator: Literal["eq", "ne", "gt", "gte", "lt", "lte", "contains", "in"]
+    value: PlannerFilterValue
+
+    @model_validator(mode="after")
+    def _validate_field_operator(self) -> "PlannerFilterClause":
+        allowed_by_field = {
+            "people_count": {"eq", "ne", "gt", "gte", "lt", "lte", "in"},
+            "iso": {"eq", "ne", "gt", "gte", "lt", "lte", "in"},
+            "taken_at": {"eq", "ne", "gt", "gte", "lt", "lte"},
+            "created_at": {"eq", "ne", "gt", "gte", "lt", "lte"},
+            "camera_make": {"eq", "ne", "contains", "in"},
+            "camera_model": {"eq", "ne", "contains", "in"},
+            "has_gps": {"eq", "ne"},
+        }
+        if self.operator not in allowed_by_field[self.field]:
+            raise ValueError(f"operator {self.operator!r} is not valid for field {self.field!r}")
+        if self.field == "has_gps" and not isinstance(self.value, bool):
+            raise ValueError("has_gps requires a boolean value")
+        if self.operator == "in" and not isinstance(self.value, list):
+            raise ValueError("operator 'in' requires a list value")
+        if self.field in {"people_count", "iso"}:
+            values = self.value if isinstance(self.value, list) else [self.value]
+            if any(isinstance(value, bool) or not isinstance(value, (int, float)) for value in values):
+                raise ValueError(f"field {self.field!r} requires numeric values")
+        if self.field in {"taken_at", "created_at"} and not isinstance(self.value, str):
+            raise ValueError(f"field {self.field!r} requires an ISO datetime string")
+        if self.field in {"camera_make", "camera_model"}:
+            values = self.value if isinstance(self.value, list) else [self.value]
+            if any(not isinstance(value, str) for value in values):
+                raise ValueError(f"field {self.field!r} requires string values")
+        return self
+
+
+class PlannerSortSpec(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    field: Literal["relevance", "taken_at", "created_at"] = "relevance"
+    order: Literal["asc", "desc"] = "desc"
+
+
 class PlannerMetadataFilters(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
@@ -156,6 +217,8 @@ class LLMQueryPlannerOutput(BaseModel):
     terms: PlannerTerms = Field(default_factory=PlannerTerms)
     facets: PlannerFacets = Field(default_factory=PlannerFacets)
     filters: PlannerFilters = Field(default_factory=PlannerFilters)
+    filter_clauses: list[PlannerFilterClause] = Field(default_factory=list)
+    sort: list[PlannerSortSpec] = Field(default_factory=list)
     metadata_filters: PlannerMetadataFilters = Field(default_factory=PlannerMetadataFilters)
     concept_terms: list[str] = Field(default_factory=list)
     semantic_tags: list[str] = Field(default_factory=list)

@@ -63,6 +63,7 @@ class SearchFallbackPolicy:
             page=page,
             page_size=page_size,
             debug=debug,
+            sort_specs=list(getattr(execution_context.search_query_plan, "sort", None) or []),
         )
         trace_writer.write_stage(
             "keyword_recall",
@@ -136,6 +137,7 @@ class SearchFallbackPolicy:
             page=page,
             page_size=page_size,
             debug=debug,
+            sort_specs=list(getattr(execution_context.search_query_plan, "sort", None) or []),
         )
         trace_writer.write_result(
             path="hybrid-kw-fallback",

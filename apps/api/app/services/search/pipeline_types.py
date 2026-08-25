@@ -18,6 +18,7 @@ class SearchPipelineDeps:
     people_resolution_cls: type
     resolve_folder_photo_subquery: Callable
     resolve_face_filter_photo_ids: Callable
+    resolve_structured_filter_photo_ids: Callable
     derive_concept_query_context: Callable
     run_metadata_stage: Callable
     run_people_stage: Callable

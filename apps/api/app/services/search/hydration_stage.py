@@ -43,6 +43,7 @@ class HydrationStage:
             page=page,
             page_size=page_size,
             debug=debug,
+            sort_specs=list(getattr(execution_context.search_query_plan, "sort", None) or []),
             trace=trace,
             debug_factory=debug_factory,
             debug_kwargs={
@@ -63,6 +64,7 @@ class HydrationStage:
         db: Session,
         candidates: list[SearchCandidate],
         *,
+        execution_context: SearchExecutionContext,
         project_id: Optional[int],
         page: int,
         page_size: int,
@@ -79,6 +81,7 @@ class HydrationStage:
             page=page,
             page_size=page_size,
             debug=debug,
+            sort_specs=list(getattr(execution_context.search_query_plan, "sort", None) or []),
             trace=trace,
             debug_factory=debug_factory,
             debug_kwargs={
@@ -114,6 +117,7 @@ class HydrationStage:
             page=page,
             page_size=page_size,
             debug=debug,
+            sort_specs=list(getattr(execution_context.search_query_plan, "sort", None) or []),
         )
         trace_writer.write_result(
             path="keyword-only",
@@ -157,6 +161,7 @@ class HydrationStage:
             page=page,
             page_size=page_size,
             debug=debug,
+            sort_specs=list(getattr(execution_context.search_query_plan, "sort", None) or []),
         )
         trace_writer.write_result(
             path="vector-only",
@@ -182,6 +187,7 @@ class HydrationStage:
         db: Session,
         candidates: list[SearchCandidate],
         *,
+        execution_context: SearchExecutionContext,
         project_id: Optional[int],
         page: int,
         page_size: int,
@@ -205,6 +211,7 @@ class HydrationStage:
             page=page,
             page_size=page_size,
             debug=debug,
+            sort_specs=list(getattr(execution_context.search_query_plan, "sort", None) or []),
         )
         trace_writer.write_result(
             path="hybrid",
