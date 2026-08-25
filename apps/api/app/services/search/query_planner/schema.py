@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+from datetime import date
 from typing import Any, Dict, Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -205,6 +206,123 @@ class PlannerQueryConstraints(BaseModel):
     allow_weak_only_match: bool = False
     min_evidence_level: str = "C"
     query_core_facets: list[str] = Field(default_factory=list)
+
+
+class TimeRange(BaseModel):
+    """Half-open factual time range emitted by the V2 planner."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    start: str
+    end: str
+
+    @model_validator(mode="after")
+    def _validate_half_open_range(self) -> "TimeRange":
+        try:
+            start = date.fromisoformat(self.start)
+            end = date.fromisoformat(self.end)
+        except ValueError as exc:
+            raise ValueError("time range boundaries must be ISO dates") from exc
+        if start >= end:
+            raise ValueError("time range must be a non-empty half-open interval")
+        return self
+
+
+class LocationConstraint(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1)
+    required: bool = True
+
+
+class PeopleConstraint(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1)
+    required: bool = True
+
+
+class CameraConstraint(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    make: Optional[str] = None
+    model_contains: Optional[str] = None
+    required: bool = True
+
+    @model_validator(mode="after")
+    def _require_camera_identity(self) -> "CameraConstraint":
+        if not (str(self.make or "").strip() or str(self.model_contains or "").strip()):
+            raise ValueError("camera constraint requires make or model_contains")
+        return self
+
+
+class SearchFilters(BaseModel):
+    """Factual constraints only; semantic meaning belongs to other V2 plans."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    time_ranges: list[TimeRange] = Field(default_factory=list)
+    locations: list[LocationConstraint] = Field(default_factory=list)
+    people: list[PeopleConstraint] = Field(default_factory=list)
+    camera: list[CameraConstraint] = Field(default_factory=list)
+    has_gps: Optional[bool] = None
+    media_types: list[str] = Field(default_factory=list)
+    albums: list[str] = Field(default_factory=list)
+
+
+class LexicalPlan(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    required: list[str] = Field(default_factory=list)
+    preferred: list[str] = Field(default_factory=list)
+    excluded: list[str] = Field(default_factory=list)
+
+
+class SemanticPlan(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    concepts: list[str] = Field(default_factory=list)
+    queries: list[str] = Field(default_factory=list)
+
+
+class VisualPlan(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    objects: list[str] = Field(default_factory=list)
+    scenes: list[str] = Field(default_factory=list)
+    activities: list[str] = Field(default_factory=list)
+    attributes: list[str] = Field(default_factory=list)
+
+
+class RankingPlan(BaseModel):
+    """User-visible ordering intent, never engine weights or thresholds."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    sort: list[PlannerSortSpec] = Field(default_factory=list)
+
+
+class UnresolvedEntities(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    people: list[str] = Field(default_factory=list)
+    locations: list[str] = Field(default_factory=list)
+
+
+class QueryPlanV2(BaseModel):
+    """Typed semantic contract between Qwen and the existing search pipeline."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    version: Literal["2"] = "2"
+    intent: Literal["photo_search", "ocr_search"] = "photo_search"
+    filters: SearchFilters = Field(default_factory=SearchFilters)
+    lexical: LexicalPlan = Field(default_factory=LexicalPlan)
+    semantic: SemanticPlan = Field(default_factory=SemanticPlan)
+    visual: VisualPlan = Field(default_factory=VisualPlan)
+    ranking: RankingPlan = Field(default_factory=RankingPlan)
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    unresolved: UnresolvedEntities = Field(default_factory=UnresolvedEntities)
 
 
 class LLMQueryPlannerOutput(BaseModel):

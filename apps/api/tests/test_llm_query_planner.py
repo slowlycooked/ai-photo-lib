@@ -16,8 +16,110 @@ from app.services.search.query_planner.llm_query_planner import (  # noqa: E402
   _build_cache_key,
     resolve_query_plan_llm_first,
 )
+from app.services.search.query_planner.schema import QueryPlanV2  # noqa: E402
 from app.services.query_understanding_service import understand_query  # noqa: E402
 from app.services.search.settings_resolver import SearchSettingsResolver  # noqa: E402
+
+
+def test_query_plan_v2_animals() -> None:
+    plan = QueryPlanV2.model_validate(
+        {
+            "semantic": {"concepts": ["动物"], "queries": ["动物"]},
+            "lexical": {"preferred": ["动物"]},
+            "visual": {"objects": ["动物"]},
+            "confidence": 0.95,
+        }
+    )
+
+    assert plan.semantic.concepts == ["动物"]
+    assert plan.visual.objects == ["动物"]
+    assert not ({"猫", "狗", "鸟", "马"} & set(plan.semantic.concepts))
+
+
+def test_query_plan_v2_location() -> None:
+    plan = QueryPlanV2.model_validate(
+        {"filters": {"locations": [{"name": "上海", "required": True}]}}
+    )
+
+    assert plan.filters.locations[0].name == "上海"
+    assert plan.filters.locations[0].required is True
+
+
+def test_query_plan_v2_location_scene() -> None:
+    plan = QueryPlanV2.model_validate(
+        {
+            "filters": {"locations": [{"name": "上海"}]},
+            "visual": {"scenes": ["夜景"]},
+            "semantic": {"queries": ["城市夜景"]},
+        }
+    )
+
+    assert [item.name for item in plan.filters.locations] == ["上海"]
+    assert plan.visual.scenes == ["夜景"]
+
+
+def test_query_plan_v2_relative_date() -> None:
+    plan = QueryPlanV2.model_validate(
+        {"filters": {"time_ranges": [{"start": "2025-01-01", "end": "2025-02-01"}]}}
+    )
+
+    assert plan.filters.time_ranges[0].model_dump() == {
+        "start": "2025-01-01",
+        "end": "2025-02-01",
+    }
+
+
+def test_query_plan_v2_camera() -> None:
+    plan = QueryPlanV2.model_validate(
+        {"filters": {"camera": [{"make": "Apple", "model_contains": "iPhone"}]}}
+    )
+
+    assert plan.filters.camera[0].make == "Apple"
+    assert plan.filters.camera[0].model_contains == "iPhone"
+
+
+def test_query_plan_v2_people() -> None:
+    plan = QueryPlanV2.model_validate(
+        {"filters": {"people": [{"name": "老王", "required": True}]}}
+    )
+
+    assert plan.filters.people[0].name == "老王"
+    assert plan.filters.people[0].required is True
+
+
+def test_query_plan_v2_people_compound() -> None:
+    plan = QueryPlanV2.model_validate(
+        {
+            "filters": {
+                "time_ranges": [{"start": "2025-01-01", "end": "2026-01-01"}],
+                "locations": [{"name": "张家口"}],
+                "people": [{"name": "老王"}],
+            },
+            "lexical": {"preferred": ["滑雪"]},
+            "semantic": {"concepts": ["滑雪"], "queries": ["滑雪"]},
+            "visual": {"scenes": ["雪地"], "activities": ["滑雪"]},
+        }
+    )
+
+    assert plan.filters.people[0].name == "老王"
+    assert plan.filters.locations[0].name == "张家口"
+    assert plan.semantic.queries == ["滑雪"]
+
+
+def test_query_plan_v2_abstract_semantic() -> None:
+    plan = QueryPlanV2.model_validate(
+        {"semantic": {"concepts": ["宁静"], "queries": ["宁静的氛围"]}}
+    )
+
+    assert plan.semantic.queries == ["宁静的氛围"]
+
+
+def test_query_plan_v2_negative() -> None:
+    plan = QueryPlanV2.model_validate(
+        {"lexical": {"preferred": ["海边"], "excluded": ["下雨"]}}
+    )
+
+    assert plan.lexical.excluded == ["下雨"]
 
 
 def test_llm_query_planner_disabled_uses_rule_fallback() -> None:
