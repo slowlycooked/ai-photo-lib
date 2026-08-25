@@ -4,6 +4,9 @@ from __future__ import annotations
 import pytest
 
 from app.services.query_understanding_service import SearchQueryPlan, understand_query
+from app.services.search.debug import build_debug_payload
+from app.services.search.query_understanding import build_query_plan_trace_event
+from app.services.search.settings_resolver import SearchSettingsResolver
 
 
 class TestUnderstandQuery:
@@ -276,6 +279,83 @@ def test_query_understanding_behavior_contract_time_and_place_query():
     assert metadata["year"] == 2024
     assert metadata["month"] == 5
     assert metadata["place_terms"] == ["杭州"]
+
+
+def test_query_plan_v2_trace_and_debug_expose_resolved_retriever_inputs():
+    plan = SearchQueryPlan(
+        original_query="去年老王在上海滑雪",
+        normalized_query="去年老王在上海滑雪",
+        semantic_query_text="滑雪",
+        exact_terms=["滑雪"],
+        expanded_terms=["雪地"],
+        intent="semantic_photo_search",
+        metadata_filters={
+            "date_from": "2025-01-01",
+            "date_to": "2026-01-01",
+            "place_terms": ["上海"],
+        },
+        planner_debug={
+            "planner_route": "llm",
+            "fallback_reason": "",
+            "latency_ms": 17,
+        },
+        planner_contract_version="2",
+        planner_filters={
+            "time_ranges": [{"start": "2025-01-01", "end": "2026-01-01"}],
+            "locations": [{"name": "上海", "required": True}],
+            "people": [{"name": "老王", "required": True}],
+        },
+        lexical_plan={"required": ["滑雪"], "preferred": ["雪地"], "excluded": []},
+        semantic_plan={"concepts": ["滑雪"], "queries": ["滑雪"]},
+        visual_plan={"objects": [], "scenes": ["雪地"], "activities": ["滑雪"], "attributes": []},
+        unresolved_entities={"people": [], "locations": []},
+    )
+    trace = [
+        build_query_plan_trace_event(plan),
+        {
+            "stage": "keyword_recall",
+            "keyword_query_text": "滑雪 雪地",
+            "keyword_query_terms": ["滑雪", "雪地"],
+            "duration_ms": 3,
+        },
+        {
+            "stage": "vector_recall",
+            "vector_query_text": "滑雪",
+            "vector_query_source": "qwen",
+            "duration_ms": 5,
+        },
+        {"stage": "result", "duration_ms": 2, "total_ms": 31},
+    ]
+
+    payload = build_debug_payload(
+        query_plan=plan,
+        mode="hybrid",
+        embedding_model="test",
+        embedding_dimension=1024,
+        keyword_candidates=4,
+        vector_candidates=3,
+        merged_candidates=5,
+        fallback_reason="",
+        settings=SearchSettingsResolver.defaults(),
+        trace=trace,
+        metadata_filters=plan.metadata_filters,
+        matched_person_ids=[101],
+    )
+
+    assert trace[0]["planner_contract_version"] == "2"
+    assert trace[0]["filters"]["locations"][0]["name"] == "上海"
+    assert payload["query_plan"]["semantic"]["queries"] == ["滑雪"]
+    assert payload["retrieval_queries"] == {
+        "keyword_query_text": "滑雪 雪地",
+        "keyword_query_terms": ["滑雪", "雪地"],
+        "vector_query_text": "滑雪",
+        "vector_query_source": "qwen",
+    }
+    assert payload["resolved_constraints"]["matched_person_ids"] == [101]
+    assert payload["timings_ms"]["planner_ms"] == 17
+    assert payload["timings_ms"]["keyword_ms"] == 3
+    assert payload["timings_ms"]["vector_ms"] == 5
+    assert payload["timings_ms"]["total_ms"] == 31
 
 
 def test_query_understanding_location_metadata_query_uses_metadata_location_intent() -> None:

@@ -8,7 +8,40 @@ from typing import Optional
 
 from ..query_understanding_service import SearchQueryPlan
 from .concept_recall import derive_concept_query_context
+from .trace_writer import compact_filter_dict
 from .types import EffectiveSearchSettings
+
+
+def _latest_stage(trace: list[dict], stage: str) -> dict:
+    return next(
+        (event for event in reversed(trace) if event.get("stage") == stage),
+        {},
+    )
+
+
+def build_timing_summary(trace: list[dict], planner_debug: Optional[dict] = None) -> dict:
+    """Return stable, per-stage latency fields from the request trace."""
+    stage_names = {
+        "metadata_ms": "metadata_filter",
+        "people_ms": "people_recall",
+        "keyword_ms": "keyword_recall",
+        "vector_ms": "vector_recall",
+        "fusion_ms": "rrf_merge",
+        "evidence_ms": "evidence_filter",
+    }
+    timings = {
+        name: int(_latest_stage(trace, stage).get("duration_ms", 0) or 0)
+        for name, stage in stage_names.items()
+    }
+    result_event = _latest_stage(trace, "result")
+    timings.update(
+        {
+            "planner_ms": int((planner_debug or {}).get("latency_ms", 0) or 0),
+            "hydration_ms": int(result_event.get("duration_ms", 0) or 0),
+            "total_ms": int(result_event.get("total_ms", 0) or 0),
+        }
+    )
+    return timings
 
 
 @dataclass
@@ -157,15 +190,24 @@ def build_debug_payload(
     payload_entity_terms = (
         concept_entity_terms if concept_entity_terms is not None else derived_entity_terms
     )
+    trace_events = trace or []
+    keyword_event = _latest_stage(trace_events, "keyword_recall")
+    vector_event = _latest_stage(trace_events, "vector_recall")
 
     payload: dict = {
         "query_plan": {
+            "planner_contract_version": getattr(query_plan, "planner_contract_version", "1"),
             "intent": query_plan.intent,
             "exact_terms": query_plan.exact_terms,
             "expanded_terms": query_plan.expanded_terms,
             "semantic_query_text": query_plan.semantic_query_text,
             "filter_clauses": query_plan.filter_clauses,
             "sort": query_plan.sort,
+            "filters": getattr(query_plan, "planner_filters", {}) or {},
+            "lexical": getattr(query_plan, "lexical_plan", {}) or {},
+            "semantic": getattr(query_plan, "semantic_plan", {}) or {},
+            "visual": getattr(query_plan, "visual_plan", {}) or {},
+            "unresolved": getattr(query_plan, "unresolved_entities", {}) or {},
             "query_planner": query_plan.planner_debug,
         },
         "original_query": query_plan.original_query,
@@ -212,6 +254,18 @@ def build_debug_payload(
             "vector_only_reject_reasons": vector_only_reject_reasons or {},
             "stale_embedding_filtered": stale_embedding_filtered,
         },
+        "retrieval_queries": {
+            "keyword_query_text": keyword_event.get("keyword_query_text", ""),
+            "keyword_query_terms": keyword_event.get("keyword_query_terms", []),
+            "vector_query_text": vector_event.get("vector_query_text", ""),
+            "vector_query_source": vector_event.get("vector_query_source", "none"),
+        },
+        "resolved_constraints": {
+            "metadata": compact_filter_dict(metadata_filters or query_plan.metadata_filters),
+            "people": getattr(query_plan, "planner_filters", {}).get("people", []),
+            "matched_person_ids": matched_person_ids or [],
+        },
+        "timings_ms": build_timing_summary(trace_events, query_plan.planner_debug),
         # Legacy flat counts kept for backward compat
         "keyword_candidates": keyword_candidates,
         "concept_candidates": concept_candidates,
@@ -269,7 +323,7 @@ def build_debug_payload(
             "enable_structured_filters": settings.enable_structured_filters,
             "enable_semantic_tag_boost": settings.enable_semantic_tag_boost,
         },
-        "trace": trace or [],
+        "trace": trace_events,
     }
     if fallback_reason:
         payload["fallback_reason"] = fallback_reason

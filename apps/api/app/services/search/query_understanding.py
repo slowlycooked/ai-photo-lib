@@ -47,6 +47,7 @@ def build_query_plan_trace_event(
     """Build the trace event emitted after query understanding."""
     event = {
         "stage": stage,
+        "planner_contract_version": getattr(query_plan, "planner_contract_version", "1"),
         "query": query_plan.original_query,
         "intent": query_plan.intent,
         "normalized_query": query_plan.normalized_query,
@@ -60,9 +61,17 @@ def build_query_plan_trace_event(
         "core_facets": query_plan.core_facets,
         "filter_clauses": query_plan.filter_clauses,
         "sort": query_plan.sort,
+        "filters": getattr(query_plan, "planner_filters", {}) or {},
+        "lexical": getattr(query_plan, "lexical_plan", {}) or {},
+        "semantic": getattr(query_plan, "semantic_plan", {}) or {},
+        "visual": getattr(query_plan, "visual_plan", {}) or {},
+        "unresolved": getattr(query_plan, "unresolved_entities", {}) or {},
     }
     if include_recommended_profile:
         event["recommended_profile"] = query_plan.recommended_profile
     if query_plan.planner_debug:
         event["query_planner"] = query_plan.planner_debug
+        event["planner_source"] = query_plan.planner_debug.get("planner_route")
+        event["planner_fallback_reason"] = query_plan.planner_debug.get("fallback_reason", "")
+        event["duration_ms"] = int(query_plan.planner_debug.get("latency_ms", 0) or 0)
     return event

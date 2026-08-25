@@ -404,6 +404,8 @@ class SearchPhotosTest(unittest.TestCase):
         return replace(
             _default_settings(),
             query_planner_enabled=False,
+            query_planner_planner_version="llm_query_planner_v1",
+            legacy_concept_recall_enabled=True,
             search_result_cache_ttl_seconds=0,
             **overrides,
         )
@@ -723,6 +725,29 @@ class SearchPhotosTest(unittest.TestCase):
         self.assertIn("concept_terms", debug_payload)
         self.assertIn("concept_entity_terms", debug_payload)
         self.assertIn("concept_debug", debug_payload)
+        self.assertIn("retrieval_queries", debug_payload)
+        self.assertIn("timings_ms", debug_payload)
+        self.assertEqual(
+            set(debug_payload["timings_ms"]),
+            {
+                "planner_ms",
+                "metadata_ms",
+                "people_ms",
+                "keyword_ms",
+                "vector_ms",
+                "fusion_ms",
+                "evidence_ms",
+                "hydration_ms",
+                "total_ms",
+            },
+        )
+        result_trace = next(
+            event
+            for event in reversed(debug_payload["trace"])
+            if event.get("stage") == "result"
+        )
+        self.assertIn("duration_ms", result_trace)
+        self.assertIn("total_ms", result_trace)
 
     def test_keyword_mode_includes_concept_recall_candidates(self) -> None:
         concept_candidate = SearchCandidate(

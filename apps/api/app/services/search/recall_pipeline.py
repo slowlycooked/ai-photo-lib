@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from time import perf_counter
 from typing import Optional
 
 from sqlalchemy.exc import SQLAlchemyError
@@ -21,6 +22,10 @@ from .types import SearchCandidate, VectorMatchScores
 from .vector_recall import VectorRecallService
 
 logger = logging.getLogger(__name__)
+
+
+def _elapsed_ms(started_at: float) -> int:
+    return max(0, round((perf_counter() - started_at) * 1000))
 
 
 @dataclass(frozen=True)
@@ -116,7 +121,20 @@ def run_metadata_stage(
     trace_writer: SearchDebugTraceWriter,
 ) -> MetadataStageResult:
     """Run metadata stage and update constrained candidates."""
+    started_at = perf_counter()
     if (not execution_context.metadata_filter_active) or execution_context.project_id is None:
+        trace_writer.write_stage(
+            "metadata_filter",
+            skipped=True,
+            skip_reason=(
+                "project_id_missing"
+                if execution_context.project_id is None
+                else "metadata_filter_inactive"
+            ),
+            matched_count=0,
+            constrained_count=len(execution_context.constrained_photo_ids or set()),
+            duration_ms=_elapsed_ms(started_at),
+        )
         return MetadataStageResult(
             constrained_photo_ids=execution_context.constrained_photo_ids,
             metadata_only_candidates=None,
@@ -143,6 +161,7 @@ def run_metadata_stage(
             path="metadata-only",
             filters=compact_filter_dict(execution_context.metadata_filters),
             matched_count=len(metadata_results),
+            duration_ms=_elapsed_ms(started_at),
         )
         return MetadataStageResult(
             constrained_photo_ids=execution_context.constrained_photo_ids,
@@ -169,6 +188,7 @@ def run_metadata_stage(
         filters=compact_filter_dict(execution_context.metadata_filters),
         matched_count=len(metadata_ids),
         constrained_count=len(next_constrained),
+        duration_ms=_elapsed_ms(started_at),
     )
     return MetadataStageResult(
         constrained_photo_ids=next_constrained,
@@ -183,7 +203,20 @@ def run_people_stage(
     trace_writer: SearchDebugTraceWriter,
 ) -> PeopleStageResult:
     """Run people recall stage and update constrained candidates."""
+    started_at = perf_counter()
     if execution_context.project_id is None or not execution_context.people_resolution.has_people_constraint:
+        trace_writer.write_stage(
+            "people_recall",
+            skipped=True,
+            skip_reason=(
+                "project_id_missing"
+                if execution_context.project_id is None
+                else "people_constraint_inactive"
+            ),
+            people_candidates=0,
+            constrained_photo_ids=len(execution_context.constrained_photo_ids or set()),
+            duration_ms=_elapsed_ms(started_at),
+        )
         return PeopleStageResult(
             constrained_photo_ids=execution_context.constrained_photo_ids,
             people_results=[],
@@ -200,6 +233,7 @@ def run_people_stage(
             unresolved_people=execution_context.people_resolution.unresolved_people,
             people_candidates=0,
             constrained_photo_ids=0,
+            duration_ms=_elapsed_ms(started_at),
         )
         return PeopleStageResult(
             constrained_photo_ids=set(),
@@ -248,6 +282,7 @@ def run_people_stage(
         matched_person_ids=matched_person_ids,
         people_candidates=len(people_results),
         constrained_photo_ids=len(next_constrained or set()),
+        duration_ms=_elapsed_ms(started_at),
     )
 
     logger.debug(
@@ -274,6 +309,7 @@ def run_keyword_auxiliary_stage(
     trace_writer: SearchDebugTraceWriter,
 ) -> KeywordAuxiliaryStageResult:
     """Run keyword recall and auxiliary (concept/people_visual) stages."""
+    started_at = perf_counter()
     keyword_service = KeywordRecallService(db, execution_context.effective_settings)
     keyword_results = keyword_service.search(
         execution_context.search_query_plan,
@@ -309,11 +345,14 @@ def run_keyword_auxiliary_stage(
         aux_source="people_visual",
     )
 
+    keyword_query_terms = list(execution_context.search_query_plan.recall_terms)
     trace_writer.write_stage(
         "keyword_recall",
         candidates=len(keyword_results),
-        keyword_query_terms=list(execution_context.search_query_plan.recall_terms),
+        keyword_query_text=" ".join(keyword_query_terms),
+        keyword_query_terms=keyword_query_terms,
         top_scores=[round(candidate.keyword_score, 4) for candidate in keyword_results[:5]],
+        duration_ms=_elapsed_ms(started_at),
     )
     trace_writer.extend(auxiliary_recall.trace_events)
 
@@ -341,6 +380,7 @@ def run_vector_stage(
     trace_writer: SearchDebugTraceWriter,
 ) -> VectorStageResult:
     """Run vector recall stage with graceful fallback signaling."""
+    started_at = perf_counter()
     vector_service = VectorRecallService(db, execution_context.effective_settings)
     is_ocr_query = execution_context.search_query_plan.intent == "ocr_text_search"
     uses_v2_contract = (
@@ -387,6 +427,7 @@ def run_vector_stage(
             skip_reason="semantic_queries_empty",
             fallback=False,
             error="",
+            duration_ms=_elapsed_ms(started_at),
         )
         return VectorStageResult(
             vector_scores={},
@@ -445,6 +486,7 @@ def run_vector_stage(
             vector_query_source=vector_query_source,
             fallback=False,
             error="",
+            duration_ms=_elapsed_ms(started_at),
         )
         logger.debug(
             "[search] vector_recall done candidates=%d embedding_model=%s stale_filtered=%d",
@@ -472,6 +514,7 @@ def run_vector_stage(
             final_vector_top_k=final_vector_top_k,
             vector_query_text=vector_query_text,
             vector_query_source=vector_query_source,
+            duration_ms=_elapsed_ms(started_at),
         )
         return VectorStageResult(
             vector_scores={},
