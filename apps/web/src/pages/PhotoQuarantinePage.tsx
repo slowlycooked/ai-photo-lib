@@ -155,6 +155,10 @@ export function PhotoQuarantinePage() {
     setSelectedIds(new Set());
   }, [statusFilter, labelFilter, selectedProjectId]);
 
+  useEffect(() => {
+    setSelectedIds(new Set());
+  }, [page]);
+
   const refreshItems = () => {
     queryClient.invalidateQueries({ queryKey: ["photo-quarantine-items", selectedProjectId] });
     queryClient.invalidateQueries({ queryKey: queryKeys.photosBase(selectedProjectId) });
@@ -217,6 +221,24 @@ export function PhotoQuarantinePage() {
   });
 
   const items = itemsQuery.data?.items ?? [];
+  const batchSelectableItems = useMemo(
+    () => items.filter(
+      (item) => APPROVAL_STATUSES.has(item.status) || RESTORABLE_STATUSES.has(item.status),
+    ),
+    [items],
+  );
+  const selectedOnPageCount = batchSelectableItems.filter(
+    (item) => selectedIds.has(item.id),
+  ).length;
+  const allOnPageSelected = batchSelectableItems.length > 0
+    && selectedOnPageCount === batchSelectableItems.length;
+  const toggleSelectCurrentPage = () => {
+    setSelectedIds(
+      allOnPageSelected
+        ? new Set()
+        : new Set(batchSelectableItems.map((item) => item.id)),
+    );
+  };
   const restorableSelected = useMemo(
     () => items.filter((item) => selectedIds.has(item.id) && RESTORABLE_STATUSES.has(item.status)),
     [items, selectedIds],
@@ -371,7 +393,9 @@ export function PhotoQuarantinePage() {
             <span className="text-caption-sm text-mute">共 {itemsQuery.data?.total ?? 0} 项</span>
             <button type="button" onClick={() => itemsQuery.refetch()} className="text-mute hover:text-ink" aria-label="刷新"><RefreshCw className="w-4 h-4" /></button>
           </div>
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            {canManage && batchSelectableItems.length > 0 && <button type="button" onClick={toggleSelectCurrentPage} aria-pressed={allOnPageSelected} className="px-3 py-2 rounded-md border border-hairline text-btn-sm font-bold hover:bg-surface-card">{allOnPageSelected ? "取消全选" : `全选当前页（${batchSelectableItems.length}）`}</button>}
+            {canManage && selectedOnPageCount > 0 && <span className="px-1 text-caption-sm text-mute">已选 {selectedOnPageCount} 张</span>}
             {canManage && approvalSelected.length > 0 && <button type="button" onClick={() => batchMutation.mutate({ action: "KEEP", ids: approvalSelected.map((item) => item.id) })} disabled={batchMutation.isPending} className="px-3 py-2 rounded-md border border-hairline text-btn-sm font-bold hover:bg-surface-card disabled:opacity-50">批量保留（{approvalSelected.length}）</button>}
             {canManage && approvalSelected.length > 0 && <button type="button" onClick={() => { if (window.confirm(`将批准删除 ${approvalSelected.length} 张照片，并写入 NAS 后台删除清单。应用不会直接移动或删除原片，但当前不能从页面撤销已写入的请求。继续？`)) batchMutation.mutate({ action: "REQUEST_DELETE", ids: approvalSelected.map((item) => item.id) }); }} disabled={batchMutation.isPending} className="px-3 py-2 rounded-md bg-primary text-white text-btn-sm font-bold disabled:opacity-50">批量提交删除（{approvalSelected.length}）</button>}
             {canManage && restorableSelected.length > 0 && <button type="button" onClick={() => batchMutation.mutate({ action: "RESTORE", ids: restorableSelected.map((item) => item.id) })} disabled={batchMutation.isPending} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-hairline text-btn-sm font-bold hover:bg-surface-card disabled:opacity-50"><ArchiveRestore className="w-4 h-4" />批量放回（{restorableSelected.length}）</button>}
@@ -388,7 +412,7 @@ export function PhotoQuarantinePage() {
               <article key={item.id} className="overflow-hidden rounded-lg border border-hairline bg-canvas">
                 <div className="relative aspect-video bg-surface-card">
                   <img src={`${BASE}/projects/${selectedProjectId}/photo-quarantine/items/${item.id}/thumbnail`} alt="待删除候选图片" className="h-full w-full object-contain" loading="lazy" />
-                  {canManage && item.status !== "deleted_confirmed" && <input type="checkbox" className="absolute top-3 left-3 w-4 h-4" aria-label="选择审核项" checked={selectedIds.has(item.id)} onChange={(event) => setSelectedIds((current) => { const next = new Set(current); event.target.checked ? next.add(item.id) : next.delete(item.id); return next; })} />}
+                  {canManage && (APPROVAL_STATUSES.has(item.status) || RESTORABLE_STATUSES.has(item.status)) && <input type="checkbox" className="absolute top-3 left-3 w-4 h-4" aria-label="选择审核项" checked={selectedIds.has(item.id)} onChange={(event) => setSelectedIds((current) => { const next = new Set(current); event.target.checked ? next.add(item.id) : next.delete(item.id); return next; })} />}
                   <span className="absolute top-2 right-2 rounded-full bg-black/70 px-2 py-1 text-[11px] text-white">{STATUS_LABELS[item.status] ?? item.status}</span>
                 </div>
                 <div className="p-4 space-y-3">

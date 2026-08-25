@@ -156,6 +156,54 @@ describe("PhotoQuarantinePage", () => {
     expect(await screen.findByText("已放回 1 张")).toBeInTheDocument();
   });
 
+  it("selects and clears all actionable items on the current page", async () => {
+    const user = userEvent.setup();
+    listMock.mockResolvedValue({
+      total: 2,
+      items: [
+        { ...item, id: 7, status: "review" },
+        { ...item, id: 8, photo_id: 80, status: "analysis_failed" },
+      ],
+    });
+    renderPage();
+
+    await user.click(await screen.findByRole("button", { name: "全选当前页（2）" }));
+
+    expect(screen.getByText("已选 2 张")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "批量保留（2）" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "批量提交删除（2）" })).toBeInTheDocument();
+    for (const checkbox of screen.getAllByRole("checkbox", { name: "选择审核项" })) {
+      expect(checkbox).toBeChecked();
+    }
+
+    await user.click(screen.getByRole("button", { name: "取消全选" }));
+
+    expect(screen.queryByText("已选 2 张")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "批量保留（2）" })).not.toBeInTheDocument();
+  });
+
+  it("submits all selected approval items as one delete batch", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    listMock.mockResolvedValue({
+      total: 2,
+      items: [
+        { ...item, id: 7, status: "review" },
+        { ...item, id: 8, photo_id: 80, status: "analysis_failed" },
+      ],
+    });
+    renderPage();
+
+    await user.click(await screen.findByRole("button", { name: "全选当前页（2）" }));
+    await user.click(screen.getByRole("button", { name: "批量提交删除（2）" }));
+
+    await waitFor(() => expect(batchMock).toHaveBeenCalledWith(
+      1,
+      "REQUEST_DELETE",
+      [7, 8],
+    ));
+  });
+
   it("requests the next server page instead of loading every item", async () => {
     const user = userEvent.setup();
     listMock.mockImplementation((_projectId, _status, _limit, offset) =>
