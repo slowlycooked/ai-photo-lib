@@ -29,10 +29,7 @@ forward_stop() {
   fi
 }
 
-# `svc.sh` launches this wrapper with nohup so services survive the terminal
-# that started them. Keep that inherited HUP ignore; explicit service stops use
-# TERM and still shut down the complete child tree through this trap.
-trap forward_stop TERM INT
+trap forward_stop TERM INT HUP
 
 "$@" &
 child_pid="$!"
