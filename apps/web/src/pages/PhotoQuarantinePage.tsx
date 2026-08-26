@@ -179,6 +179,18 @@ export function PhotoQuarantinePage() {
   const latestTask = taskQuery.data?.items[0];
   const analysisActive = latestTask?.status === "queued" || latestTask?.status === "running";
   const cancelRequested = latestTask?.progress_payload?.cancel_requested === true;
+  const retryFailedTask = latestTask?.request_params?.trigger === "manual_retry_failed";
+  const retryQueueQuery = useQuery({
+    queryKey: ["photo-quarantine-retry-progress", selectedProjectId, latestTask?.id],
+    queryFn: () => api.photoQuarantine.list(
+      selectedProjectId!,
+      "analysis_retry_queued",
+      1,
+      0,
+    ),
+    enabled: projectExists && analysisActive && retryFailedTask,
+    refetchInterval: 3_000,
+  });
 
   useEffect(() => {
     const value = settingsQuery.data;
@@ -395,6 +407,17 @@ export function PhotoQuarantinePage() {
   const retryingQueuedOnly = deleteRequestSelected.length > 0
     && deleteRequestSelected.every((item) => item.status === "delete_queued");
   const taskProgress = latestTask?.progress_payload ?? latestTask?.result_payload;
+  const analyzedCount = typeof taskProgress?.analyzed === "number" ? taskProgress.analyzed : 0;
+  const errorCount = typeof taskProgress?.errors === "number" ? taskProgress.errors : 0;
+  const processedCount = analyzedCount + errorCount;
+  const reviewCount = typeof taskProgress?.review === "number" ? taskProgress.review : 0;
+  const retryRemaining = retryQueueQuery.data?.total;
+  const scanTotal = retryFailedTask && typeof retryRemaining === "number"
+    ? retryRemaining + processedCount
+    : null;
+  const scanPercent = scanTotal != null && scanTotal > 0
+    ? Math.min(100, Math.round((processedCount / scanTotal) * 100))
+    : null;
   const scanControlOnRight = analysisActive || runMutation.isPending;
   const scanControlPending = runMutation.isPending || stopMutation.isPending || cancelRequested;
   const calibration = calibrationQuery.data;
@@ -464,11 +487,55 @@ export function PhotoQuarantinePage() {
 
       {message && <div className="rounded-md border border-hairline bg-canvas px-4 py-3 text-body-sm text-ink">{message}</div>}
       {latestTask && (
-        <div className="rounded-md border border-hairline bg-canvas px-4 py-3 text-body-sm text-mute">
-          最近分析任务：{latestTask.status}
-          {typeof taskProgress?.analyzed === "number" ? ` · 已分析 ${taskProgress.analyzed} 张` : ""}
-          {typeof taskProgress?.review === "number" ? ` · 待审核 ${taskProgress.review} 张` : ""}
-          {latestTask.error_message ? ` · ${latestTask.error_message}` : ""}
+        <div className="rounded-md border border-hairline bg-canvas px-4 py-3 text-body-sm text-mute space-y-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span>
+              最近分析任务：{latestTask.status}
+              {!analysisActive && typeof taskProgress?.analyzed === "number" ? ` · 已分析 ${taskProgress.analyzed} 张` : ""}
+              {!analysisActive && typeof taskProgress?.review === "number" ? ` · 待审核 ${taskProgress.review} 张` : ""}
+              {latestTask.error_message ? ` · ${latestTask.error_message}` : ""}
+            </span>
+            {analysisActive && scanPercent != null && (
+              <span className="font-bold text-ink">{scanPercent}%</span>
+            )}
+          </div>
+          {analysisActive && (
+            <>
+              <div className="text-ink">
+                {cancelRequested
+                  ? "正在取消，将在当前图片处理完成后停止"
+                  : latestTask.status === "queued"
+                    ? "等待 Worker 接收任务"
+                    : processedCount === 0
+                      ? "模型正在分析第一张照片，单张识别可能需要一些时间"
+                      : scanTotal != null
+                        ? `已处理 ${processedCount} / ${scanTotal} 张`
+                        : `已处理 ${processedCount} 张，扫描仍在进行`}
+              </div>
+              <div
+                role="progressbar"
+                aria-label="扫描进度"
+                aria-valuemin={scanTotal != null ? 0 : undefined}
+                aria-valuemax={scanTotal != null ? scanTotal : undefined}
+                aria-valuenow={scanTotal != null ? processedCount : undefined}
+                className="h-2 overflow-hidden rounded-full bg-surface-card ring-1 ring-inset ring-hairline"
+              >
+                {scanPercent == null ? (
+                  <div className="h-full w-2/5 animate-pulse rounded-full bg-primary" />
+                ) : scanPercent === 0 ? (
+                  <div className="h-full w-8 animate-pulse rounded-full bg-primary" />
+                ) : (
+                  <div
+                    className="h-full rounded-full bg-primary transition-[width] duration-500"
+                    style={{ width: `${scanPercent}%` }}
+                  />
+                )}
+              </div>
+              <div className="text-caption-sm">
+                成功分析 {analyzedCount} 张 · 待审核 {reviewCount} 张 · 识别失败 {errorCount} 张
+              </div>
+            </>
+          )}
         </div>
       )}
 

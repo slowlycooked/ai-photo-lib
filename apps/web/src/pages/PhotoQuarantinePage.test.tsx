@@ -458,7 +458,58 @@ describe("PhotoQuarantinePage", () => {
     });
     renderPage();
 
-    expect(await screen.findByText(/最近分析任务：running · 已分析 12 张 · 待审核 3 张/)).toBeInTheDocument();
+    expect(await screen.findByText("最近分析任务：running")).toBeInTheDocument();
+    expect(screen.getByText("已处理 12 张，扫描仍在进行")).toBeInTheDocument();
+    expect(screen.getByText("成功分析 12 张 · 待审核 3 张 · 识别失败 0 张")).toBeInTheDocument();
+  });
+
+  it("shows determinate progress while retrying failed analyses", async () => {
+    taskListMock.mockResolvedValue({
+      total: 1,
+      items: [{
+        id: 88,
+        project_id: 1,
+        task_type: "photo_quarantine_analysis",
+        status: "running",
+        request_params: { trigger: "manual_retry_failed" },
+        progress_payload: { analyzed: 6, errors: 1, review: 4 },
+        result_payload: null,
+        error_message: null,
+      }],
+    });
+    listMock.mockImplementation((_projectId, status) => Promise.resolve(
+      status === "analysis_retry_queued"
+        ? { total: 93, items: [] }
+        : { total: 1, items: [item] },
+    ));
+    renderPage();
+
+    const progress = await screen.findByRole("progressbar", { name: "扫描进度" });
+    expect(progress).toHaveAttribute("aria-valuemin", "0");
+    expect(progress).toHaveAttribute("aria-valuemax", "100");
+    expect(progress).toHaveAttribute("aria-valuenow", "7");
+    expect(screen.getByText("已处理 7 / 100 张")).toBeInTheDocument();
+    expect(screen.getByText("7%")).toBeInTheDocument();
+  });
+
+  it("shows live indeterminate feedback while the first photo is analyzed", async () => {
+    taskListMock.mockResolvedValue({
+      total: 1,
+      items: [{
+        id: 88,
+        project_id: 1,
+        task_type: "photo_quarantine_analysis",
+        status: "running",
+        request_params: { trigger: "manual" },
+        progress_payload: { analyzed: 0, errors: 0, review: 0 },
+        result_payload: null,
+        error_message: null,
+      }],
+    });
+    renderPage();
+
+    expect(await screen.findByText("模型正在分析第一张照片，单张识别可能需要一些时间")).toBeInTheDocument();
+    expect(screen.getByRole("progressbar", { name: "扫描进度" })).not.toHaveAttribute("aria-valuenow");
   });
 
   it("lets a human queue review-only screenshots for backend deletion", async () => {
