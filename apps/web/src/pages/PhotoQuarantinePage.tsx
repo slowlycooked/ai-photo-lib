@@ -74,6 +74,7 @@ const CLASS_LABELS: Record<string, string> = {
   obscured_lens: "镜头遮挡",
   blank_image: "空白图片",
   meaningless_test: "无意义测试图",
+  meaningless_test_image: "无意义测试图",
   screenshot: "屏幕截图",
   construction_clutter: "工地杂物",
 };
@@ -92,6 +93,10 @@ const CLASS_FILTER_OPTIONS = [
   { value: "uncertain", label: "不确定" },
   { value: "other", label: "其他" },
 ] as const;
+function canonicalClassification(value: string) {
+  return value === "meaningless_test" ? "meaningless_test_image" : value;
+}
+
 
 const SENSITIVE_CONTENT_LABELS: Record<string, string> = {
   explicit_sexual_content: "露骨色情",
@@ -231,7 +236,10 @@ export function PhotoQuarantinePage() {
     );
     const matchesActiveFilter = (item: PhotoQuarantineItem) => {
       if (!visibleStatuses.has(item.status)) return false;
-      if (classificationFilter && item.classification !== classificationFilter) return false;
+      if (
+        classificationFilter
+        && canonicalClassification(item.classification) !== classificationFilter
+      ) return false;
       if (labelFilter === "UNLABELED") return item.human_label == null;
       if (labelFilter) return item.human_label === labelFilter;
       return true;
@@ -366,6 +374,10 @@ export function PhotoQuarantinePage() {
   }, [projectExists, selectedProjectId, reconcileItems]);
 
   const items = itemsQuery.data?.items ?? [];
+  const classificationCounts = itemsQuery.data?.classification_counts;
+  const classificationTotal = classificationCounts
+    ? Object.values(classificationCounts).reduce((total, count) => total + count, 0)
+    : null;
   const batchSelectableItems = useMemo(
     () => items.filter(
       (item) => KEEP_STATUSES.has(item.status)
@@ -633,14 +645,16 @@ export function PhotoQuarantinePage() {
       <section className="space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-3">
-            <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className="rounded-md border border-hairline bg-canvas px-3 py-2 text-body-sm">
+            <select value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value); setClassificationFilter(""); }} className="rounded-md border border-hairline bg-canvas px-3 py-2 text-body-sm">
               {STATUS_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
             </select>
-            <select value={labelFilter} onChange={(event) => setLabelFilter(event.target.value as typeof labelFilter)} className="rounded-md border border-hairline bg-canvas px-3 py-2 text-body-sm" aria-label="人工标签筛选">
+            <select value={labelFilter} onChange={(event) => { setLabelFilter(event.target.value as typeof labelFilter); setClassificationFilter(""); }} className="rounded-md border border-hairline bg-canvas px-3 py-2 text-body-sm" aria-label="人工标签筛选">
               <option value="">全部标签</option><option value="UNLABELED">未标注</option><option value="KEEP">应保留</option><option value="TRASH">垃圾</option>
             </select>
             <select value={classificationFilter} onChange={(event) => setClassificationFilter(event.target.value)} className="rounded-md border border-hairline bg-canvas px-3 py-2 text-body-sm" aria-label="类别筛选">
-              {CLASS_FILTER_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+              {CLASS_FILTER_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}{classificationCounts ? `（${option.value ? classificationCounts[option.value] ?? 0 : classificationTotal}）` : ""}</option>
+              ))}
             </select>
             <span className="text-caption-sm text-mute">共 {itemsQuery.data?.total ?? 0} 项</span>
             <button type="button" onClick={() => reconcileItems()} disabled={reconcileMutation.isPending} className="text-mute hover:text-ink disabled:opacity-50" aria-label="刷新"><RefreshCw className={`w-4 h-4 ${reconcileMutation.isPending ? "animate-spin" : ""}`} /></button>

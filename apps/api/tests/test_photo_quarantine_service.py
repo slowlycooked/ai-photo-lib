@@ -527,3 +527,27 @@ def test_list_items_can_filter_suspected_duplicates(quarantine_fixture) -> None:
         )
         assert total == 1
         assert [candidate.id for candidate in items] == [100]
+
+
+def test_classification_filter_and_counts_normalize_legacy_values(
+    quarantine_fixture,
+) -> None:
+    engine, _library, trash, _original, _digest = quarantine_fixture
+    with Session(engine) as db:
+        service = PhotoQuarantineService(db, root=trash)
+        item = db.query(PhotoQuarantineItem).filter(PhotoQuarantineItem.id == 100).one()
+        item.classification = "meaningless_test"
+        db.commit()
+
+        total, items = service.list_items(
+            project_id=1,
+            status="review",
+            classification="meaningless_test_image",
+        )
+
+        assert total == 1
+        assert [candidate.id for candidate in items] == [100]
+        assert service.classification_counts(
+            project_id=1,
+            status="review",
+        ) == {"meaningless_test_image": 1}

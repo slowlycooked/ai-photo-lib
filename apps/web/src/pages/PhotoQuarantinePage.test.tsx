@@ -569,6 +569,25 @@ describe("PhotoQuarantinePage", () => {
     expect(screen.getByRole("button", { name: "提交删除" })).toBeInTheDocument();
   });
 
+  it("shows a count after every category", async () => {
+    listMock.mockResolvedValue({
+      total: 20370,
+      items: [{ ...item, classification: "suspected_duplicate" }],
+      classification_counts: {
+        suspected_duplicate: 40,
+        uncertain: 20330,
+      },
+    });
+    renderPage();
+
+    const select = await screen.findByLabelText("类别筛选");
+    expect(select).toHaveTextContent("全部类别（20370）");
+    expect(select).toHaveTextContent("疑似重复（40）");
+    expect(select).toHaveTextContent("不确定（20330）");
+    expect(select).toHaveTextContent("严重模糊（0）");
+    expect(select.querySelectorAll("option")).toHaveLength(12);
+  });
+
   it("immediately removes a submitted deletion from the default pending view", async () => {
     const user = userEvent.setup();
     vi.spyOn(window, "confirm").mockReturnValue(true);

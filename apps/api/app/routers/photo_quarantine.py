@@ -145,7 +145,8 @@ def list_photo_quarantine_items(
     project: Project = Depends(require_project),
     db: Session = Depends(get_db),
 ):
-    total, items = PhotoQuarantineService(db).list_items(
+    service = PhotoQuarantineService(db)
+    total, items = service.list_items(
         project_id=project.id,
         status=status,
         human_label=human_label,
@@ -153,7 +154,16 @@ def list_photo_quarantine_items(
         limit=limit,
         offset=offset,
     )
-    return PhotoQuarantineListResponse(total=total, items=items)
+    classification_counts = service.classification_counts(
+        project_id=project.id,
+        status=status,
+        human_label=human_label,
+    )
+    return PhotoQuarantineListResponse(
+        total=total,
+        items=items,
+        classification_counts=classification_counts,
+    )
 
 
 @router.post(

@@ -28,6 +28,9 @@ class _FakeQuarantineService:
         self.__class__.last_list_args = kwargs
         return 0, []
 
+    def classification_counts(self, **kwargs):
+        return {"suspected_duplicate": 40, "uncertain": 20330}
+
     def retry_failed_analysis(self, *, project_id: int):
         self.__class__.retried_failed_project_id = project_id
         return 12
@@ -166,7 +169,14 @@ def test_list_endpoint_passes_classification_filter(monkeypatch) -> None:
     )
 
     assert response.status_code == 200
-    assert response.json() == {"total": 0, "items": []}
+    assert response.json() == {
+        "total": 0,
+        "items": [],
+        "classification_counts": {
+            "suspected_duplicate": 40,
+            "uncertain": 20330,
+        },
+    }
     assert _FakeQuarantineService.last_list_args["classification"] == "suspected_duplicate"
 
 

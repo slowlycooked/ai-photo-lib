@@ -74,6 +74,7 @@ class PhotoQuarantineItemResponse(BaseModel):
 class PhotoQuarantineListResponse(BaseModel):
     total: int
     items: list[PhotoQuarantineItemResponse]
+    classification_counts: dict[str, int] = Field(default_factory=dict)
 
 
 class PhotoQuarantineRunRequest(BaseModel):

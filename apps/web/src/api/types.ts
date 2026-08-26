@@ -1141,6 +1141,7 @@ export interface PhotoQuarantineItem {
 export interface PhotoQuarantineListResponse {
   total: number;
   items: PhotoQuarantineItem[];
+  classification_counts?: Record<string, number>;
 }
 
 export type PhotoQuarantineBatchAction =

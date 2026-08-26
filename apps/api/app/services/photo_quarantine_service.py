@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from ..config import settings
@@ -19,6 +20,10 @@ from .photo_cleanup import queue_original_trash_request
 
 
 logger = logging.getLogger(__name__)
+
+_CLASSIFICATION_ALIASES = {
+    "meaningless_test": "meaningless_test_image",
+}
 
 
 class PhotoQuarantineError(RuntimeError):
@@ -118,22 +123,25 @@ class PhotoQuarantineService:
         limit: int = 50,
         offset: int = 0,
     ) -> tuple[int, list[PhotoQuarantineItem]]:
-        query = self._db.query(PhotoQuarantineItem).filter(
-            PhotoQuarantineItem.project_id == project_id
+        query = self._filtered_items_query(
+            project_id=project_id,
+            status=status,
+            human_label=human_label,
         )
-        if status:
-            statuses = [value.strip() for value in status.split(",") if value.strip()]
-            if statuses:
-                query = query.filter(PhotoQuarantineItem.status.in_(statuses))
-        if human_label == "UNLABELED":
-            query = query.filter(PhotoQuarantineItem.human_label.is_(None))
-        elif human_label in {"KEEP", "TRASH"}:
-            query = query.filter(PhotoQuarantineItem.human_label == human_label)
         if classification:
             classifications = [
                 value.strip() for value in classification.split(",") if value.strip()
             ]
             if classifications:
+                canonical = {
+                    _CLASSIFICATION_ALIASES.get(value, value)
+                    for value in classifications
+                }
+                classifications = list(canonical) + [
+                    legacy
+                    for legacy, current in _CLASSIFICATION_ALIASES.items()
+                    if current in canonical
+                ]
                 query = query.filter(
                     PhotoQuarantineItem.classification.in_(classifications)
                 )
@@ -148,6 +156,52 @@ class PhotoQuarantineService:
             .all()
         )
         return total, items
+
+    def classification_counts(
+        self,
+        *,
+        project_id: int,
+        status: Optional[str] = None,
+        human_label: Optional[str] = None,
+    ) -> dict[str, int]:
+        rows = (
+            self._filtered_items_query(
+                project_id=project_id,
+                status=status,
+                human_label=human_label,
+            )
+            .with_entities(
+                PhotoQuarantineItem.classification,
+                func.count(PhotoQuarantineItem.id),
+            )
+            .group_by(PhotoQuarantineItem.classification)
+            .all()
+        )
+        counts: dict[str, int] = {}
+        for classification, count in rows:
+            canonical = _CLASSIFICATION_ALIASES.get(classification, classification)
+            counts[canonical] = counts.get(canonical, 0) + int(count)
+        return counts
+
+    def _filtered_items_query(
+        self,
+        *,
+        project_id: int,
+        status: Optional[str],
+        human_label: Optional[str],
+    ):
+        query = self._db.query(PhotoQuarantineItem).filter(
+            PhotoQuarantineItem.project_id == project_id
+        )
+        if status:
+            statuses = [value.strip() for value in status.split(",") if value.strip()]
+            if statuses:
+                query = query.filter(PhotoQuarantineItem.status.in_(statuses))
+        if human_label == "UNLABELED":
+            query = query.filter(PhotoQuarantineItem.human_label.is_(None))
+        elif human_label in {"KEEP", "TRASH"}:
+            query = query.filter(PhotoQuarantineItem.human_label == human_label)
+        return query
 
     def get_item(self, *, project_id: int, item_id: int) -> PhotoQuarantineItem:
         item = (
