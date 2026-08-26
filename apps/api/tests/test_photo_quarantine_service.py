@@ -154,6 +154,48 @@ def test_delete_approval_also_records_trash_label(quarantine_fixture) -> None:
         assert original.exists()
 
 
+def test_analysis_failure_can_be_returned_to_candidate_queue(quarantine_fixture) -> None:
+    engine, _library, trash, _original, _digest = quarantine_fixture
+    with Session(engine) as db:
+        item = db.query(PhotoQuarantineItem).filter(PhotoQuarantineItem.id == 100).one()
+        item.status = "analysis_failed"
+        item.model_name = "qwen3.8:27b"
+        item.prompt_version = "current"
+        item.last_error = "Operation not permitted"
+        db.commit()
+
+        retried = PhotoQuarantineService(db, root=trash).retry_analysis(
+            project_id=1,
+            item_id=100,
+        )
+
+        assert retried.status == "analysis_retry_queued"
+        assert retried.reason == "等待重新识别"
+        assert retried.model_name == ""
+        assert retried.prompt_version == ""
+        assert retried.last_error is None
+
+
+def test_all_analysis_failures_can_be_queued_for_retry(quarantine_fixture) -> None:
+    engine, _library, trash, _original, _digest = quarantine_fixture
+    with Session(engine) as db:
+        item = db.query(PhotoQuarantineItem).filter(PhotoQuarantineItem.id == 100).one()
+        item.status = "analysis_failed"
+        item.model_name = "qwen3.8:27b"
+        item.prompt_version = "current"
+        item.last_error = "Operation not permitted"
+        db.commit()
+
+        count = PhotoQuarantineService(db, root=trash).retry_failed_analysis(project_id=1)
+        db.refresh(item)
+
+        assert count == 1
+        assert item.status == "analysis_retry_queued"
+        assert item.model_name == ""
+        assert item.prompt_version == ""
+        assert item.last_error is None
+
+
 def test_batch_request_delete_uses_approval_semantics(quarantine_fixture) -> None:
     engine, _library, trash, original, _digest = quarantine_fixture
     with Session(engine) as db:

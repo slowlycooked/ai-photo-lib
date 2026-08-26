@@ -19,6 +19,7 @@ from app.services.photo_quarantine_service import (
 
 class _FakeQuarantineService:
     last_list_args = None
+    retried_failed_project_id = None
 
     def __init__(self, _db) -> None:
         pass
@@ -26,6 +27,10 @@ class _FakeQuarantineService:
     def list_items(self, **kwargs):
         self.__class__.last_list_args = kwargs
         return 0, []
+
+    def retry_failed_analysis(self, *, project_id: int):
+        self.__class__.retried_failed_project_id = project_id
+        return 12
 
     def batch_action(
         self,
@@ -267,3 +272,49 @@ def test_start_run_reads_enqueued_task_with_keyword_scope(monkeypatch) -> None:
 
     assert response.status_code == 200
     assert response.json()["id"] == 88
+
+
+def test_start_run_can_queue_failed_items_first(monkeypatch) -> None:
+    captured = {}
+
+    class _FakeTaskService:
+        def __init__(self, _db) -> None:
+            pass
+
+        def get_task(self, *, project_id: int, task_id: int):
+            return {
+                "id": task_id,
+                "project_id": project_id,
+                "task_type": "photo_quarantine_analysis",
+                "status": "queued",
+                "retry_count": 0,
+                "request_params": {"trigger": "manual_retry_failed"},
+                "progress_payload": None,
+                "result_payload": None,
+                "error_message": None,
+                "created_at": "2026-08-24T21:00:00Z",
+                "updated_at": "2026-08-24T21:00:00Z",
+                "started_at": None,
+                "finished_at": None,
+            }
+
+    def enqueue(*_args, **kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(task=SimpleNamespace(id=89))
+
+    _FakeQuarantineService.retried_failed_project_id = None
+    monkeypatch.setattr(quarantine_router, "enqueue_photo_quarantine_task", enqueue)
+    monkeypatch.setattr(quarantine_router, "ProjectTasksAppService", _FakeTaskService)
+
+    response = _build_client(monkeypatch).post(
+        "/api/projects/1/photo-quarantine/runs",
+        json={"retry_failed": True},
+    )
+
+    assert response.status_code == 200
+    assert _FakeQuarantineService.retried_failed_project_id == 1
+    assert captured == {
+        "project_id": 1,
+        "trigger": "manual_retry_failed",
+        "ignore_window": True,
+    }

@@ -23,3 +23,12 @@ def test_batch_request_accepts_explicit_delete_approval() -> None:
     )
 
     assert request.action == "REQUEST_DELETE"
+
+
+def test_batch_request_accepts_analysis_retry() -> None:
+    request = PhotoQuarantineBatchRequest(
+        action="RETRY_ANALYSIS",
+        item_ids=[1, 2],
+    )
+
+    assert request.action == "RETRY_ANALYSIS"

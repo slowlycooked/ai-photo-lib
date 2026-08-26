@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Callable, Optional
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from sqlalchemy import or_
+from sqlalchemy import case, or_
 from sqlalchemy.orm import Session
 
 from ..models.photo import Photo
@@ -188,7 +188,13 @@ class PhotoQuarantineAnalysisService:
                     PhotoQuarantineItem.prompt_version != PROMPT_VERSION,
                 ),
             )
-            .order_by(Photo.id.asc())
+            .order_by(
+                case(
+                    (PhotoQuarantineItem.status == "analysis_retry_queued", 0),
+                    else_=1,
+                ),
+                Photo.id.asc(),
+            )
             .first()
         )
 

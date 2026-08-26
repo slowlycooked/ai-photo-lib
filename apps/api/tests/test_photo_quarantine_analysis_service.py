@@ -21,6 +21,7 @@ from app.services.photo_quarantine_analysis_service import (
     PhotoQuarantineAnalysisService,
     is_hour_in_window,
 )
+from app.services.photo_quarantine_service import PhotoQuarantineService
 
 
 def _build_db(tmp_path: Path, *, dry_run: bool = True) -> tuple[Session, Path]:
@@ -205,6 +206,55 @@ def test_exact_hash_duplicate_marks_only_newer_copy_for_review(tmp_path: Path) -
     assert items[1].status == "review"
     assert items[1].first_result["duplicate_photo_id"] == 1
     assert items[1].first_result["duplicate_original_path"] == str(image)
+
+
+def test_retried_failures_are_analyzed_before_new_photos(tmp_path: Path) -> None:
+    db, image = _build_db(tmp_path)
+    failed_image = image.with_name("failed-photo.jpg")
+    failed_image.write_bytes(b"failed-photo")
+    db.add(
+        Photo(
+            id=2,
+            project_id=1,
+            file_path=str(failed_image),
+            file_name=failed_image.name,
+            status="indexed",
+        )
+    )
+    db.add(
+        PhotoQuarantineItem(
+            id=2,
+            project_id=1,
+            photo_id=2,
+            status="analysis_failed",
+            decision="REVIEW",
+            classification="uncertain",
+            confidence=0,
+            reason="failed",
+            preservation_flags=["analysis_error"],
+            first_result={},
+            model_name="qwen3.8:27b",
+            prompt_version="photo-quarantine-v3-duplicate-detection",
+            original_path=str(failed_image),
+        )
+    )
+    db.commit()
+    PhotoQuarantineService(db).retry_failed_analysis(project_id=1)
+    analyzed_paths = []
+
+    def analyzer(path, *_args, **_kwargs):
+        analyzed_paths.append(path)
+        return _decision("valuable", decision="KEEP")
+
+    service = PhotoQuarantineAnalysisService(
+        db,
+        analyzer=analyzer,
+        clock=lambda tz: datetime(2026, 8, 25, 2, tzinfo=tz),
+    )
+    result = service.run_project(project_id=1)
+
+    assert result["analyzed"] == 2
+    assert analyzed_paths == [str(failed_image), str(image)]
 
 
 def test_hour_window_supports_normal_and_overnight_ranges() -> None:

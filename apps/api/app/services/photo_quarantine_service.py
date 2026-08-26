@@ -421,6 +421,67 @@ class PhotoQuarantineService:
         self._db.refresh(item)
         return item
 
+    def retry_analysis(
+        self,
+        *,
+        project_id: int,
+        item_id: int,
+    ) -> PhotoQuarantineItem:
+        """Return a failed classification to the analysis candidate queue."""
+        item, photo, _project = self._load_item_photo_project(project_id, item_id)
+        if item.status == "analysis_retry_queued":
+            return item
+        if item.status != "analysis_failed":
+            raise PhotoQuarantineConflict(
+                f"Item status {item.status!r} cannot be retried for analysis"
+            )
+        if photo.deleted_at is not None or photo.status == "quarantined":
+            raise PhotoQuarantineConflict("Photo is no longer available for analysis")
+        item.status = "analysis_retry_queued"
+        item.decision = "REVIEW"
+        item.classification = "uncertain"
+        item.confidence = 0.0
+        item.reason = "等待重新识别"
+        item.preservation_flags = []
+        item.first_result = {}
+        item.verification_result = None
+        item.model_name = ""
+        item.prompt_version = ""
+        item.last_error = None
+        item.updated_at = _now()
+        self._db.commit()
+        self._db.refresh(item)
+        return item
+
+    def retry_failed_analysis(self, *, project_id: int) -> int:
+        """Queue all failed classifications in a project for one more analysis pass."""
+        queued = (
+            self._db.query(PhotoQuarantineItem)
+            .filter(
+                PhotoQuarantineItem.project_id == project_id,
+                PhotoQuarantineItem.status == "analysis_failed",
+            )
+            .update(
+                {
+                    PhotoQuarantineItem.status: "analysis_retry_queued",
+                    PhotoQuarantineItem.decision: "REVIEW",
+                    PhotoQuarantineItem.classification: "uncertain",
+                    PhotoQuarantineItem.confidence: 0.0,
+                    PhotoQuarantineItem.reason: "等待重新识别",
+                    PhotoQuarantineItem.preservation_flags: [],
+                    PhotoQuarantineItem.first_result: {},
+                    PhotoQuarantineItem.verification_result: None,
+                    PhotoQuarantineItem.model_name: "",
+                    PhotoQuarantineItem.prompt_version: "",
+                    PhotoQuarantineItem.last_error: None,
+                    PhotoQuarantineItem.updated_at: _now(),
+                },
+                synchronize_session=False,
+            )
+        )
+        self._db.commit()
+        return queued
+
     def label(
         self,
         *,
@@ -534,6 +595,7 @@ class PhotoQuarantineService:
                 **kwargs, labeled_by=labeled_by
             ).item,
             "RESTORE": lambda **kwargs: self.restore(**kwargs, labeled_by=labeled_by),
+            "RETRY_ANALYSIS": self.retry_analysis,
             "LABEL_KEEP": lambda **kwargs: self.label(
                 **kwargs, label="KEEP", labeled_by=labeled_by or "unknown"
             ),

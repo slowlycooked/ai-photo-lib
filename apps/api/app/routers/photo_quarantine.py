@@ -5,7 +5,7 @@ import io
 from pathlib import Path
 from typing import Literal, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy.orm import Session
 
@@ -22,6 +22,7 @@ from ..schemas.photo_quarantine import (
     PhotoQuarantineLabelRequest,
     PhotoQuarantineListResponse,
     PhotoQuarantineReconciliationResponse,
+    PhotoQuarantineRunRequest,
     ProjectPhotoQuarantineSettingsResponse,
     ProjectPhotoQuarantineSettingsUpdate,
 )
@@ -54,6 +55,13 @@ def run_photo_quarantine_batch(
         action=body.action,
         labeled_by=current_user.username,
     )
+    if body.action == "RETRY_ANALYSIS" and result.succeeded > 0:
+        enqueue_photo_quarantine_task(
+            db,
+            project_id=project.id,
+            trigger="retry_analysis",
+            ignore_window=True,
+        )
     return PhotoQuarantineBatchResponse(
         requested=len(result.results),
         succeeded=result.succeeded,
@@ -80,13 +88,17 @@ def run_photo_quarantine_batch(
     response_model=ProjectTaskResponse,
 )
 def start_photo_quarantine_run(
+    body: Optional[PhotoQuarantineRunRequest] = Body(default=None),
     project: Project = Depends(require_project_manager),
     db: Session = Depends(get_db),
 ):
+    retry_failed = bool(body and body.retry_failed)
+    if retry_failed:
+        PhotoQuarantineService(db).retry_failed_analysis(project_id=project.id)
     result = enqueue_photo_quarantine_task(
         db,
         project_id=project.id,
-        trigger="manual",
+        trigger="manual_retry_failed" if retry_failed else "manual",
         ignore_window=True,
     )
     return ProjectTasksAppService(db).get_task(

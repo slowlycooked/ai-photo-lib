@@ -76,12 +76,17 @@ class PhotoQuarantineListResponse(BaseModel):
     items: list[PhotoQuarantineItemResponse]
 
 
+class PhotoQuarantineRunRequest(BaseModel):
+    retry_failed: bool = False
+
+
 class PhotoQuarantineBatchRequest(BaseModel):
     action: Literal[
         "KEEP",
         "REQUEST_DELETE",
         "MOVE",
         "RESTORE",
+        "RETRY_ANALYSIS",
         "LABEL_KEEP",
         "LABEL_TRASH",
     ]
