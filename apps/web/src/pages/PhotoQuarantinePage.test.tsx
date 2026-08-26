@@ -160,7 +160,7 @@ describe("PhotoQuarantinePage", () => {
     });
   });
 
-  it("keeps start and stop scan controls visible while their enabled state changes", async () => {
+  it("slides the scan control right and changes it into cancellation", async () => {
     const user = userEvent.setup();
     const activeTask = {
       id: 88,
@@ -178,16 +178,28 @@ describe("PhotoQuarantinePage", () => {
     renderPage();
 
     const startButton = await screen.findByRole("button", { name: "启动扫描" });
-    expect(screen.getByRole("button", { name: "停止扫描" })).toBeDisabled();
+    expect(startButton.closest("[data-scan-position]")).toHaveAttribute("data-scan-position", "left");
     await user.click(startButton);
 
-    await waitFor(() => expect(startRunMock).toHaveBeenCalledWith(1));
-    expect(await screen.findByRole("button", { name: "启动扫描" })).toBeDisabled();
-    await user.click(screen.getByRole("button", { name: "停止扫描" }));
+    await waitFor(() => expect(startRunMock).toHaveBeenCalledWith(1, false));
+    const cancelButton = await screen.findByRole("button", { name: "取消扫描" });
+    expect(cancelButton.closest("[data-scan-position]")).toHaveAttribute("data-scan-position", "right");
+    await user.click(cancelButton);
 
     await waitFor(() => expect(cancelTaskMock).toHaveBeenCalledWith(1, 88));
-    expect(await screen.findByRole("button", { name: "正在停止" })).toBeDisabled();
+    expect(await screen.findByRole("button", { name: "正在取消" })).toBeDisabled();
     expect(screen.getByText("正在停止分析，将在当前图片处理完成后退出")).toBeInTheDocument();
+  });
+
+  it("requests failed items first when the start checkbox is selected", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByRole("checkbox", { name: "重新扫描失败项" }));
+    await user.click(screen.getByRole("button", { name: "启动扫描" }));
+
+    await waitFor(() => expect(startRunMock).toHaveBeenCalledWith(1, true));
+    expect(screen.getByText("历史识别失败项已优先重新提交，分析任务已进入队列")).toBeInTheDocument();
   });
 
   it("shows the recoverability guarantee and restores an item", async () => {
@@ -228,7 +240,8 @@ describe("PhotoQuarantinePage", () => {
 
     expect(screen.getByText("已选 2 张")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "批量保留（2）" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "批量提交删除（2）" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "批量提交删除（1）" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "批量重新识别（1）" })).toBeInTheDocument();
     for (const checkbox of screen.getAllByRole("checkbox", { name: "选择审核项" })) {
       expect(checkbox).toBeChecked();
     }
@@ -246,7 +259,7 @@ describe("PhotoQuarantinePage", () => {
       total: 2,
       items: [
         { ...item, id: 7, status: "review" },
-        { ...item, id: 8, photo_id: 80, status: "analysis_failed" },
+        { ...item, id: 8, photo_id: 80, status: "review" },
       ],
     });
     renderPage();
@@ -266,7 +279,7 @@ describe("PhotoQuarantinePage", () => {
     vi.spyOn(window, "confirm").mockReturnValue(true);
     const reviewItems = [
       { ...item, id: 7, original_path: "/photos/IMG_2561.jpg", status: "review" },
-      { ...item, id: 8, photo_id: 80, original_path: "/photos/DSC_2480.jpg", status: "analysis_failed" },
+      { ...item, id: 8, photo_id: 80, original_path: "/photos/DSC_2480.jpg", status: "review" },
     ];
     listMock.mockResolvedValue({ total: 2, items: reviewItems });
     batchMock.mockResolvedValue({
@@ -325,7 +338,7 @@ describe("PhotoQuarantinePage", () => {
     vi.spyOn(window, "confirm").mockReturnValue(true);
     const reviewItems = [
       { ...item, id: 7, status: "review" },
-      { ...item, id: 8, photo_id: 80, status: "analysis_failed" },
+      { ...item, id: 8, photo_id: 80, status: "review" },
     ];
     listMock
       .mockResolvedValueOnce({ total: 2, items: reviewItems })
@@ -357,9 +370,37 @@ describe("PhotoQuarantinePage", () => {
     await waitFor(() => expect(listMock).toHaveBeenCalled());
     const defaultStatuses = String(listMock.mock.calls[0][1]);
     expect(defaultStatuses).toContain("review");
-    expect(defaultStatuses).toContain("analysis_failed");
+    expect(defaultStatuses).toContain("analysis_retry_queued");
+    expect(defaultStatuses).not.toContain("analysis_failed");
     expect(defaultStatuses).not.toContain("delete_queued");
     expect(defaultStatuses).not.toContain("quarantined");
+  });
+
+  it("offers retry instead of deletion when analysis failed", async () => {
+    const user = userEvent.setup();
+    listMock.mockResolvedValue({
+      total: 1,
+      items: [{ ...item, status: "analysis_failed", last_error: "Operation not permitted" }],
+    });
+    batchMock.mockResolvedValue({
+      requested: 1,
+      succeeded: 1,
+      failed: 0,
+      results: [{
+        item_id: 7,
+        succeeded: true,
+        item: { ...item, status: "analysis_retry_queued", last_error: null },
+        error_code: null,
+        message: null,
+      }],
+    });
+    renderPage();
+
+    expect(await screen.findByRole("button", { name: "重新识别" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "提交删除" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "重新识别" }));
+
+    await waitFor(() => expect(batchMock).toHaveBeenCalledWith(1, "RETRY_ANALYSIS", [7]));
   });
 
   it("automatically reconciles backend deletions when the page loads", async () => {
@@ -524,14 +565,15 @@ describe("PhotoQuarantinePage", () => {
     expect(requestDeleteMock).not.toHaveBeenCalled();
   });
 
-  it("offers both approval choices for an analysis failure", async () => {
+  it("keeps the safe keep choice for an analysis failure", async () => {
     listMock.mockResolvedValue({
       total: 1,
       items: [{ ...item, status: "analysis_failed", human_label: null }],
     });
     renderPage();
 
-    expect(await screen.findByRole("button", { name: "提交删除" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "重新识别" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "提交删除" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "保留" })).toBeInTheDocument();
   });
 

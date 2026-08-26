@@ -1148,6 +1148,7 @@ export type PhotoQuarantineBatchAction =
   | "REQUEST_DELETE"
   | "MOVE"
   | "RESTORE"
+  | "RETRY_ANALYSIS"
   | "LABEL_KEEP"
   | "LABEL_TRASH";
 

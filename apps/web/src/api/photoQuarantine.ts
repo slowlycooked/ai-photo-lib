@@ -55,8 +55,12 @@ export const photoQuarantineApi = {
       },
     ),
 
-  startRun: (projectId: number) =>
-    request<ProjectTask>(`/projects/${projectId}/photo-quarantine/runs`, { method: "POST" }),
+  startRun: (projectId: number, retryFailed = false) =>
+    request<ProjectTask>(`/projects/${projectId}/photo-quarantine/runs`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ retry_failed: retryFailed }),
+    }),
 
   batch: (projectId: number, action: PhotoQuarantineBatchAction, itemIds: number[]) =>
     request<PhotoQuarantineBatchResponse>(`/projects/${projectId}/photo-quarantine/batches`, {

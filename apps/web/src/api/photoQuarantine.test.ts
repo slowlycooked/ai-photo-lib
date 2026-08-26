@@ -55,4 +55,23 @@ describe("photoQuarantineApi", () => {
       expect.objectContaining({ method: "POST" }),
     );
   });
+
+  it("starts analysis with an explicit failed-item retry option", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ id: 88, status: "queued" }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await photoQuarantineApi.startRun(3, true);
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/projects/3/photo-quarantine/runs",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ retry_failed: true }),
+      }),
+    );
+  });
 });
