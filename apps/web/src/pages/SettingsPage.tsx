@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import { Link, Navigate, useLocation, useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -14,8 +14,13 @@ import {
   Star,
   AlertTriangle,
   Activity,
+  ChevronDown,
   CheckCircle2,
+  Cpu,
+  Gauge,
   RefreshCw,
+  RotateCcw,
+  Server,
 } from "lucide-react";
 import {
   api,
@@ -57,34 +62,144 @@ export function prepareLibrarySubmitPath(hostPath: string): string {
   return hostPath;
 }
 
+/** Keep the identifying end of a long path visible in compact library rows. */
+export function compactLibraryPath(path: string): string {
+  const segments = path.split("/").filter(Boolean);
+  if (segments.length <= 3) {
+    return path;
+  }
+  return `…/${segments.slice(-3).join("/")}`;
+}
+
 // ─── Shared UI ────────────────────────────────────────────────────────────────
 
 function SettingRow({ label, value }: { label: string; value: string | number }) {
   return (
-    <div className="flex items-start justify-between gap-4 py-3 border-b border-hairline last:border-0">
-      <span className="text-body-sm text-mute flex-shrink-0 w-40">{label}</span>
-      <span className="text-body-sm text-ink font-medium text-right break-all">{value}</span>
+    <div className="flex flex-col gap-1 border-b border-hairline py-3 last:border-0 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+      <span className="shrink-0 text-caption-sm font-medium text-mute sm:w-40 sm:text-body-sm">{label}</span>
+      <span className="min-w-0 font-mono text-caption-sm font-medium text-ink [overflow-wrap:anywhere] sm:text-right">{value}</span>
     </div>
   );
 }
 
 function SettingsCard({
   title,
+  description,
+  icon,
   action,
   children,
 }: {
   title: string;
+  description?: React.ReactNode;
+  icon?: React.ReactNode;
   action?: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (
-    <div className="bg-canvas border border-hairline rounded-md">
-      <div className="px-5 py-3 border-b border-hairline flex items-center justify-between">
-        <h2 className="text-body-sm font-semibold text-ink">{title}</h2>
+    <div className="overflow-hidden rounded-2xl border border-hairline bg-canvas shadow-sm">
+      <div className="flex items-center justify-between gap-4 border-b border-hairline px-4 py-3.5 sm:px-5">
+        <div className="flex min-w-0 items-center gap-3">
+          {icon}
+          <div className="min-w-0">
+            <h2 className="text-body-sm font-semibold text-ink">{title}</h2>
+            {description && <div className="mt-0.5 text-caption-sm text-mute">{description}</div>}
+          </div>
+        </div>
         {action}
       </div>
-      <div className="px-5">{children}</div>
+      <div className="px-4 sm:px-5">{children}</div>
     </div>
+  );
+}
+
+function RuntimeMetric({
+  label,
+  value,
+  hint,
+  icon,
+}: {
+  label: string;
+  value: string | number;
+  hint: string;
+  icon: React.ReactNode;
+}) {
+  return (
+    <div className="flex min-w-0 items-center gap-3 rounded-xl border border-hairline bg-surface-card p-4">
+      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-canvas text-primary shadow-sm">
+        {icon}
+      </span>
+      <div className="min-w-0">
+        <p className="text-caption-sm font-medium text-mute">{label}</p>
+        <div className="mt-0.5 flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+          <strong className="text-heading-md font-semibold tabular-nums text-ink">{value}</strong>
+          <span className="text-caption-sm text-mute">{hint}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export function GeneralRuntimeOverview({
+  maxRetries,
+  concurrency,
+}: {
+  maxRetries: number;
+  concurrency: number;
+}) {
+  return (
+    <SettingsCard
+      title="任务处理"
+      description="后台任务的全局运行参数"
+      icon={
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
+          <Gauge className="h-4 w-4" aria-hidden="true" />
+        </span>
+      }
+      action={
+        <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-1 text-caption-sm font-medium text-emerald-700">
+          <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />
+          已载入
+        </span>
+      }
+    >
+      <div className="grid gap-3 py-4 sm:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2">
+        <RuntimeMetric
+          label="并发任务"
+          value={concurrency}
+          hint="个同时运行"
+          icon={<Cpu className="h-5 w-5" aria-hidden="true" />}
+        />
+        <RuntimeMetric
+          label="失败重试"
+          value={maxRetries}
+          hint="次自动恢复"
+          icon={<RotateCcw className="h-5 w-5" aria-hidden="true" />}
+        />
+      </div>
+    </SettingsCard>
+  );
+}
+
+export function TechnicalPaths({ hostPath, containerPath }: { hostPath: string; containerPath: string }) {
+  return (
+    <details className="group overflow-hidden rounded-2xl border border-hairline bg-canvas shadow-sm">
+      <summary className="flex min-h-16 cursor-pointer list-none items-center justify-between gap-4 px-4 py-3.5 transition-colors hover:bg-surface-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/40 sm:px-5 [&::-webkit-details-marker]:hidden">
+        <div className="flex min-w-0 items-center gap-3">
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-secondary-bg text-mute">
+            <Server className="h-4 w-4" aria-hidden="true" />
+          </span>
+          <div className="min-w-0">
+            <h2 className="text-body-sm font-semibold text-ink">技术路径</h2>
+            <p className="mt-0.5 text-caption-sm text-mute">Host 与 Container 映射 · 2 项</p>
+          </div>
+        </div>
+        <ChevronDown className="h-4 w-4 shrink-0 text-mute transition-transform group-open:rotate-180 motion-reduce:transition-none" aria-hidden="true" />
+      </summary>
+      <div className="border-t border-hairline px-4 sm:px-5">
+        <SettingRow label="Host Path" value={hostPath} />
+        <SettingRow label="Container Path" value={containerPath} />
+      </div>
+    </details>
   );
 }
 
@@ -175,7 +290,7 @@ interface LibraryFormValues {
   is_default: boolean;
 }
 
-function LibraryForm({
+export function LibraryForm({
   initial,
   hostPrefix,
   submitLabel,
@@ -199,6 +314,10 @@ function LibraryForm({
     [initial.photo_library_path, hostPrefix]
   );
   const [values, setValues] = useState<LibraryFormValues>(initialDisplay);
+  const formId = useId();
+  const nameInputId = `${formId}-name`;
+  const pathInputId = `${formId}-path`;
+  const defaultInputId = `${formId}-default`;
 
   function set(k: keyof LibraryFormValues, v: string | boolean) {
     setValues((prev) => ({ ...prev, [k]: v }));
@@ -214,66 +333,84 @@ function LibraryForm({
   const hostExample = hostPrefix.replace(/\/$/, "") + "/my-library";
 
   return (
-    <div className="py-3 space-y-2.5">
-      <div className="flex gap-2">
-        <div className="flex-1">
-          <label className="block text-caption-sm text-mute mb-1">名称</label>
+    <form
+      className="space-y-3 py-4"
+      aria-busy={isSubmitting}
+      onSubmit={(event) => {
+        event.preventDefault();
+        handleSubmit();
+      }}
+    >
+      <div className="grid gap-3 sm:grid-cols-[minmax(0,0.8fr)_minmax(0,1.8fr)]">
+        <div className="min-w-0">
+          <label htmlFor={nameInputId} className="mb-1.5 block text-caption-sm font-medium text-mute">
+            名称
+          </label>
           <input
+            id={nameInputId}
             type="text"
             value={values.name}
             onChange={(e) => set("name", e.target.value)}
             placeholder="我的图片库"
-            className="w-full px-3 py-1.5 text-body-sm bg-surface-card border border-hairline rounded-md focus:outline-none focus:ring-1 focus:ring-primary text-ink placeholder:text-mute"
+            className="h-10 w-full rounded-xl border border-hairline bg-surface-card px-3 text-body-sm text-ink placeholder:text-mute focus:outline-none focus:ring-2 focus:ring-primary/40"
           />
         </div>
-        <div className="flex-[2]">
-          <label className="block text-caption-sm text-mute mb-1">路径（系统实际路径）</label>
+        <div className="min-w-0">
+          <label htmlFor={pathInputId} className="mb-1.5 block text-caption-sm font-medium text-mute">
+            图片库路径
+          </label>
           <input
+            id={pathInputId}
             type="text"
             value={values.photo_library_path}
             onChange={(e) => set("photo_library_path", e.target.value)}
             placeholder={hostExample}
-            className="w-full px-3 py-1.5 text-body-sm bg-surface-card border border-hairline rounded-md focus:outline-none focus:ring-1 focus:ring-primary text-ink placeholder:text-mute font-mono"
+            className="h-10 w-full rounded-xl border border-hairline bg-surface-card px-3 font-mono text-body-sm text-ink placeholder:text-mute focus:outline-none focus:ring-2 focus:ring-primary/40"
           />
         </div>
       </div>
-      <label className="flex items-center gap-2 cursor-pointer select-none">
+      <label
+        htmlFor={defaultInputId}
+        className="flex min-h-10 cursor-pointer select-none items-center gap-2 rounded-xl px-1 text-body-sm text-ink focus-within:ring-2 focus-within:ring-primary/40"
+      >
         <input
+          id={defaultInputId}
           type="checkbox"
           checked={values.is_default}
           onChange={(e) => set("is_default", e.target.checked)}
-          className="accent-primary w-3.5 h-3.5"
+          className="h-4 w-4 accent-primary"
         />
-        <span className="text-body-sm text-ink">设为默认图片库</span>
+        <span>设为默认图片库</span>
       </label>
-      <div className="flex gap-2 pt-1">
+      <div className="flex flex-wrap gap-2 pt-1">
         <button
+          type="submit"
           disabled={isSubmitting || !values.name.trim() || !values.photo_library_path.trim()}
-          onClick={handleSubmit}
-          className="flex items-center gap-1.5 px-3 py-1.5 text-body-sm font-medium rounded-md bg-primary text-white disabled:opacity-50 hover:opacity-90 transition-opacity"
+          className="inline-flex h-10 cursor-pointer items-center gap-1.5 rounded-xl bg-primary px-4 text-body-sm font-medium text-white transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {isSubmitting ? (
-            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            <Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" aria-hidden="true" />
           ) : (
-            <Check className="w-3.5 h-3.5" />
+            <Check className="h-4 w-4" aria-hidden="true" />
           )}
           {submitLabel}
         </button>
         <button
+          type="button"
           onClick={onCancel}
-          className="flex items-center gap-1.5 px-3 py-1.5 text-body-sm rounded-md border border-hairline text-ink hover:bg-secondary-bg transition-colors"
+          className="inline-flex h-10 cursor-pointer items-center gap-1.5 rounded-xl border border-hairline px-4 text-body-sm text-ink transition-colors hover:bg-secondary-bg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:ring-offset-2"
         >
-          <X className="w-3.5 h-3.5" />
+          <X className="h-4 w-4" aria-hidden="true" />
           取消
         </button>
       </div>
       {error && (
-        <p className="flex items-center gap-1.5 text-caption-sm text-red-500">
-          <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
+        <p className="flex items-center gap-1.5 text-caption-sm text-danger" role="alert">
+          <AlertCircle className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
           {error.message}
         </p>
       )}
-    </div>
+    </form>
   );
 }
 
@@ -292,46 +429,59 @@ function LibraryRow({
   onDelete: () => void;
   onSetDefault: () => void;
 }) {
+  const fullPath = containerToHost(project.photo_library_path, hostPrefix);
+
   return (
-    <div className="flex items-center gap-3 py-3 border-b border-hairline last:border-0">
-      <FolderOpen className="w-4 h-4 text-primary flex-shrink-0" />
-      <div className="flex-1 min-w-0">
+    <div className="group flex flex-wrap items-center gap-3 border-b border-hairline py-4 last:border-0">
+      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
+        <FolderOpen className="h-5 w-5" aria-hidden="true" />
+      </span>
+      <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
-          <span className="text-body-sm font-medium text-ink truncate">{project.name}</span>
+          <span className="truncate text-body-sm font-semibold text-ink">{project.name}</span>
           {project.is_default && (
-            <span className="text-caption-sm px-1.5 py-0.5 bg-primary/10 text-primary rounded font-medium">
+            <span className="rounded-full bg-primary/10 px-2 py-0.5 text-caption-sm font-medium text-primary">
               默认
             </span>
           )}
         </div>
-        <p className="text-caption-sm text-mute font-mono truncate mt-0.5">
-          {containerToHost(project.photo_library_path, hostPrefix)}
+        <p
+          className="mt-1 truncate font-mono text-caption-sm text-mute"
+          title={fullPath}
+        >
+          {compactLibraryPath(fullPath)}
         </p>
       </div>
-      <div className="flex items-center gap-1 flex-shrink-0">
+      <div className="ml-auto flex shrink-0 items-center gap-1.5">
         {!project.is_default && (
           <button
+            type="button"
             onClick={onSetDefault}
             title="设为默认"
-            className="p-1.5 rounded hover:bg-secondary-bg text-mute hover:text-primary transition-colors"
+            aria-label={`将 ${project.name} 设为默认图片库`}
+            className="inline-flex h-9 w-9 cursor-pointer items-center justify-center rounded-lg text-mute transition-colors hover:bg-primary/10 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
           >
-            <Star className="w-3.5 h-3.5" />
+            <Star className="h-4 w-4" aria-hidden="true" />
           </button>
         )}
         <button
+          type="button"
           onClick={onEdit}
           title="编辑"
-          className="p-1.5 rounded hover:bg-secondary-bg text-mute hover:text-ink transition-colors"
+          aria-label={`编辑图片库 ${project.name}`}
+          className="inline-flex h-9 w-9 cursor-pointer items-center justify-center rounded-lg text-mute transition-colors hover:bg-secondary-bg hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
         >
-          <Pencil className="w-3.5 h-3.5" />
+          <Pencil className="h-4 w-4" aria-hidden="true" />
         </button>
         {!project.is_default && (
           <button
+            type="button"
             onClick={onDelete}
             title="删除"
-            className="p-1.5 rounded hover:bg-secondary-bg text-mute hover:text-red-500 transition-colors"
+            aria-label={`删除图片库 ${project.name}`}
+            className="inline-flex h-9 w-9 cursor-pointer items-center justify-center rounded-lg text-mute transition-colors hover:bg-danger/10 hover:text-danger focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-danger/40"
           >
-            <Trash2 className="w-3.5 h-3.5" />
+            <Trash2 className="h-4 w-4" aria-hidden="true" />
           </button>
         )}
       </div>
@@ -384,15 +534,23 @@ function LibraryManagementCard() {
 
   return (
     <SettingsCard
-      title="图片库管理"
+      title="图片库"
+      description={isLoading ? "正在读取…" : `${projects.length} 个图片库${projects.some((project) => project.is_default) ? " · 已设默认" : ""}`}
+      icon={
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
+          <FolderOpen className="h-4 w-4" aria-hidden="true" />
+        </span>
+      }
       action={
         !showAddForm && (
           <button
+            type="button"
             onClick={() => { setShowAddForm(true); setEditingId(null); }}
-            className="flex items-center gap-1.5 px-2.5 py-1 text-body-sm rounded-md border border-hairline text-ink hover:bg-secondary-bg transition-colors"
+            className="inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-xl border border-hairline px-3 text-body-sm font-medium text-ink transition-colors hover:bg-secondary-bg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:ring-offset-2"
           >
-            <Plus className="w-3.5 h-3.5" />
-            添加图片库
+            <Plus className="h-4 w-4" aria-hidden="true" />
+            <span className="hidden sm:inline">添加图片库</span>
+            <span className="sm:hidden">添加</span>
           </button>
         )
       }
@@ -430,23 +588,37 @@ function LibraryManagementCard() {
         ) : deleteConfirmId === project.id ? (
           <div
             key={project.id}
-            className="flex items-center justify-between gap-3 py-3 border-b border-hairline last:border-0"
+            className="flex flex-col gap-3 border-b border-hairline py-4 last:border-0 sm:flex-row sm:items-center sm:justify-between"
+            role="group"
+            aria-label={`确认删除图片库 ${project.name}`}
           >
-            <span className="text-body-sm text-ink">
-              确认删除图片库 <span className="font-medium">"{project.name}"</span>？此操作不可恢复。
-            </span>
-            <div className="flex gap-2 flex-shrink-0">
+            <div className="flex min-w-0 items-start gap-3">
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-danger/10 text-danger">
+                <Trash2 className="h-4 w-4" aria-hidden="true" />
+              </span>
+              <div className="min-w-0">
+                <p className="text-body-sm font-semibold text-ink">删除“{project.name}”？</p>
+                <p className="mt-0.5 text-caption-sm text-mute">此操作不可恢复。</p>
+              </div>
+            </div>
+            <div className="flex shrink-0 gap-2 self-end sm:self-auto">
               <button
+                type="button"
                 disabled={deleteProject.isPending}
                 onClick={() => handleDelete(project.id)}
-                className="flex items-center gap-1 px-3 py-1.5 text-body-sm font-medium rounded-md bg-red-500 text-white disabled:opacity-50 hover:opacity-90 transition-opacity"
+                className="inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-xl bg-danger px-3 text-body-sm font-medium text-white transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-danger/40 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                {deleteProject.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+                {deleteProject.isPending ? (
+                  <Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" aria-hidden="true" />
+                ) : (
+                  <Trash2 className="h-4 w-4" aria-hidden="true" />
+                )}
                 删除
               </button>
               <button
+                type="button"
                 onClick={() => setDeleteConfirmId(null)}
-                className="px-3 py-1.5 text-body-sm rounded-md border border-hairline text-ink hover:bg-secondary-bg transition-colors"
+                className="h-9 cursor-pointer rounded-xl border border-hairline px-3 text-body-sm text-ink transition-colors hover:bg-secondary-bg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:ring-offset-2"
               >
                 取消
               </button>
@@ -1400,62 +1572,67 @@ export function SettingsPage() {
     return <Navigate to="/settings/general" replace />;
   }
 
+  const sectionDescriptions: Record<string, string> = {
+    general: "图片库与后台任务的全局配置",
+    "ai-services": "管理系统级 AI 服务与项目可见范围",
+    users: "管理系统用户、角色与项目成员",
+    monitoring: "查看服务健康状态与项目就绪情况",
+    debug: "调整日志级别并诊断运行问题",
+  };
+
   return (
-    <SettingsLayout title="系统设置" currentProjectId={currentProjectId}>
+    <SettingsLayout
+      title="系统设置"
+      subtitle={sectionDescriptions[activeSection]}
+      currentProjectId={currentProjectId}
+    >
       {activeSection === "general" && (
-        <>
-          <LibraryManagementCard />
+        <div
+          className="grid min-w-0 items-start gap-5 xl:grid-cols-[minmax(0,1.35fr)_minmax(320px,0.65fr)]"
+        >
+          <div className="min-w-0">
+            <LibraryManagementCard />
+          </div>
 
-          {currentProjectId != null ? (
-            <SettingsCard title="当前项目状态摘要">
-              <div className="py-3 flex items-center justify-between gap-3">
-                <p className="text-body-sm text-mute">
-                  AI 服务由全局基础设施统一提供；项目设置页用于查看运行状态与项目级能力参数（Embedding、Planner、搜索）。
-                </p>
-                <Link
-                  to={`/projects/${currentProjectId}/settings/vision-ai`}
-                  className="px-3 py-1.5 text-body-sm rounded-md border border-hairline text-ink hover:bg-secondary-bg transition-colors"
-                >
-                  打开项目设置
-                </Link>
+          <div className="min-w-0 space-y-5 xl:sticky xl:top-20">
+            {isLoading && (
+              <div
+                className="space-y-3 rounded-2xl border border-hairline bg-canvas p-5 shadow-sm"
+                aria-label="正在加载运行参数"
+              >
+                <div className="h-20 animate-pulse rounded-xl bg-secondary-bg motion-reduce:animate-none" />
+                <div className="h-20 animate-pulse rounded-xl bg-secondary-bg motion-reduce:animate-none" />
               </div>
-            </SettingsCard>
-          ) : (
-            <SettingsCard title="当前项目状态摘要">
-              <div className="py-3 text-body-sm text-mute">
-                请先选择项目后查看项目级配置与就绪状态。
+            )}
+
+            {isError && (
+              <div
+                className="flex items-start gap-3 rounded-2xl border border-danger/20 bg-danger/5 p-4 text-danger"
+                role="alert"
+              >
+                <AlertCircle className="mt-0.5 h-5 w-5 shrink-0" aria-hidden="true" />
+                <div>
+                  <p className="text-body-sm font-semibold">运行参数加载失败</p>
+                  <p className="mt-0.5 text-caption-sm">请检查 API 服务后刷新页面。</p>
+                </div>
               </div>
-            </SettingsCard>
-          )}
+            )}
 
-          {isLoading && (
-            <div className="flex items-center gap-2 text-mute py-12 justify-center">
-              <Loader2 className="w-5 h-5 animate-spin" />
-              <span className="text-body-sm">加载中…</span>
-            </div>
-          )}
+            {data && (
+              <GeneralRuntimeOverview
+                maxRetries={data.ai_max_retries}
+                concurrency={data.ai_worker_concurrency}
+              />
+            )}
 
-          {isError && (
-            <div className="flex items-center gap-2 text-mute py-12 justify-center">
-              <AlertCircle className="w-5 h-5" />
-              <span className="text-body-sm">无法加载设置，请检查 API 服务</span>
-            </div>
-          )}
-
-          {data && (
-            <div className="space-y-4">
-              <SettingsCard title="路径映射与系统配置">
-                <SettingRow label="Host Path" value={data.host_photo_library_path} />
-                <SettingRow label="Container Path" value={data.photo_library_path} />
-              </SettingsCard>
-
-              <SettingsCard title="Worker 配置">
-                <SettingRow label="最大重试次数" value={data.ai_max_retries} />
-                <SettingRow label="并发任务数" value={data.ai_worker_concurrency} />
-              </SettingsCard>
-            </div>
-          )}
-        </>
+            {data && (
+              <TechnicalPaths
+                hostPath={data.host_photo_library_path}
+                containerPath={data.photo_library_path}
+              />
+            )}
+          </div>
+        </div>
       )}
 
       {activeSection === "monitoring" && (

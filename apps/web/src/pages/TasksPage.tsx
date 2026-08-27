@@ -118,9 +118,12 @@ function AISection({ projectId }: { projectId: number | null }) {
     reanalyzeCompletedMutation.isPending ||
     reanalyzeAllMutation.isPending;
 
-  const speed = status && status.success > 0 ? status.success : null;
   const analyzedCount = status?.analyzed_count ?? null;
   const totalPhotos = status?.total_photos ?? null;
+  const analysisCoverage =
+    analyzedCount !== null && totalPhotos !== null && totalPhotos > 0
+      ? Math.min(100, Math.max(0, Math.round((analyzedCount / totalPhotos) * 100)))
+      : null;
 
   return (
     <section className="space-y-4">
@@ -132,74 +135,107 @@ function AISection({ projectId }: { projectId: number | null }) {
         noun="任务"
       />
 
-      {analyzedCount !== null && analyzedCount > 0 && (
-        <p className="text-caption-sm text-mute">
-          已分析 {analyzedCount.toLocaleString()}
-          {totalPhotos !== null && totalPhotos > 0
-            ? ` / ${totalPhotos.toLocaleString()} 张照片`
-            : " 张照片"}
-        </p>
-      )}
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(320px,0.72fr)] lg:items-start">
+        <section className="rounded-md border border-hairline bg-canvas p-4 sm:p-5" aria-labelledby="ai-actions-title">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h3 id="ai-actions-title" className="text-body-sm font-semibold text-ink">
+                分析操作
+              </h3>
+              <p className="mt-0.5 text-caption-sm text-mute">增量处理优先，重跑会替换已有结果。</p>
+            </div>
+            {analysisCoverage !== null && (
+              <span className="text-body-sm font-semibold tabular-nums text-ink">
+                {analysisCoverage}%
+              </span>
+            )}
+          </div>
 
-      {/* Action buttons */}
-      <div className="flex flex-wrap gap-2">
-        <button
-          onClick={() => startMutation.mutate()}
-          disabled={isAnyPending || !canRun}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-primary text-white text-btn-sm font-bold hover:bg-primary-pressed disabled:bg-stone transition-colors"
-        >
-          <Play className="w-3.5 h-3.5" />
-          {startMutation.isPending ? "启动中…" : "开始分析"}
-        </button>
-        <button
-          onClick={() => reanalyzeCompletedMutation.mutate()}
-          disabled={isAnyPending || !canRun}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-hairline text-btn-sm hover:bg-surface-card disabled:opacity-50 transition-colors"
-        >
-          <RotateCcw className="w-3.5 h-3.5" />
-          {reanalyzeCompletedMutation.isPending ? "处理中…" : "重新分析已完成"}
-        </button>
-        <button
-          onClick={() => {
-            if (!window.confirm("这会清除当前项目已有 AI 分析结果并重新生成，确认继续？")) return;
-            reanalyzeAllMutation.mutate();
-          }}
-          disabled={isAnyPending || !canRun}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-hairline text-btn-sm hover:bg-surface-card disabled:opacity-50 transition-colors"
-        >
-          <RefreshCw className="w-3.5 h-3.5" />
-          {reanalyzeAllMutation.isPending ? "处理中…" : "重新分析全部"}
-        </button>
-        {!!status && (status.queued > 0 || status.running > 0) && (
+          {analyzedCount !== null && analyzedCount > 0 && (
+            <div
+              className="mt-4"
+              role={analysisCoverage !== null ? "img" : undefined}
+              aria-label={analysisCoverage !== null ? `照片分析覆盖率 ${analysisCoverage}%` : undefined}
+            >
+              {analysisCoverage !== null && (
+                <div className="h-2 overflow-hidden rounded-full bg-secondary-bg">
+                  <div
+                    className="h-full rounded-full bg-primary transition-[width] duration-300 motion-reduce:transition-none"
+                    style={{ width: `${analysisCoverage}%` }}
+                  />
+                </div>
+              )}
+              <p className="mt-1.5 text-caption-sm tabular-nums text-mute">
+                {analyzedCount.toLocaleString()}
+                {totalPhotos !== null && totalPhotos > 0
+                  ? ` / ${totalPhotos.toLocaleString()} 张照片`
+                  : " 张照片已分析"}
+              </p>
+            </div>
+          )}
+
+          <div className="mt-4 grid gap-2 sm:grid-cols-2">
+            <button
+              type="button"
+              onClick={() => startMutation.mutate()}
+              disabled={isAnyPending || !canRun}
+              className="inline-flex min-h-11 items-center justify-center gap-1.5 rounded-md bg-primary px-3 text-btn-sm font-bold text-white transition-colors hover:bg-primary-pressed disabled:bg-stone focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-outer"
+            >
+              <Play className="h-3.5 w-3.5" aria-hidden="true" />
+              {startMutation.isPending ? "启动中…" : "开始分析"}
+            </button>
+            <button
+              type="button"
+              onClick={() => reanalyzeCompletedMutation.mutate()}
+              disabled={isAnyPending || !canRun}
+              className="inline-flex min-h-11 items-center justify-center gap-1.5 rounded-md border border-hairline px-3 text-btn-sm text-ink transition-colors hover:bg-surface-soft disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-outer"
+            >
+              <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
+              {reanalyzeCompletedMutation.isPending ? "处理中…" : "重跑已完成"}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                if (!window.confirm("这会清除当前项目已有 AI 分析结果并重新生成，确认继续？")) return;
+                reanalyzeAllMutation.mutate();
+              }}
+              disabled={isAnyPending || !canRun}
+              className="inline-flex min-h-11 items-center justify-center gap-1.5 rounded-md border border-hairline px-3 text-btn-sm text-ink transition-colors hover:bg-surface-soft disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-outer"
+            >
+              <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
+              {reanalyzeAllMutation.isPending ? "处理中…" : "重跑全部"}
+            </button>
+            {!!status && (status.queued > 0 || status.running > 0) && (
           <button
+            type="button"
             onClick={() => {
               if (!window.confirm("将强制停止当前项目中进行中的 AI 分析任务，确认继续？")) return;
               forceStopMutation.mutate();
             }}
             disabled={forceStopMutation.isPending || !canRun}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-red-200 text-danger text-btn-sm hover:bg-red-50 disabled:opacity-50 transition-colors"
+                className="inline-flex min-h-11 items-center justify-center gap-1.5 rounded-md border border-red-200 px-3 text-btn-sm text-danger transition-colors hover:bg-red-50 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-outer"
           >
-            <XCircle className="w-3.5 h-3.5" />
+                <XCircle className="h-3.5 w-3.5" aria-hidden="true" />
             {forceStopMutation.isPending ? "停止中…" : "强制停止分析"}
           </button>
         )}
+          </div>
+
+          {message && (
+            <p className="mt-3 rounded-sm bg-surface-soft px-3 py-2 text-caption-sm text-secondary" aria-live="polite">
+              {message}
+            </p>
+          )}
+          {!canRun && <p className="mt-3 text-caption-sm text-mute">请先选择项目。</p>}
+        </section>
+
+        <TaskProgressStream
+          projectId={projectId}
+          title="AI 任务进度明细"
+          jobType="analyze,reanalyze"
+          listQueryKey="ai-jobs-progress"
+        />
       </div>
-
-      <div className="text-caption-sm text-mute space-y-0.5">
-        <p>开始分析：只处理没有 AI 结果的照片</p>
-        <p>重新分析：会删除旧 AI 分析结果并重新生成</p>
-      </div>
-
-      {message && <p className="text-caption-sm text-mute">{message}</p>}
-
-      <TaskProgressStream
-        projectId={projectId}
-        title="AI 任务进度明细"
-        jobType="analyze,reanalyze"
-        listQueryKey="ai-jobs-progress"
-      />
-
-      {!canRun && <p className="text-caption-sm text-mute">请先选择项目后再执行 AI 分析。</p>}
 
       <FailedJobsSection
         projectId={projectId}
@@ -777,51 +813,66 @@ export function TasksPage() {
 
   const tabClass = (t: TaskTab) =>
     [
-      "px-4 py-2 text-btn-sm font-medium transition-colors border-b-2",
+      "inline-flex min-h-11 items-center justify-center gap-1.5 rounded-md px-3 text-btn-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-outer",
       tab === t
-        ? "border-primary text-primary"
-        : "border-transparent text-mute hover:text-ink",
+        ? "bg-canvas text-primary shadow-sm"
+        : "text-mute hover:bg-canvas/70 hover:text-ink",
     ].join(" ");
 
   return (
-    <main className="max-w-3xl mx-auto px-4 sm:px-6 py-6 space-y-6">
-      <div className="flex items-start justify-between gap-3 flex-wrap">
-        <div className="space-y-1">
-          <h1 className="text-heading-md font-semibold text-ink flex items-center gap-2">
-            <Clock className="w-5 h-5" />
+    <main className="mx-auto max-w-6xl space-y-5 px-4 py-6 sm:px-6 lg:py-8">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h1 className="flex items-center gap-2 text-heading-md font-semibold text-ink">
+            <Clock className="h-5 w-5 text-primary" aria-hidden="true" />
             任务中心
           </h1>
-          <p className="text-caption-sm text-mute">
-            这里只保留执行类操作；模型、Prompt、Embedding 与搜索参数已收敛到独立配置页。
-          </p>
         </div>
       </div>
 
       {/* Tab nav */}
-      <div className="flex gap-0 border-b border-hairline -mb-2">
-        <button onClick={() => handleTabChange("scan")} className={tabClass("scan")}>
-          <span className="flex items-center gap-1.5">
-            <FolderSearch className="w-3.5 h-3.5" />
-            照片扫描
-          </span>
+      <div className="grid grid-cols-3 gap-1 rounded-lg bg-surface-soft p-1" role="tablist" aria-label="任务类型">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === "scan"}
+          aria-controls="task-panel-scan"
+          onClick={() => handleTabChange("scan")}
+          className={tabClass("scan")}
+        >
+          <FolderSearch className="h-3.5 w-3.5" aria-hidden="true" />
+          <span className="hidden sm:inline">照片扫描</span>
+          <span className="sm:hidden">扫描</span>
         </button>
-        <button onClick={() => handleTabChange("ai")} className={tabClass("ai")}>
-          <span className="flex items-center gap-1.5">
-            <Brain className="w-3.5 h-3.5" />
-            AI 分析任务
-          </span>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === "ai"}
+          aria-controls="task-panel-ai"
+          onClick={() => handleTabChange("ai")}
+          className={tabClass("ai")}
+        >
+          <Brain className="h-3.5 w-3.5" aria-hidden="true" />
+          <span className="hidden sm:inline">AI 分析</span>
+          <span className="sm:hidden">AI</span>
         </button>
-        <button onClick={() => handleTabChange("face-scan")} className={tabClass("face-scan")}>
-          <span className="flex items-center gap-1.5">
-            <ScanFace className="w-3.5 h-3.5" />
-            人脸扫描
-          </span>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === "face-scan"}
+          aria-controls="task-panel-face-scan"
+          onClick={() => handleTabChange("face-scan")}
+          className={tabClass("face-scan")}
+        >
+          <ScanFace className="h-3.5 w-3.5" aria-hidden="true" />
+          <span className="hidden sm:inline">人脸扫描</span>
+          <span className="sm:hidden">人脸</span>
         </button>
       </div>
 
       {/* Tab content */}
       {tab === "scan" && (
-        <section className="space-y-3">
+        <section id="task-panel-scan" role="tabpanel" className="space-y-3">
           <ScanPanel
             projectId={currentProjectId}
             status={scanStatus}
@@ -838,11 +889,15 @@ export function TasksPage() {
       )}
 
       {tab === "ai" && (
-        <AISection projectId={currentProjectId} />
+        <section id="task-panel-ai" role="tabpanel">
+          <AISection projectId={currentProjectId} />
+        </section>
       )}
 
       {tab === "face-scan" && (
-        <FaceScanSection projectId={currentProjectId} />
+        <section id="task-panel-face-scan" role="tabpanel">
+          <FaceScanSection projectId={currentProjectId} />
+        </section>
       )}
 
       <ProjectTaskHistorySection projectId={currentProjectId} />

@@ -297,14 +297,26 @@ describe("TasksPage", () => {
 
     renderPage();
 
-    expect(await screen.findByText("#12 · library_scan")).toBeInTheDocument();
+    expect(await screen.findByText("#12 · 照片扫描")).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: /最近任务状态/ })).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: /任务类型分布/ })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "详情" }));
 
     expect(await screen.findByText("失败明细")).toBeInTheDocument();
     expect(screen.getAllByText("scan exploded")).toHaveLength(2);
     expect(screen.getByText("path=/tmp/a/bad.jpg")).toBeInTheDocument();
+    const technicalDetails = screen.getByText("技术数据").closest("details");
+    expect(technicalDetails).not.toHaveAttribute("open");
+    await user.click(screen.getByText("技术数据"));
+    expect(technicalDetails).toHaveAttribute("open");
     expect(screen.getByText("request_params")).toBeInTheDocument();
     expect(screen.getByText(/"scope": "all"/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "需关注" }));
+    expect(screen.getByText("#12 · 照片扫描")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "已完成" }));
+    expect(screen.queryByText("#12 · 照片扫描")).not.toBeInTheDocument();
+    expect(screen.getByText("当前筛选下暂无任务。")).toBeInTheDocument();
   });
 
   it("shows resume action for paused project tasks", async () => {
@@ -334,7 +346,7 @@ describe("TasksPage", () => {
 
     renderPage();
 
-    expect(await screen.findByText("#13 · library_scan")).toBeInTheDocument();
+    expect(await screen.findByText("#13 · 照片扫描")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "恢复" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "取消" })).toBeInTheDocument();
   });

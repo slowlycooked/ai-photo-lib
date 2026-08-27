@@ -20,6 +20,7 @@ from ..schemas.photo import (
     PhotoDeleteResponse,
     PhotoDetailResponse,
     PhotoListResponse,
+    PhotoLocationResponse,
 )
 from ..services.photo_cleanup_app_service import PhotoCleanupAppService
 from ..services.project_photo_asset_service import (
@@ -124,6 +125,19 @@ def get_project_timeline(
         folder_scope=folder_scope,
     )
     return {"items": items}
+
+
+@router.get(
+    "/{project_id}/photos/{photo_id}/location",
+    response_model=PhotoLocationResponse,
+)
+def locate_project_photo(
+    page_size: int = Query(50, ge=1, le=100),
+    photo: Photo = Depends(require_project_photo),
+    db: Session = Depends(get_db),
+):
+    """Return the photo's page in its original in-app folder view."""
+    return ProjectPhotosQueryService(db).locate_photo(photo, page_size=page_size)
 
 
 @router.get("/{project_id}/photos/{photo_id}", response_model=PhotoDetailResponse)

@@ -34,4 +34,14 @@ describe("PhotoCard", () => {
       "/thumbnail?retry=",
     );
   });
+
+  it("marks a located photo and exposes a focus target", () => {
+    render(<PhotoCard photo={photo} highlighted />);
+
+    expect(screen.getByText("定位目标")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "查看照片 example.jpg" })).toHaveAttribute(
+      "id",
+      "photo-42",
+    );
+  });
 });

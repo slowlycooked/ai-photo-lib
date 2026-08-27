@@ -3,7 +3,10 @@ from __future__ import annotations
 import ast
 import os
 import re
+import subprocess
+import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -159,6 +162,86 @@ class ConfigurationGuardTest(unittest.TestCase):
             [call.args[0] for call in enforce_mock.call_args_list],
             [Path("/tmp/.env"), Path("/tmp/.env.prd")],
         )
+
+
+class ServiceRuntimeGuardTest(unittest.TestCase):
+    def test_runner_restarts_failed_child_and_stops_cleanly(self) -> None:
+        runner_path = _REPO_ROOT / "scripts/ai-photo-runner.sh"
+        child_code = (
+            "from pathlib import Path; "
+            "import sys, time; "
+            "path = Path(sys.argv[1]); "
+            "count = int(path.read_text()) + 1 if path.exists() else 1; "
+            "path.write_text(str(count)); "
+            "sys.exit(7) if count == 1 else time.sleep(30)"
+        )
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            counter_path = Path(tmp_dir) / "starts.txt"
+            env = os.environ.copy()
+            env.update(
+                {
+                    "SVC_WATCHDOG_BACKOFF_INITIAL": "1",
+                    "SVC_WATCHDOG_BACKOFF_MAX": "1",
+                    "SVC_WATCHDOG_STABLE_SECONDS": "60",
+                }
+            )
+            process = subprocess.Popen(
+                [
+                    str(runner_path),
+                    "watchdog-test",
+                    sys.executable,
+                    "-c",
+                    child_code,
+                    str(counter_path),
+                ],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                env=env,
+            )
+            try:
+                deadline = time.monotonic() + 6
+                while time.monotonic() < deadline:
+                    if counter_path.exists() and int(counter_path.read_text()) >= 2:
+                        break
+                    time.sleep(0.1)
+
+                self.assertTrue(counter_path.exists())
+                self.assertGreaterEqual(int(counter_path.read_text()), 2)
+                process.terminate()
+                output, _ = process.communicate(timeout=5)
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                    process.wait(timeout=5)
+
+        self.assertEqual(process.returncode, 0)
+        self.assertIn("event=child_exit", output)
+        self.assertIn("event=restart_scheduled", output)
+        self.assertIn("event=watchdog_stop", output)
+
+    def test_svc_preserves_and_rotates_service_logs(self) -> None:
+        svc_text = (_REPO_ROOT / "scripts/svc.sh").read_text(encoding="utf-8")
+
+        self.assertIn("SVC_LOG_MAX_BYTES", svc_text)
+        self.assertIn("SVC_LOG_KEEP", svc_text)
+        self.assertIn("rotate_service_log", svc_text)
+        self.assertIn("event=service_start", svc_text)
+        self.assertIn("watchdog_pid_file", svc_text)
+        self.assertIn("stop_watchdog", svc_text)
+        self.assertIn('>> "$log_path" 2>&1', svc_text)
+        self.assertNotRegex(
+            svc_text,
+            r'run_named_process[^\n]+> "\$\(log_file [^)]+\)"',
+        )
+
+    def test_svc_recognizes_externally_managed_embedding(self) -> None:
+        svc_text = (_REPO_ROOT / "scripts/svc.sh").read_text(encoding="utf-8")
+
+        self.assertIn("embedding_uses_external_service", svc_text)
+        self.assertIn("Embedding 使用外部服务", svc_text)
+        self.assertIn("svc.sh 不执行停止操作", svc_text)
 
 
 class WorkerProjectIdGuardTest(unittest.TestCase):

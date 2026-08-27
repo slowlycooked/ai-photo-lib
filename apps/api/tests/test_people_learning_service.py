@@ -454,8 +454,8 @@ def test_rematch_unknown_faces_supports_person_scope() -> None:
         )
         assert result.faces_considered == 1
         assert result.matched_faces == 1
-        assert result.auto_assigned == 1
-        assert result.review_pending == 0
+        assert result.auto_assigned == 0
+        assert result.review_pending == 1
 
         row = db.execute(
             sa.text(
@@ -468,8 +468,112 @@ def test_rematch_unknown_faces_supports_person_scope() -> None:
         ).first()
         assert row is not None
         assert row[0] == 203
-        assert row[1] == "auto_assigned"
+        assert row[1] == "review_pending"
         assert row[2] == "targeted_person_rematch"
+    finally:
+        db.close()
+
+
+def test_person_rematch_uses_low_quality_confirmed_samples_without_persisting_prototype() -> None:
+    db = _make_session()
+    try:
+        db.execute(
+            sa.text(
+                "UPDATE face_detections SET face_quality_score = 0.60 WHERE id = 201"
+            )
+        )
+        assert rebuild_person_centroid_prototype(db, project_id=1, person_id=101) is None
+
+        result = rematch_unknown_faces(
+            db,
+            project_id=1,
+            max_faces=10,
+            scope="person",
+            person_id=101,
+        )
+
+        assert result.faces_considered == 2
+        assert result.matched_faces == 2
+        assert result.auto_assigned == 0
+        assert result.review_pending == 2
+        assert result.skipped_reason is None
+        assert db.execute(sa.text("SELECT count(*) FROM person_prototypes")).scalar_one() == 0
+    finally:
+        db.close()
+
+
+def test_person_rematch_keeps_another_person_assignment_until_review() -> None:
+    db = _make_session()
+    try:
+        rebuild_person_centroid_prototype(db, project_id=1, person_id=101)
+        db.execute(
+            sa.text(
+                """
+                INSERT INTO persons (
+                  id, project_id, display_name, normalized_name, is_named,
+                  created_by, sample_count, confirmed_sample_count
+                ) VALUES (102, 1, '妈妈', '妈妈', 1, 'user', 1, 0)
+                """
+            )
+        )
+        db.execute(
+            sa.text(
+                """
+                INSERT INTO person_face_assignments (
+                  id, project_id, person_id, face_detection_id,
+                  assignment_status, assignment_source, is_positive_sample, is_training_candidate
+                ) VALUES (402, 1, 102, 203, 'auto_assigned', 'similarity_match', 0, 1)
+                """
+            )
+        )
+
+        result = rematch_unknown_faces(
+            db,
+            project_id=1,
+            max_faces=10,
+            scope="person",
+            person_id=101,
+        )
+
+        assert result.matched_faces == 2
+        rows = db.execute(
+            sa.text(
+                """
+                SELECT person_id, assignment_status
+                FROM person_face_assignments
+                WHERE face_detection_id = 203
+                ORDER BY person_id
+                """
+            )
+        ).fetchall()
+        assert [(row[0], row[1]) for row in rows] == [
+            (101, "review_pending"),
+            (102, "auto_assigned"),
+        ]
+    finally:
+        db.close()
+
+
+def test_person_rematch_reports_missing_confirmed_embedding_before_scanning() -> None:
+    db = _make_session()
+    try:
+        db.execute(
+            sa.text(
+                "UPDATE face_embeddings SET embedding_vector = NULL WHERE face_detection_id = 201"
+            )
+        )
+
+        result = rematch_unknown_faces(
+            db,
+            project_id=1,
+            max_faces=10,
+            scope="person",
+            person_id=101,
+        )
+
+        assert result.faces_considered == 0
+        assert result.matched_faces == 0
+        assert result.skipped_reason == "missing_target_search_profile"
     finally:
         db.close()
 

@@ -19,6 +19,8 @@ describe("TaskStatusSummary", () => {
     expect(screen.getByText("进行中 2 任务")).toBeInTheDocument();
     expect(screen.getByText("排队中")).toBeInTheDocument();
     expect(screen.getByText("已完成")).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: /完成率 50%/ })).toBeInTheDocument();
+    expect(screen.getByText("共 6 任务")).toBeInTheDocument();
   });
 
   it("shows idle state when status is missing", () => {
@@ -34,5 +36,6 @@ describe("TaskStatusSummary", () => {
 
     expect(screen.getByText("人脸扫描任务")).toBeInTheDocument();
     expect(screen.getByText("暂无任务")).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: /完成率 0%/ })).toBeInTheDocument();
   });
 });

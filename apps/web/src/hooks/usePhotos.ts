@@ -10,23 +10,39 @@ interface UsePhotosOptions {
   dateTo?: string | null;
   folderId?: number | null;
   folderScope?: FolderScope;
+  initialPage?: number;
 }
 
-export function usePhotos({ projectId, dateFrom, dateTo, folderId, folderScope = "subtree" }: UsePhotosOptions = {}) {
+export function usePhotos({
+  projectId,
+  dateFrom,
+  dateTo,
+  folderId,
+  folderScope = "subtree",
+  initialPage,
+}: UsePhotosOptions = {}) {
+  const locateMode = initialPage != null;
   return useInfiniteQuery({
-    queryKey: queryKeys.photos(projectId ?? null, dateFrom, dateTo, folderId, folderScope),
+    queryKey: queryKeys.photos(
+      projectId ?? null,
+      dateFrom,
+      dateTo,
+      folderId,
+      folderScope,
+      initialPage,
+    ),
     queryFn: ({ pageParam }) =>
       projectId != null
         ? api.projectPhotos.list(
             projectId,
-            1,
+            locateMode ? Number(pageParam) : 1,
             PAGE_SIZE,
             dateFrom,
             dateTo,
             folderId,
             folderScope,
-            "cursor",
-            pageParam,
+            locateMode ? "offset" : "cursor",
+            locateMode ? null : String(pageParam || "") || null,
           )
         : Promise.resolve({
             total: 0,
@@ -36,10 +52,14 @@ export function usePhotos({ projectId, dateFrom, dateTo, folderId, folderScope =
             next_cursor: null,
             has_more: false,
           }),
-    initialPageParam: null as string | null,
+    initialPageParam: locateMode ? initialPage : null as number | string | null,
     enabled: projectId != null,
-    getNextPageParam: (last) =>
-      last.has_more && last.next_cursor ? last.next_cursor : undefined,
+    getNextPageParam: (last) => {
+      if (locateMode) {
+        return last.page * last.page_size < last.total ? last.page + 1 : undefined;
+      }
+      return last.has_more && last.next_cursor ? last.next_cursor : undefined;
+    },
     staleTime: 30_000,
   });
 }

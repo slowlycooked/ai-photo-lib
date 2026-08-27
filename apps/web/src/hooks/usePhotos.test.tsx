@@ -103,4 +103,38 @@ describe("usePhotos", () => {
 
     expect(photosMock.mock.calls.map((call) => call[8])).toEqual([null, "cursor-2"]);
   });
+
+  it("starts from the located offset page and continues with nearby pages", async () => {
+    photosMock.mockImplementation((...args: unknown[]) => {
+      const page = args[1] as number;
+      const pageSize = args[2] as number;
+      return Promise.resolve({
+        total: 210,
+        page,
+        page_size: pageSize,
+        items: buildItems(page, pageSize),
+        next_cursor: null,
+        has_more: null,
+      });
+    });
+
+    const { result } = renderHook(
+      () => usePhotos({
+        projectId: 1,
+        folderId: 10,
+        folderScope: "direct",
+        initialPage: 3,
+      }),
+      { wrapper: createQueryClientWrapper().wrapper },
+    );
+
+    await waitFor(() => expect(result.current.data?.pages.length).toBe(1));
+    await act(async () => {
+      await result.current.fetchNextPage();
+    });
+
+    expect(photosMock.mock.calls.map((call) => call[1])).toEqual([3, 4]);
+    expect(photosMock.mock.calls.map((call) => call[7])).toEqual(["offset", "offset"]);
+    expect(photosMock.mock.calls.map((call) => call[8])).toEqual([null, null]);
+  });
 });

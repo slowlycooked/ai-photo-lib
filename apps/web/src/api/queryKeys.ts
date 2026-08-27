@@ -9,6 +9,8 @@ export const queryKeys = {
     ["project-photo-ai", projectId, photoId] as const,
   projectPhotoDetail: (projectId: number | null, photoId: number | null) =>
     ["project-photo-detail", projectId, photoId] as const,
+  projectPhotoLocation: (projectId: number | null, photoId: number | null) =>
+    ["project-photo-location", projectId, photoId] as const,
   projectFaces: (projectId: number | null, photoId?: number | null, status?: string | null) =>
     ["project-faces", projectId, photoId ?? null, status ?? null] as const,
   projectFace: (projectId: number | null, faceId: number | null) =>
@@ -46,7 +48,16 @@ export const queryKeys = {
     dateTo?: string | null,
     folderId?: number | null,
     folderScope?: string,
-  ) => ["photos", projectId, dateFrom ?? null, dateTo ?? null, folderId ?? null, folderScope ?? null] as const,
+    initialPage?: number | null,
+  ) => [
+    "photos",
+    projectId,
+    dateFrom ?? null,
+    dateTo ?? null,
+    folderId ?? null,
+    folderScope ?? null,
+    initialPage ?? null,
+  ] as const,
   timeline: (projectId: number | null, folderId?: number | null, folderScope?: string) =>
     ["timeline", projectId, folderId ?? null, folderScope ?? null] as const,
   tags: (projectId: number | null) => ["tags", projectId] as const,

@@ -1,9 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  AlertTriangle,
   ArchiveRestore,
   BarChart3,
+  CheckCircle2,
+  ChevronDown,
   Download,
+  FolderSearch,
+  Image as ImageIcon,
   Loader2,
   Play,
   RefreshCw,
@@ -12,7 +17,7 @@ import {
   Square,
   Trash2,
 } from "lucide-react";
-import { Navigate, useParams } from "react-router-dom";
+import { Link, Navigate, useParams } from "react-router-dom";
 import {
   api,
   type PhotoQuarantineItem,
@@ -113,7 +118,7 @@ const SENSITIVE_CONTENT_LABELS: Record<string, string> = {
 };
 
 function fieldClass() {
-  return "w-full rounded-md border border-hairline bg-surface-card px-3 py-2 text-body-sm text-ink focus:outline-none focus:ring-2 focus:ring-focus-outer";
+  return "mt-1 min-h-11 w-full rounded-md border border-hairline bg-surface-card px-3 py-2 text-body-sm text-ink focus:outline-none focus:ring-2 focus:ring-focus-outer";
 }
 
 export function PhotoQuarantinePage() {
@@ -378,6 +383,14 @@ export function PhotoQuarantinePage() {
   const classificationTotal = classificationCounts
     ? Object.values(classificationCounts).reduce((total, count) => total + count, 0)
     : null;
+  const topClassificationCounts = useMemo(
+    () => Object.entries(classificationCounts ?? {})
+      .filter(([, count]) => count > 0)
+      .sort(([, left], [, right]) => right - left)
+      .slice(0, 4),
+    [classificationCounts],
+  );
+  const maxClassificationCount = topClassificationCounts[0]?.[1] ?? 1;
   const batchSelectableItems = useMemo(
     () => items.filter(
       (item) => KEEP_STATUSES.has(item.status)
@@ -441,17 +454,22 @@ export function PhotoQuarantinePage() {
 
   return (
     <main className="max-w-7xl mx-auto px-4 sm:px-6 py-6 space-y-6">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h1 className="text-xl font-bold text-ink flex items-center gap-2">
-            <Trash2 className="w-5 h-5" /> 待删除图片审核
-          </h1>
-          <p className="mt-1 text-body-sm text-mute">
-            扫描会同时识别色情、裸露、暴力、血腥等 18+ 或敏感内容，并强制交由人工复核。页面只写入删除清单，不会移动或删除原片；原片由 NAS 后台脚本统一处理。
-          </p>
+      <header className="flex flex-wrap items-start justify-between gap-4">
+        <div className="flex min-w-0 items-start gap-3">
+          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-danger/10 text-danger">
+            <Trash2 className="h-5 w-5" aria-hidden="true" />
+          </span>
+          <div className="min-w-0">
+            <h1 className="text-heading-lg font-semibold text-ink">待删除图片审核</h1>
+            <p className="mt-1 max-w-3xl text-body-sm text-mute">集中复核 AI 标记的低质量及敏感照片。</p>
+            <p className="mt-2 flex max-w-3xl items-start gap-2 rounded-md bg-warning/10 px-3 py-2 text-caption-sm text-secondary">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" aria-hidden="true" />
+              <span>所有候选均需人工确认；页面只写入删除清单，不会移动或删除原片，由 NAS 后台统一处理。</span>
+            </p>
+          </div>
         </div>
-        <div className="flex shrink-0 flex-wrap items-center gap-3 rounded-lg border border-hairline bg-canvas p-2 shadow-sm">
-          <label className="inline-flex items-center gap-2 px-1 text-btn-sm font-bold text-ink">
+        <div className="flex shrink-0 flex-wrap items-center gap-2" data-scan-position={scanControlOnRight ? "right" : "left"}>
+          <label className="inline-flex min-h-11 items-center gap-2 rounded-md border border-hairline bg-canvas px-3 text-btn-sm font-medium text-secondary">
             <input
               type="checkbox"
               checked={retryFailedOnStart}
@@ -461,59 +479,55 @@ export function PhotoQuarantinePage() {
             />
             重新扫描失败项
           </label>
-          <div
-            className="relative h-10 w-56 rounded-md bg-surface-card p-1 ring-1 ring-inset ring-hairline"
-            data-scan-position={scanControlOnRight ? "right" : "left"}
+          <button
+            type="button"
+            onClick={() => analysisActive
+              ? stopMutation.mutate()
+              : runMutation.mutate(retryFailedOnStart)}
+            disabled={!canManage || scanControlPending}
+            title={!canManage
+              ? "需要项目管理员权限"
+              : analysisActive
+                ? "取消待删除图片扫描"
+                : "启动待删除图片扫描"}
+            className={`inline-flex min-h-11 min-w-32 items-center justify-center gap-2 rounded-md px-4 text-btn-sm font-semibold text-white transition-colors disabled:cursor-not-allowed disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-outer ${analysisActive ? "bg-danger hover:bg-danger/90" : "bg-primary hover:bg-primary/90"}`}
           >
-            <span className="pointer-events-none absolute inset-y-0 left-0 flex w-1/2 items-center justify-center text-caption-sm text-mute">启动</span>
-            <span className="pointer-events-none absolute inset-y-0 right-0 flex w-1/2 items-center justify-center text-caption-sm text-mute">取消</span>
-            <button
-              type="button"
-              onClick={() => analysisActive
-                ? stopMutation.mutate()
-                : runMutation.mutate(retryFailedOnStart)}
-              disabled={!canManage || scanControlPending}
-              title={!canManage
-                ? "需要项目管理员权限"
+            {scanControlPending
+              ? <Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" aria-hidden="true" />
+              : analysisActive
+                ? <Square className="h-4 w-4" aria-hidden="true" />
+                : <Play className="h-4 w-4" aria-hidden="true" />}
+            {runMutation.isPending
+              ? "正在启动"
+              : stopMutation.isPending || cancelRequested
+                ? "正在取消"
                 : analysisActive
-                  ? "取消待删除图片扫描"
-                  : "启动待删除图片扫描"}
-              className={`relative z-10 inline-flex h-8 w-1/2 items-center justify-center gap-1.5 rounded text-btn-sm font-bold text-white shadow-sm transition-transform duration-300 ease-out disabled:cursor-not-allowed disabled:opacity-60 ${scanControlOnRight ? "translate-x-full bg-danger" : "translate-x-0 bg-primary"}`}
-            >
-              {scanControlPending
-                ? <Loader2 className="h-4 w-4 animate-spin" />
-                : analysisActive
-                  ? <Square className="h-4 w-4" />
-                  : <Play className="h-4 w-4" />}
-              {runMutation.isPending
-                ? "正在启动"
-                : stopMutation.isPending || cancelRequested
-                  ? "正在取消"
-                  : analysisActive
-                    ? "取消扫描"
-                    : "启动扫描"}
-            </button>
-          </div>
+                  ? "取消扫描"
+                  : "启动扫描"}
+          </button>
         </div>
-      </div>
+      </header>
 
-      {message && <div className="rounded-md border border-hairline bg-canvas px-4 py-3 text-body-sm text-ink">{message}</div>}
+      {message && <div role="status" aria-live="polite" className="rounded-md border border-hairline bg-canvas px-4 py-3 text-body-sm text-ink">{message}</div>}
       {latestTask && (
-        <div className="rounded-md border border-hairline bg-canvas px-4 py-3 text-body-sm text-mute space-y-2">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <span>
-              最近分析任务：{latestTask.status}
-              {!analysisActive && typeof taskProgress?.analyzed === "number" ? ` · 已分析 ${taskProgress.analyzed} 张` : ""}
-              {!analysisActive && typeof taskProgress?.review === "number" ? ` · 待审核 ${taskProgress.review} 张` : ""}
-              {latestTask.error_message ? ` · ${latestTask.error_message}` : ""}
-            </span>
-            {analysisActive && scanPercent != null && (
-              <span className="font-bold text-ink">{scanPercent}%</span>
-            )}
+        <section className="space-y-4 rounded-lg border border-hairline bg-canvas p-4 sm:p-5" aria-labelledby="analysis-progress-title">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <span className={`grid h-9 w-9 place-items-center rounded-md ${analysisActive ? "bg-primary/10 text-primary" : "bg-success/10 text-success"}`}>
+                {analysisActive ? <Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" aria-hidden="true" /> : <CheckCircle2 className="h-4 w-4" aria-hidden="true" />}
+              </span>
+              <div>
+                <h2 id="analysis-progress-title" className="text-body-sm font-semibold text-ink">最近分析任务</h2>
+                <p className="text-caption-sm text-mute">{analysisActive ? "正在分析候选照片" : "最近一次任务已停止"}</p>
+                <span className="sr-only">最近分析任务：{latestTask.status}</span>
+              </div>
+            </div>
+            {analysisActive && scanPercent != null && <strong className="tabular-nums text-heading-md text-ink">{scanPercent}%</strong>}
           </div>
+          {latestTask.error_message && <p className="rounded-md bg-danger/5 px-3 py-2 text-caption-sm text-danger">{latestTask.error_message}</p>}
           {analysisActive && (
             <>
-              <div className="text-ink">
+              <div className="text-body-sm text-secondary">
                 {cancelRequested
                   ? "正在取消，将在当前图片处理完成后停止"
                   : latestTask.status === "queued"
@@ -530,44 +544,51 @@ export function PhotoQuarantinePage() {
                 aria-valuemin={scanTotal != null ? 0 : undefined}
                 aria-valuemax={scanTotal != null ? scanTotal : undefined}
                 aria-valuenow={scanTotal != null ? processedCount : undefined}
-                className="h-2 overflow-hidden rounded-full bg-surface-card ring-1 ring-inset ring-hairline"
+                className="h-2 overflow-hidden rounded-full bg-surface-soft ring-1 ring-inset ring-hairline"
               >
                 {scanPercent == null ? (
-                  <div className="h-full w-2/5 animate-pulse rounded-full bg-primary" />
+                  <div className="h-full w-2/5 animate-pulse rounded-full bg-primary motion-reduce:animate-none" />
                 ) : scanPercent === 0 ? (
-                  <div className="h-full w-8 animate-pulse rounded-full bg-primary" />
+                  <div className="h-full w-8 animate-pulse rounded-full bg-primary motion-reduce:animate-none" />
                 ) : (
                   <div
-                    className="h-full rounded-full bg-primary transition-[width] duration-500"
+                    className="h-full rounded-full bg-primary transition-[width] duration-500 motion-reduce:transition-none"
                     style={{ width: `${scanPercent}%` }}
                   />
                 )}
               </div>
-              <div className="text-caption-sm">
-                成功分析 {analyzedCount} 张 · 待审核 {reviewCount} 张 · 识别失败 {errorCount} 张
-              </div>
             </>
           )}
-        </div>
+          <div className="grid grid-cols-3 gap-2">
+            <MiniMetric label="已分析" value={analyzedCount} />
+            <MiniMetric label="待审核" value={reviewCount} />
+            <MiniMetric label="识别失败" value={errorCount} danger={errorCount > 0} />
+          </div>
+          <p className="sr-only">成功分析 {analyzedCount} 张 · 待审核 {reviewCount} 张 · 识别失败 {errorCount} 张</p>
+        </section>
       )}
 
-      <section className="rounded-lg border border-hairline bg-canvas p-5 space-y-4">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <h2 className="font-bold text-ink flex items-center gap-2">
-              <BarChart3 className="w-4 h-4 text-primary" /> 校准报告
-            </h2>
-            <p className="mt-1 text-caption-sm text-mute">
-              人工选择“保留”会自动记为 KEEP；“提交删除”会自动记为 TRASH；放回旧隔离照片也会记为 KEEP。
-            </p>
-          </div>
+      <details className="group rounded-lg border border-hairline bg-canvas">
+        <summary className="flex min-h-14 cursor-pointer list-none items-center justify-between gap-3 rounded-lg px-4 py-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-outer sm:px-5 [&::-webkit-details-marker]:hidden">
+          <span className="flex min-w-0 items-center gap-3">
+            <span className="grid h-9 w-9 shrink-0 place-items-center rounded-md bg-primary/5 text-primary"><BarChart3 className="h-4 w-4" aria-hidden="true" /></span>
+            <span className="min-w-0">
+              <span className="block text-body-sm font-semibold text-ink">校准报告</span>
+              <span className="block truncate text-caption-sm text-mute">{calibration ? `已标注 ${calibration.labeled_total}/${calibration.target_sample_size} · 误删风险 ${calibration.false_positive}` : "人工标注质量与自动移动门槛"}</span>
+            </span>
+          </span>
+          <ChevronDown className="h-4 w-4 shrink-0 text-mute transition-transform duration-200 group-open:rotate-180 motion-reduce:transition-none" aria-hidden="true" />
+        </summary>
+        <div className="space-y-4 border-t border-hairline p-4 sm:p-5">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <p className="max-w-3xl text-caption-sm text-mute">“保留”记为 KEEP，“提交删除”记为 TRASH；放回旧隔离照片也会记为 KEEP。</p>
           <a
             href={`${BASE}/projects/${selectedProjectId}/photo-quarantine/calibration.csv`}
-            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-hairline text-btn-sm font-bold hover:bg-surface-card"
+            className="inline-flex min-h-11 items-center gap-1.5 rounded-md border border-hairline px-3 text-btn-sm font-medium text-secondary transition-colors hover:bg-surface-soft hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-outer"
           >
-            <Download className="w-4 h-4" /> 导出 CSV
+            <Download className="h-4 w-4" aria-hidden="true" /> 导出 CSV
           </a>
-        </div>
+          </div>
         {calibrationQuery.isLoading ? (
           <div className="text-body-sm text-mute">正在统计人工标签…</div>
         ) : calibrationQuery.isError || !calibration ? (
@@ -604,16 +625,24 @@ export function PhotoQuarantinePage() {
             )}
           </>
         )}
-      </section>
-
-      <section className="rounded-lg border border-hairline bg-canvas p-5 space-y-4">
-        <div className="flex items-center gap-2">
-          <ShieldCheck className="w-4 h-4 text-primary" />
-          <h2 className="font-bold text-ink">夜间跑批设置</h2>
         </div>
-        {settingsQuery.isLoading || !form ? (
-          <div className="flex items-center gap-2 text-mute"><Loader2 className="w-4 h-4 animate-spin" />加载中…</div>
-        ) : (
+      </details>
+
+      <details className="group rounded-lg border border-hairline bg-canvas">
+        <summary className="flex min-h-14 cursor-pointer list-none items-center justify-between gap-3 rounded-lg px-4 py-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-outer sm:px-5 [&::-webkit-details-marker]:hidden">
+          <span className="flex min-w-0 items-center gap-3">
+            <span className="grid h-9 w-9 shrink-0 place-items-center rounded-md bg-primary/5 text-primary"><ShieldCheck className="h-4 w-4" aria-hidden="true" /></span>
+            <span className="min-w-0">
+              <span className="block text-body-sm font-semibold text-ink">夜间跑批设置</span>
+              <span className="block truncate text-caption-sm text-mute">{form ? `${String(form.start_hour).padStart(2, "0")}:00–${String(form.end_hour).padStart(2, "0")}:00 · ${form.enabled ? "已启用" : "未启用"}` : "运行时间、模型与保留策略"}</span>
+            </span>
+          </span>
+          <ChevronDown className="h-4 w-4 shrink-0 text-mute transition-transform duration-200 group-open:rotate-180 motion-reduce:transition-none" aria-hidden="true" />
+        </summary>
+        <div className="border-t border-hairline p-4 sm:p-5">
+          {settingsQuery.isLoading || !form ? (
+            <div className="flex items-center gap-2 text-mute"><Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" aria-hidden="true" />加载中…</div>
+          ) : (
           <div className="space-y-4">
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
               <label className="text-caption-sm text-mute">开始小时
@@ -632,41 +661,69 @@ export function PhotoQuarantinePage() {
                 <input className={fieldClass()} type="number" min={1} max={3650} disabled={!canManage} value={form.retention_days} onChange={(event) => setForm({ ...form, retention_days: Number(event.target.value) })} />
               </label>
             </div>
-            <div className="flex flex-wrap items-center gap-5 text-body-sm">
-              <label className="flex items-center gap-2"><input type="checkbox" disabled={!canManage} checked={form.enabled} onChange={(event) => setForm({ ...form, enabled: event.target.checked })} />启用每日跑批</label>
-              <label className="flex items-center gap-2"><input type="checkbox" disabled={!canManage} checked={form.dry_run} onChange={(event) => setForm({ ...form, dry_run: event.target.checked })} />校准模式（只识别、不移动）</label>
-              {canManage && <button type="button" onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-hairline text-btn-sm font-bold hover:bg-surface-card disabled:opacity-50"><Save className="w-4 h-4" />保存设置</button>}
+            <div className="flex flex-wrap items-center gap-3 text-body-sm sm:gap-5">
+              <label className="flex min-h-11 items-center gap-2"><input type="checkbox" disabled={!canManage} checked={form.enabled} onChange={(event) => setForm({ ...form, enabled: event.target.checked })} />启用每日跑批</label>
+              <label className="flex min-h-11 items-center gap-2"><input type="checkbox" disabled={!canManage} checked={form.dry_run} onChange={(event) => setForm({ ...form, dry_run: event.target.checked })} />校准模式（只识别、不移动）</label>
+              {canManage && <button type="button" onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending} className="inline-flex min-h-11 items-center gap-1.5 rounded-md border border-hairline px-3 text-btn-sm font-medium text-secondary hover:bg-surface-soft hover:text-ink disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-outer"><Save className="h-4 w-4" aria-hidden="true" />保存设置</button>}
             </div>
             <p className="text-caption-sm text-mute">默认 01:00–06:00。到结束时间后会完成当前图片再暂停，剩余图片次日继续。系统不会按保留天数自动删除文件。</p>
           </div>
-        )}
-      </section>
+          )}
+        </div>
+      </details>
 
-      <section className="space-y-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <select value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value); setClassificationFilter(""); }} className="rounded-md border border-hairline bg-canvas px-3 py-2 text-body-sm">
-              {STATUS_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-            </select>
-            <select value={labelFilter} onChange={(event) => { setLabelFilter(event.target.value as typeof labelFilter); setClassificationFilter(""); }} className="rounded-md border border-hairline bg-canvas px-3 py-2 text-body-sm" aria-label="人工标签筛选">
-              <option value="">全部标签</option><option value="UNLABELED">未标注</option><option value="KEEP">应保留</option><option value="TRASH">垃圾</option>
-            </select>
-            <select value={classificationFilter} onChange={(event) => setClassificationFilter(event.target.value)} className="rounded-md border border-hairline bg-canvas px-3 py-2 text-body-sm" aria-label="类别筛选">
-              {CLASS_FILTER_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>{option.label}{classificationCounts ? `（${option.value ? classificationCounts[option.value] ?? 0 : classificationTotal}）` : ""}</option>
+      <section className="space-y-4" aria-labelledby="review-queue-title">
+        <div className="rounded-lg border border-hairline bg-canvas p-4 sm:p-5">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="flex items-start gap-3">
+              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-md bg-primary/5 text-primary"><ImageIcon className="h-4 w-4" aria-hidden="true" /></span>
+              <div>
+                <h2 id="review-queue-title" className="text-heading-md font-semibold text-ink">审核队列</h2>
+                <p className="mt-0.5 text-caption-sm text-mute">当前筛选 <span>共 {itemsQuery.data?.total ?? 0} 项</span></p>
+              </div>
+            </div>
+            <button type="button" onClick={() => reconcileItems()} disabled={reconcileMutation.isPending} className="inline-flex min-h-11 items-center gap-1.5 rounded-md border border-hairline px-3 text-btn-sm font-medium text-secondary hover:bg-surface-soft hover:text-ink disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-outer" aria-label="刷新"><RefreshCw className={`h-4 w-4 ${reconcileMutation.isPending ? "animate-spin motion-reduce:animate-none" : ""}`} aria-hidden="true" />刷新</button>
+          </div>
+
+          {topClassificationCounts.length > 0 && (
+            <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-4" role="img" aria-label={`候选类别分布：${topClassificationCounts.map(([classification, count]) => `${CLASS_LABELS[classification] ?? classification} ${count}`).join("，")}`}>
+              {topClassificationCounts.map(([classification, count]) => (
+                <div key={classification} className="rounded-md bg-surface-soft px-3 py-2.5">
+                  <div className="flex items-center justify-between gap-2 text-caption-sm"><span className="truncate text-secondary">{CLASS_LABELS[classification] ?? classification}</span><strong className="tabular-nums text-ink">{count.toLocaleString()}</strong></div>
+                  <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-secondary-bg"><div className="h-full rounded-full bg-primary" style={{ width: `${Math.max(4, (count / maxClassificationCount) * 100)}%` }} /></div>
+                </div>
               ))}
-            </select>
-            <span className="text-caption-sm text-mute">共 {itemsQuery.data?.total ?? 0} 项</span>
-            <button type="button" onClick={() => reconcileItems()} disabled={reconcileMutation.isPending} className="text-mute hover:text-ink disabled:opacity-50" aria-label="刷新"><RefreshCw className={`w-4 h-4 ${reconcileMutation.isPending ? "animate-spin" : ""}`} /></button>
+            </div>
+          )}
+
+          <div className="mt-4 grid gap-3 sm:grid-cols-3">
+            <label className="text-caption-sm font-medium text-secondary">处理状态
+              <select value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value); setClassificationFilter(""); }} className="mt-1 min-h-11 w-full rounded-md border border-hairline bg-canvas px-3 text-body-sm text-ink focus:outline-none focus:ring-2 focus:ring-focus-outer">
+                {STATUS_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+              </select>
+            </label>
+            <label className="text-caption-sm font-medium text-secondary">人工标签
+              <select value={labelFilter} onChange={(event) => { setLabelFilter(event.target.value as typeof labelFilter); setClassificationFilter(""); }} className="mt-1 min-h-11 w-full rounded-md border border-hairline bg-canvas px-3 text-body-sm text-ink focus:outline-none focus:ring-2 focus:ring-focus-outer" aria-label="人工标签筛选">
+                <option value="">全部标签</option><option value="UNLABELED">未标注</option><option value="KEEP">应保留</option><option value="TRASH">垃圾</option>
+              </select>
+            </label>
+            <label className="text-caption-sm font-medium text-secondary">识别类别
+              <select value={classificationFilter} onChange={(event) => setClassificationFilter(event.target.value)} className="mt-1 min-h-11 w-full rounded-md border border-hairline bg-canvas px-3 text-body-sm text-ink focus:outline-none focus:ring-2 focus:ring-focus-outer" aria-label="类别筛选">
+                {CLASS_FILTER_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}{classificationCounts ? `（${option.value ? classificationCounts[option.value] ?? 0 : classificationTotal}）` : ""}</option>)}
+              </select>
+            </label>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
-            {canManage && batchSelectableItems.length > 0 && <button type="button" onClick={toggleSelectCurrentPage} aria-pressed={allOnPageSelected} className="px-3 py-2 rounded-md border border-hairline text-btn-sm font-bold hover:bg-surface-card">{allOnPageSelected ? "取消全选" : `全选当前页（${batchSelectableItems.length}）`}</button>}
-            {canManage && selectedOnPageCount > 0 && <span className="px-1 text-caption-sm text-mute">已选 {selectedOnPageCount} 张</span>}
-            {canManage && keepSelected.length > 0 && <button type="button" onClick={() => batchMutation.mutate({ action: "KEEP", ids: keepSelected.map((item) => item.id) })} disabled={batchMutation.isPending} className="px-3 py-2 rounded-md border border-hairline text-btn-sm font-bold hover:bg-surface-card disabled:opacity-50">批量保留（{keepSelected.length}）</button>}
-            {canManage && retryAnalysisSelected.length > 0 && <button type="button" onClick={() => batchMutation.mutate({ action: "RETRY_ANALYSIS", ids: retryAnalysisSelected.map((item) => item.id) })} disabled={batchMutation.isPending} className="px-3 py-2 rounded-md border border-primary text-btn-sm font-bold text-primary hover:bg-primary/5 disabled:opacity-50">批量重新识别（{retryAnalysisSelected.length}）</button>}
-            {canManage && deleteRequestSelected.length > 0 && <button type="button" onClick={() => { if (window.confirm(`${retryingQueuedOnly ? "将重新写入" : "将批准删除并写入"} ${deleteRequestSelected.length} 张照片的 NAS 后台删除清单。应用不会直接移动或删除原片，但当前不能从页面撤销已写入的请求。继续？`)) batchMutation.mutate({ action: "REQUEST_DELETE", ids: deleteRequestSelected.map((item) => item.id) }); }} disabled={batchMutation.isPending} className="px-3 py-2 rounded-md bg-primary text-white text-btn-sm font-bold disabled:opacity-50">{retryingQueuedOnly ? "批量重写删除清单" : "批量提交删除"}（{deleteRequestSelected.length}）</button>}
-            {canManage && restorableSelected.length > 0 && <button type="button" onClick={() => batchMutation.mutate({ action: "RESTORE", ids: restorableSelected.map((item) => item.id) })} disabled={batchMutation.isPending} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-hairline text-btn-sm font-bold hover:bg-surface-card disabled:opacity-50"><ArchiveRestore className="w-4 h-4" />批量放回（{restorableSelected.length}）</button>}
-          </div>
+
+          {canManage && batchSelectableItems.length > 0 && (
+            <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-hairline pt-4">
+              <button type="button" onClick={toggleSelectCurrentPage} aria-pressed={allOnPageSelected} className="min-h-11 rounded-md border border-hairline px-3 text-btn-sm font-medium text-secondary hover:bg-surface-soft hover:text-ink">{allOnPageSelected ? "取消全选" : `全选当前页（${batchSelectableItems.length}）`}</button>
+              {selectedOnPageCount > 0 && <span className="px-1 text-caption-sm font-medium text-ink">已选 {selectedOnPageCount} 张</span>}
+              {keepSelected.length > 0 && <button type="button" onClick={() => batchMutation.mutate({ action: "KEEP", ids: keepSelected.map((item) => item.id) })} disabled={batchMutation.isPending} className="min-h-11 rounded-md border border-hairline px-3 text-btn-sm font-medium hover:bg-surface-soft disabled:opacity-50">批量保留（{keepSelected.length}）</button>}
+              {retryAnalysisSelected.length > 0 && <button type="button" onClick={() => batchMutation.mutate({ action: "RETRY_ANALYSIS", ids: retryAnalysisSelected.map((item) => item.id) })} disabled={batchMutation.isPending} className="min-h-11 rounded-md border border-primary px-3 text-btn-sm font-medium text-primary hover:bg-primary/5 disabled:opacity-50">批量重新识别（{retryAnalysisSelected.length}）</button>}
+              {deleteRequestSelected.length > 0 && <button type="button" onClick={() => { if (window.confirm(`${retryingQueuedOnly ? "将重新写入" : "将批准删除并写入"} ${deleteRequestSelected.length} 张照片的 NAS 后台删除清单。应用不会直接移动或删除原片，但当前不能从页面撤销已写入的请求。继续？`)) batchMutation.mutate({ action: "REQUEST_DELETE", ids: deleteRequestSelected.map((item) => item.id) }); }} disabled={batchMutation.isPending} className="min-h-11 rounded-md bg-danger px-3 text-btn-sm font-semibold text-white hover:bg-danger/90 disabled:opacity-50">{retryingQueuedOnly ? "批量重写删除清单" : "批量提交删除"}（{deleteRequestSelected.length}）</button>}
+              {restorableSelected.length > 0 && <button type="button" onClick={() => batchMutation.mutate({ action: "RESTORE", ids: restorableSelected.map((item) => item.id) })} disabled={batchMutation.isPending} className="inline-flex min-h-11 items-center gap-1.5 rounded-md border border-hairline px-3 text-btn-sm font-medium hover:bg-surface-soft disabled:opacity-50"><ArchiveRestore className="h-4 w-4" aria-hidden="true" />批量放回（{restorableSelected.length}）</button>}
+            </div>
+          )}
         </div>
 
         {itemsQuery.isLoading ? (
@@ -674,41 +731,54 @@ export function PhotoQuarantinePage() {
         ) : items.length === 0 ? (
           <div className="rounded-lg border border-hairline bg-canvas py-14 text-center text-mute">当前筛选条件下没有图片。</div>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
             {items.map((item) => (
-              <article key={item.id} className={`overflow-hidden rounded-lg border bg-canvas ${item.status === "delete_queued" ? "border-danger/50" : "border-hairline"}`}>
-                <div className="relative aspect-video bg-surface-card">
+              <article key={item.id} className={`overflow-hidden rounded-lg border bg-canvas transition-shadow hover:shadow-sm ${selectedIds.has(item.id) ? "border-primary ring-2 ring-primary/15" : item.status === "delete_queued" ? "border-danger/50" : "border-hairline"}`}>
+                <div className="relative aspect-[4/3] bg-surface-soft">
                   <img src={`${BASE}/projects/${selectedProjectId}/photo-quarantine/items/${item.id}/thumbnail`} alt="待删除候选图片" className={`h-full w-full object-contain transition ${item.status === "delete_queued" ? "grayscale opacity-45" : ""}`} loading="lazy" />
-                  {item.status === "delete_queued" && <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/45 text-white" aria-label="已提交删除，等待后台处理"><Trash2 className="mb-2 h-7 w-7" /><span className="text-body-sm font-bold">已提交删除</span><span className="mt-1 text-caption-sm">等待 NAS 后台处理</span></div>}
-                  {canManage && (KEEP_STATUSES.has(item.status) || DELETE_REQUEST_STATUSES.has(item.status) || RESTORABLE_STATUSES.has(item.status)) && <input type="checkbox" className="absolute top-3 left-3 w-4 h-4" aria-label="选择审核项" checked={selectedIds.has(item.id)} onChange={(event) => setSelectedIds((current) => { const next = new Set(current); event.target.checked ? next.add(item.id) : next.delete(item.id); return next; })} />}
-                  <span className="absolute top-2 right-2 rounded-full bg-black/70 px-2 py-1 text-[11px] text-white">{STATUS_LABELS[item.status] ?? item.status}</span>
+                  {item.status === "delete_queued" && <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/45 text-white" aria-label="已提交删除，等待后台处理"><Trash2 className="mb-2 h-7 w-7" aria-hidden="true" /><span className="text-body-sm font-semibold">已提交删除</span><span className="mt-1 text-caption-sm">等待 NAS 后台处理</span></div>}
+                  {canManage && (KEEP_STATUSES.has(item.status) || DELETE_REQUEST_STATUSES.has(item.status) || RESTORABLE_STATUSES.has(item.status)) && <label className="absolute left-2 top-2 grid h-11 w-11 cursor-pointer place-items-center rounded-md bg-black/55"><span className="sr-only">选择审核项</span><input type="checkbox" className="h-5 w-5 rounded border-white text-primary focus:ring-focus-outer" aria-label="选择审核项" checked={selectedIds.has(item.id)} onChange={(event) => setSelectedIds((current) => { const next = new Set(current); event.target.checked ? next.add(item.id) : next.delete(item.id); return next; })} /></label>}
+                  <span className="absolute right-2 top-2 rounded-full bg-black/70 px-2.5 py-1 text-[11px] font-medium text-white">{STATUS_LABELS[item.status] ?? item.status}</span>
                 </div>
-                <div className="p-4 space-y-3">
-                  <div>
-                    <div className="font-bold text-ink">{CLASS_LABELS[item.classification] ?? item.classification}</div>
-                    <div className="text-caption-sm text-mute">置信度 {(item.confidence * 100).toFixed(1)}% · {item.model_name}</div>
+                <div className="space-y-3 p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="font-semibold text-ink">{CLASS_LABELS[item.classification] ?? item.classification}</div>
+                    <span className="shrink-0 rounded-full bg-surface-soft px-2 py-1 text-caption-sm tabular-nums text-secondary">{(item.confidence * 100).toFixed(0)}%</span>
                   </div>
-                  <p className="text-body-sm text-ink">{item.reason}</p>
+                  <p className="line-clamp-3 text-body-sm text-secondary">{item.reason}</p>
                   {item.content_rating && item.content_rating !== "SAFE" && (
-                    <p className="rounded-md border border-danger/30 bg-danger/5 px-3 py-2 text-caption-sm font-bold text-danger">
-                      {item.content_rating === "ADULT" ? "18+ 内容" : "敏感内容"}：
-                      {(item.sensitive_content_flags ?? [])
+                    <p className="flex items-start gap-2 rounded-md border border-danger/30 bg-danger/5 px-3 py-2 text-caption-sm font-medium text-danger">
+                      <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+                      <span>{item.content_rating === "ADULT" ? "18+ 内容" : "敏感内容"}：{(item.sensitive_content_flags ?? [])
                         .map((flag) => SENSITIVE_CONTENT_LABELS[flag] ?? flag)
-                        .join("、") || "需人工复核"}
+                        .join("、") || "需人工复核"}</span>
                     </p>
                   )}
-                  {item.preservation_flags.length > 0 && <p className="text-caption-sm text-danger">保留信号：{item.preservation_flags.join("、")}</p>}
-                  {item.human_label && <p className="text-caption-sm font-bold text-primary">人工标签：{item.human_label === "KEEP" ? "应保留" : "垃圾"}{item.human_labeled_by ? ` · ${item.human_labeled_by}` : ""}</p>}
-                  {item.last_error && <p className="text-caption-sm text-danger break-all">{item.last_error}</p>}
-                  <p className="text-[11px] text-mute break-all" title={item.original_path}>{item.original_path}</p>
+                  {item.preservation_flags.length > 0 && <p className="rounded-md bg-warning/10 px-3 py-2 text-caption-sm text-secondary">保留信号：{item.preservation_flags.join("、")}</p>}
+                  <details className="group rounded-md border border-hairline bg-surface-soft px-3 py-2 text-caption-sm">
+                    <summary className="flex min-h-7 cursor-pointer list-none items-center justify-between text-secondary [&::-webkit-details-marker]:hidden">文件信息<ChevronDown className="h-3.5 w-3.5 transition-transform group-open:rotate-180" aria-hidden="true" /></summary>
+                    <div className="mt-2 space-y-1 border-t border-hairline pt-2 text-mute">
+                      <p>模型：{item.model_name}</p>
+                      {item.human_label && <p className="font-medium text-primary">人工标签：{item.human_label === "KEEP" ? "应保留" : "垃圾"}{item.human_labeled_by ? ` · ${item.human_labeled_by}` : ""}</p>}
+                      {item.last_error && <p className="break-all text-danger">{item.last_error}</p>}
+                      <p className="break-all" title={item.original_path}>{item.original_path}</p>
+                    </div>
+                  </details>
+                  <Link
+                    to={`/photos?photo_id=${item.photo_id}`}
+                    aria-label={`查看照片 ${item.photo_id} 的原文件夹`}
+                    className="inline-flex min-h-11 items-center gap-1.5 text-caption-sm font-semibold text-primary hover:text-primary-pressed"
+                  >
+                    <FolderSearch className="h-3.5 w-3.5" aria-hidden="true" />查看原文件夹
+                  </Link>
                   {canManage && (
                     <div className="flex flex-wrap gap-2">
-                      {DELETE_APPROVAL_STATUSES.has(item.status) && <button type="button" onClick={() => { if (window.confirm("将批准删除此照片，并写入 NAS 后台删除清单。应用不会直接移动或删除原片，但当前不能从页面撤销已写入的请求。继续？")) itemMutation.mutate({ item, action: "requestDelete" }); }} disabled={itemMutation.isPending} className="px-3 py-1.5 rounded-md bg-primary text-white text-btn-sm font-bold disabled:opacity-50">{item.status === "queue_failed" ? "重试提交删除" : "提交删除"}</button>}
-                      {item.status === "analysis_failed" && <button type="button" onClick={() => batchMutation.mutate({ action: "RETRY_ANALYSIS", ids: [item.id] })} disabled={batchMutation.isPending} className="px-3 py-1.5 rounded-md border border-primary text-primary text-btn-sm font-bold hover:bg-primary/5 disabled:opacity-50">重新识别</button>}
-                      {item.status === "delete_queued" && <button type="button" onClick={() => { if (window.confirm("将重新写入此照片的 NAS 后台删除清单。继续？")) itemMutation.mutate({ item, action: "requestDelete" }); }} disabled={itemMutation.isPending} className="px-3 py-1.5 rounded-md bg-primary text-white text-btn-sm font-bold disabled:opacity-50">重写删除清单</button>}
-                      {KEEP_STATUSES.has(item.status) && <button type="button" onClick={() => itemMutation.mutate({ item, action: "keep" })} disabled={itemMutation.isPending} className="px-3 py-1.5 rounded-md border border-hairline text-btn-sm font-bold hover:bg-surface-card disabled:opacity-50">保留</button>}
-                      {RESTORABLE_STATUSES.has(item.status) && <button type="button" onClick={() => itemMutation.mutate({ item, action: "restore" })} disabled={itemMutation.isPending} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-md border border-hairline text-btn-sm font-bold hover:bg-surface-card disabled:opacity-50"><ArchiveRestore className="w-3.5 h-3.5" />放回原处</button>}
-                      {(item.status === "delete_queued" || item.status === "quarantined") && <button type="button" onClick={() => { if (window.confirm("仅当 NAS 后台脚本已处理该文件时才确认。继续？")) itemMutation.mutate({ item, action: "confirm" }); }} disabled={itemMutation.isPending} className="px-3 py-1.5 rounded-md border border-hairline text-btn-sm text-mute hover:text-ink disabled:opacity-50">确认后台已处理</button>}
+                      {DELETE_APPROVAL_STATUSES.has(item.status) && <button type="button" onClick={() => { if (window.confirm("将批准删除此照片，并写入 NAS 后台删除清单。应用不会直接移动或删除原片，但当前不能从页面撤销已写入的请求。继续？")) itemMutation.mutate({ item, action: "requestDelete" }); }} disabled={itemMutation.isPending} className="min-h-11 rounded-md bg-danger px-3 text-btn-sm font-semibold text-white hover:bg-danger/90 disabled:opacity-50">{item.status === "queue_failed" ? "重试提交删除" : "提交删除"}</button>}
+                      {item.status === "analysis_failed" && <button type="button" onClick={() => batchMutation.mutate({ action: "RETRY_ANALYSIS", ids: [item.id] })} disabled={batchMutation.isPending} className="min-h-11 rounded-md border border-primary px-3 text-btn-sm font-medium text-primary hover:bg-primary/5 disabled:opacity-50">重新识别</button>}
+                      {item.status === "delete_queued" && <button type="button" onClick={() => { if (window.confirm("将重新写入此照片的 NAS 后台删除清单。继续？")) itemMutation.mutate({ item, action: "requestDelete" }); }} disabled={itemMutation.isPending} className="min-h-11 rounded-md bg-danger px-3 text-btn-sm font-semibold text-white hover:bg-danger/90 disabled:opacity-50">重写删除清单</button>}
+                      {KEEP_STATUSES.has(item.status) && <button type="button" onClick={() => itemMutation.mutate({ item, action: "keep" })} disabled={itemMutation.isPending} className="min-h-11 rounded-md border border-hairline px-3 text-btn-sm font-medium hover:bg-surface-soft disabled:opacity-50">保留</button>}
+                      {RESTORABLE_STATUSES.has(item.status) && <button type="button" onClick={() => itemMutation.mutate({ item, action: "restore" })} disabled={itemMutation.isPending} className="inline-flex min-h-11 items-center gap-1 rounded-md border border-hairline px-3 text-btn-sm font-medium hover:bg-surface-soft disabled:opacity-50"><ArchiveRestore className="h-3.5 w-3.5" aria-hidden="true" />放回原处</button>}
+                      {(item.status === "delete_queued" || item.status === "quarantined") && <button type="button" onClick={() => { if (window.confirm("仅当 NAS 后台脚本已处理该文件时才确认。继续？")) itemMutation.mutate({ item, action: "confirm" }); }} disabled={itemMutation.isPending} className="min-h-11 rounded-md border border-hairline px-3 text-btn-sm text-mute hover:text-ink disabled:opacity-50">确认后台已处理</button>}
                     </div>
                   )}
                 </div>
@@ -717,11 +787,11 @@ export function PhotoQuarantinePage() {
           </div>
         )}
         {(itemsQuery.data?.total ?? 0) > PAGE_SIZE && (
-          <div className="flex items-center justify-center gap-3">
-            <button type="button" onClick={() => setPage((value) => Math.max(0, value - 1))} disabled={page === 0} className="px-3 py-1.5 rounded-md border border-hairline text-btn-sm disabled:opacity-40">上一页</button>
+          <nav className="flex items-center justify-center gap-3" aria-label="审核队列分页">
+            <button type="button" onClick={() => setPage((value) => Math.max(0, value - 1))} disabled={page === 0} className="min-h-11 rounded-md border border-hairline px-3 text-btn-sm disabled:opacity-40">上一页</button>
             <span className="text-caption-sm text-mute">第 {page + 1} / {Math.ceil((itemsQuery.data?.total ?? 0) / PAGE_SIZE)} 页</span>
-            <button type="button" onClick={() => setPage((value) => value + 1)} disabled={(page + 1) * PAGE_SIZE >= (itemsQuery.data?.total ?? 0)} className="px-3 py-1.5 rounded-md border border-hairline text-btn-sm disabled:opacity-40">下一页</button>
-          </div>
+            <button type="button" onClick={() => setPage((value) => value + 1)} disabled={(page + 1) * PAGE_SIZE >= (itemsQuery.data?.total ?? 0)} className="min-h-11 rounded-md border border-hairline px-3 text-btn-sm disabled:opacity-40">下一页</button>
+          </nav>
         )}
       </section>
     </main>
@@ -733,6 +803,15 @@ function MetricCard({ label, value, danger = false }: { label: string; value: st
     <div className="rounded-md border border-hairline bg-surface-card p-3">
       <div className="text-caption-sm text-mute">{label}</div>
       <div className={`mt-1 text-lg font-bold ${danger ? "text-danger" : "text-ink"}`}>{value}</div>
+    </div>
+  );
+}
+
+function MiniMetric({ label, value, danger = false }: { label: string; value: number; danger?: boolean }) {
+  return (
+    <div className="rounded-md bg-surface-soft px-3 py-2.5 text-center">
+      <div className={`text-heading-md font-semibold tabular-nums ${danger ? "text-danger" : "text-ink"}`}>{value.toLocaleString()}</div>
+      <div className="mt-0.5 text-caption-sm text-mute">{label}</div>
     </div>
   );
 }

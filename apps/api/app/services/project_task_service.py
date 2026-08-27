@@ -1111,6 +1111,11 @@ def build_face_rematch_result_payload(
         message = "No eligible embedded faces found. Run face scan first or adjust rematch scope."
     elif skipped_reason == "missing_people_tables":
         message = "People recognition tables are missing."
+    elif skipped_reason == "missing_target_search_profile":
+        message = (
+            "This person has no usable confirmed face embedding. "
+            "Confirm a face that completed face scanning, then try again."
+        )
 
     payload.update(
         task_id=task_id,

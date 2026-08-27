@@ -21,5 +21,12 @@ describe("SettingsLayout", () => {
     expect(screen.getByRole("link", { name: "Embedding AI" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Planner AI" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "高级搜索参数" })).toBeInTheDocument();
+    expect(screen.getByText("当前项目")).toBeInTheDocument();
+    expect(screen.getAllByText("#7").length).toBeGreaterThan(0);
+    expect(screen.getByRole("link", { name: "项目设置" })).toHaveAttribute(
+      "href",
+      "/projects/7/settings/vision-ai",
+    );
+    expect(screen.getByRole("link", { name: "视觉 AI" })).toHaveAttribute("aria-current", "page");
   });
 });

@@ -4,7 +4,15 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ApiError, type DebugSettingsResponse } from "@/api";
-import { DebugLogSettingsCard, SystemHealthCard, prepareLibrarySubmitPath } from "@/pages/SettingsPage";
+import {
+  DebugLogSettingsCard,
+  GeneralRuntimeOverview,
+  LibraryForm,
+  SystemHealthCard,
+  TechnicalPaths,
+  compactLibraryPath,
+  prepareLibrarySubmitPath,
+} from "@/pages/SettingsPage";
 
 const getDebugMock = vi.fn();
 const healthMock = vi.fn();
@@ -234,5 +242,68 @@ describe("prepareLibrarySubmitPath", () => {
     expect(prepareLibrarySubmitPath("/Users/unclema/Desktop/ai-lib/my-library")).toBe(
       "/Users/unclema/Desktop/ai-lib/my-library",
     );
+  });
+});
+
+describe("compactLibraryPath", () => {
+  it("keeps the identifying end of long library paths visible", () => {
+    expect(compactLibraryPath("/Users/martinclaw/nas/photo/Martin")).toBe("…/nas/photo/Martin");
+    expect(compactLibraryPath("/photos/Martin")).toBe("/photos/Martin");
+  });
+});
+
+describe("GeneralRuntimeOverview", () => {
+  it("presents worker settings as concise operational metrics", () => {
+    render(<GeneralRuntimeOverview maxRetries={3} concurrency={4} />);
+
+    expect(screen.getByRole("heading", { name: "任务处理" })).toBeInTheDocument();
+    expect(screen.getByText("并发任务")).toBeInTheDocument();
+    expect(screen.getByText("4")).toBeInTheDocument();
+    expect(screen.getByText("个同时运行")).toBeInTheDocument();
+    expect(screen.getByText("失败重试")).toBeInTheDocument();
+    expect(screen.getByText("3")).toBeInTheDocument();
+    expect(screen.getByText("次自动恢复")).toBeInTheDocument();
+  });
+});
+
+describe("LibraryForm", () => {
+  it("uses labelled controls and submits the real host path unchanged", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+
+    render(
+      <LibraryForm
+        initial={{ name: "", photo_library_path: "", is_default: false }}
+        hostPrefix="/Users/martinclaw/nas/photo"
+        submitLabel="添加"
+        isSubmitting={false}
+        onSubmit={onSubmit}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    await user.type(screen.getByLabelText("名称"), "Family");
+    await user.type(screen.getByLabelText("图片库路径"), "/Users/martinclaw/nas/photo/Family");
+    await user.click(screen.getByLabelText("设为默认图片库"));
+    await user.click(screen.getByRole("button", { name: "添加" }));
+
+    expect(onSubmit).toHaveBeenCalledWith({
+      name: "Family",
+      photo_library_path: "/Users/martinclaw/nas/photo/Family",
+      is_default: true,
+    });
+  });
+});
+
+describe("TechnicalPaths", () => {
+  it("keeps low-frequency path details collapsed until requested", async () => {
+    const user = userEvent.setup();
+    render(<TechnicalPaths hostPath="/host/photos" containerPath="/photos" />);
+
+    const details = screen.getByText("技术路径").closest("details");
+    expect(details).not.toHaveAttribute("open");
+
+    await user.click(screen.getByText("技术路径"));
+    expect(details).toHaveAttribute("open");
   });
 });

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Loader2, ImageOff } from "lucide-react";
+import { FolderSearch, ImageOff, Loader2, LocateFixed } from "lucide-react";
 import { usePhotos } from "@/hooks/usePhotos";
 import { useInfiniteScrollSentinel } from "@/hooks/useInfiniteScrollSentinel";
 import { MasonryGrid } from "./MasonryGrid";
@@ -16,6 +16,11 @@ interface TimelineGridProps {
   projectId?: number | null;
   folderId?: number | null;
   folderScope?: FolderScope;
+  initialPage?: number;
+  targetPhotoId?: number | null;
+  targetAvailable?: boolean;
+  targetFolderPath?: string | null;
+  onClearTarget?: () => void;
 }
 
 function formatGroupLabel(key: string): string {
@@ -49,7 +54,16 @@ function groupPhotosByMonth(photos: Photo[]): Map<string, Photo[]> {
   );
 }
 
-export function TimelineGrid({ projectId, folderId, folderScope = "subtree" }: TimelineGridProps) {
+export function TimelineGrid({
+  projectId,
+  folderId,
+  folderScope = "subtree",
+  initialPage,
+  targetPhotoId,
+  targetAvailable,
+  targetFolderPath,
+  onClearTarget,
+}: TimelineGridProps) {
   const auth = useAuth();
   const canDeletePhoto = canManageProjects(auth.session);
   const [dateFrom, setDateFrom] = useState<string | null>(null);
@@ -61,7 +75,7 @@ export function TimelineGrid({ projectId, folderId, folderScope = "subtree" }: T
   const queryClient = useQueryClient();
 
   const { data, fetchNextPage, hasNextPage, isFetchingNextPage, isLoading, isError } =
-    usePhotos({ projectId, dateFrom, dateTo, folderId, folderScope });
+    usePhotos({ projectId, dateFrom, dateTo, folderId, folderScope, initialPage });
 
   const sentinelRef = useInfiniteScrollSentinel<HTMLDivElement>({
     hasNextPage,
@@ -86,6 +100,15 @@ export function TimelineGrid({ projectId, folderId, folderScope = "subtree" }: T
     () => new Set(allPhotos.slice(0, 8).map((photo) => photo.id)),
     [allPhotos],
   );
+
+  useEffect(() => {
+    if (targetPhotoId == null || targetAvailable === false) return;
+    const target = document.getElementById(`photo-${targetPhotoId}`);
+    if (!target) return;
+    const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    target.scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth", block: "center" });
+    target.focus({ preventScroll: true });
+  }, [allPhotos, targetAvailable, targetPhotoId]);
 
   useEffect(() => {
     setSelectedPhotoIds([]);
@@ -210,6 +233,23 @@ export function TimelineGrid({ projectId, folderId, folderScope = "subtree" }: T
     );
   }
 
+  if (!isLoading && allPhotos.length === 0 && targetPhotoId != null) {
+    return (
+      <div className="flex flex-col items-center justify-center gap-4 py-24 text-mute">
+        <div className="flex h-20 w-20 items-center justify-center rounded-full bg-secondary-bg">
+          <FolderSearch className="h-9 w-9 text-stone" />
+        </div>
+        <div className="text-center">
+          <p className="text-heading-md font-semibold text-ink">原文件夹中没有其他照片</p>
+          <p className="mt-1 text-body-sm text-mute">目标照片已移出图库，附近没有可显示的内容</p>
+        </div>
+        <button type="button" onClick={onClearTarget} className="text-body-sm font-semibold text-primary hover:text-primary-pressed">
+          返回文件夹顶部
+        </button>
+      </div>
+    );
+  }
+
   if (!isLoading && allPhotos.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-24 gap-4 text-mute">
@@ -230,6 +270,32 @@ export function TimelineGrid({ projectId, folderId, folderScope = "subtree" }: T
     <div className="flex gap-4">
       {/* Photo grid */}
       <div className="flex-1 min-w-0 space-y-8">
+        {targetPhotoId != null && (
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-primary/30 bg-primary/5 px-4 py-3">
+            <div className="flex min-w-0 items-center gap-3">
+              <LocateFixed className="h-5 w-5 shrink-0 text-primary" />
+              <div className="min-w-0">
+                <p className="text-body-sm font-semibold text-ink">
+                  {targetAvailable === false
+                    ? "原照片已移出图库，已定位到它原先所在的文件夹"
+                    : "已定位并高亮目标照片"}
+                </p>
+                {targetFolderPath != null && (
+                  <p className="truncate text-caption-sm text-mute" title={targetFolderPath || "图库根目录"}>
+                    {targetFolderPath || "图库根目录"}
+                  </p>
+                )}
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={onClearTarget}
+              className="shrink-0 text-caption-sm font-semibold text-primary hover:text-primary-pressed"
+            >
+              从文件夹顶部查看
+            </button>
+          </div>
+        )}
         <div className="flex flex-wrap items-center gap-3">
           <p className="text-body-sm text-mute">
             共 <span className="font-semibold text-ink">{total.toLocaleString()}</span> 张照片
@@ -350,6 +416,7 @@ export function TimelineGrid({ projectId, folderId, folderScope = "subtree" }: T
                   onDeleted={(photoId) => {
                     setSelectedPhotoIds((prev) => prev.filter((id) => id !== photoId));
                   }}
+                  highlighted={photo.id === targetPhotoId && targetAvailable !== false}
                 />
               )}
             />
@@ -366,13 +433,15 @@ export function TimelineGrid({ projectId, folderId, folderScope = "subtree" }: T
       </div>
 
       {/* Right-side timeline rail */}
-      <TimelineRail
-        projectId={projectId}
-        folderId={folderId}
-        folderScope={folderScope}
-        activeKey={activeKey}
-        onSelect={handleMonthSelect}
-      />
+      {targetPhotoId == null && (
+        <TimelineRail
+          projectId={projectId}
+          folderId={folderId}
+          folderScope={folderScope}
+          activeKey={activeKey}
+          onSelect={handleMonthSelect}
+        />
+      )}
     </div>
   );
 }

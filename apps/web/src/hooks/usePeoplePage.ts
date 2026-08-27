@@ -267,7 +267,14 @@ export function usePeoplePage() {
     if (personRematchTaskId == null || !rematchStatus) return;
     if (rematchStatus.task_id !== personRematchTaskId || rematchStatus.running) return;
 
-    if (rematchStatus.status === "success") {
+    if (rematchStatus.status === "success" && rematchStatus.skipped_reason) {
+      const recoveryMessage =
+        rematchStatus.skipped_reason === "missing_target_search_profile"
+          ? "该人物没有可用的已确认人脸向量。请先确认一张已完成人脸扫描的照片后重试。"
+          : rematchStatus.message;
+      setErrorMessage(`无法查找相似候选：${recoveryMessage}`);
+      setStatusMessage(null);
+    } else if (rematchStatus.status === "success") {
       handleSuccess(
         `人物相似候选聚合完成：扫描 ${rematchStatus.faces_considered} 张，新增/更新候选 ${rematchStatus.matched_faces} 张`,
       );
@@ -535,6 +542,14 @@ export function usePeoplePage() {
     });
   };
 
+  const selectVisiblePeople = () => {
+    setSelectedPersonIds(managedPeople.map((person) => person.id));
+  };
+
+  const clearSelectedPeople = () => {
+    setSelectedPersonIds([]);
+  };
+
   const archiveSelectedPerson = () => {
     if (selectedProjectId == null || resolvedSelectedPersonId == null) return;
     const archivedPersonId = resolvedSelectedPersonId;
@@ -626,6 +641,8 @@ export function usePeoplePage() {
     setSelectedPersonId,
     setMergeTargetId,
     toggleSelectPerson,
+    selectVisiblePeople,
+    clearSelectedPeople,
     archivePerson,
     archiveSelectedPerson,
     archiveSelectedPeople,

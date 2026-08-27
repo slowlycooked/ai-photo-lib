@@ -41,7 +41,7 @@ export function PhotoBrowseLayout({
       </div>
 
       {/* 右侧：照片和时间线 */}
-      <div className="min-w-0 flex-1 overflow-hidden">
+      <div className="min-w-0 flex-1 overflow-clip">
         {children}
       </div>
     </div>

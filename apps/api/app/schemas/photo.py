@@ -64,6 +64,18 @@ class PhotoListResponse(BaseModel):
     has_more: Optional[bool] = None
 
 
+class PhotoLocationResponse(BaseModel):
+    project_id: int
+    photo_id: int
+    folder_id: Optional[int] = None
+    folder_path: Optional[str] = None
+    page: int
+    page_size: int
+    position: int
+    total: int
+    is_browsable: bool
+
+
 class PhotoDeleteResponse(BaseModel):
     project_id: int
     photo_id: int

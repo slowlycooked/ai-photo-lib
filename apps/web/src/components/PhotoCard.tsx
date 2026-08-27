@@ -1,5 +1,5 @@
 import { lazy, Suspense, useState } from "react";
-import { ImageIcon, MapPin } from "lucide-react";
+import { ImageIcon, LocateFixed, MapPin } from "lucide-react";
 import type { Photo } from "@/api";
 import { api } from "@/api";
 import { formatLocationAddress, formatLocationSummary } from "@/lib/utils";
@@ -17,6 +17,7 @@ interface PhotoCardProps {
   selected?: boolean;
   onToggleSelect?: (photoId: number, checked: boolean) => void;
   onDeleted?: (photoId: number) => void;
+  highlighted?: boolean;
 }
 
 export function PhotoCard({
@@ -26,6 +27,7 @@ export function PhotoCard({
   selected = false,
   onToggleSelect,
   onDeleted,
+  highlighted = false,
 }: PhotoCardProps) {
   const [loaded, setLoaded] = useState(false);
   const [errored, setErrored] = useState(false);
@@ -45,13 +47,23 @@ export function PhotoCard({
   return (
     <>
       <div
-        className="masonry-item cursor-pointer group relative bg-surface-card"
+        id={`photo-${photo.id}`}
+        data-photo-id={photo.id}
+        className={[
+          "masonry-item cursor-pointer group relative bg-surface-card rounded-md focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2",
+          highlighted ? "ring-4 ring-primary ring-offset-2" : "",
+        ].join(" ")}
         onClick={() => setShowDetail(true)}
         role="button"
         tabIndex={0}
         onKeyDown={(e) => e.key === "Enter" && setShowDetail(true)}
         aria-label={`查看照片 ${photo.file_name}`}
       >
+        {highlighted && (
+          <span className="absolute left-2 bottom-2 z-10 inline-flex items-center gap-1 rounded-full bg-primary px-2.5 py-1 text-[11px] font-bold text-white shadow-md">
+            <LocateFixed className="h-3.5 w-3.5" />定位目标
+          </span>
+        )}
         {selectMode && (
           <label
             className={[

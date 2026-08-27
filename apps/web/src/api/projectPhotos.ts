@@ -7,6 +7,7 @@ import type {
   PhotoDeleteResponse,
   PhotoDetail,
   PhotoListResponse,
+  PhotoLocationResponse,
   TimelineResponse,
 } from "./types";
 
@@ -49,6 +50,11 @@ export const projectPhotosApi = {
 
   get: (projectId: number, photoId: number) =>
     request<PhotoDetail>(`/projects/${projectId}/photos/${photoId}`),
+
+  locate: (projectId: number, photoId: number, pageSize = 50) =>
+    request<PhotoLocationResponse>(
+      `/projects/${projectId}/photos/${photoId}/location${qs({ page_size: pageSize })}`,
+    ),
 
   ai: (projectId: number, photoId: number) =>
     request<AIAnalysis>(`/projects/${projectId}/photos/${photoId}/ai`),

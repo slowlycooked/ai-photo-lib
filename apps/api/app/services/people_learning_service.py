@@ -34,6 +34,18 @@ class MatchDecision:
     assignment_status: str
 
 
+@dataclass(frozen=True)
+class PersonSearchProfile:
+    project_id: int
+    person_id: int
+    embedding_vector: list[float]
+    embedding_dim: int
+    model_name: str
+    model_version: str
+    sample_count: int
+    source: str
+
+
 def _has_people_learning_tables(db: Session) -> bool:
     engine = db.get_bind()
     inspector = inspect(engine)
@@ -265,12 +277,263 @@ def rebuild_person_centroid_prototype(
     return row
 
 
+def build_person_search_profile(
+    db: Session,
+    *,
+    project_id: int,
+    person_id: int,
+) -> Optional[PersonSearchProfile]:
+    """Build a non-persistent search profile, falling back to confirmed samples."""
+    if not _has_people_learning_tables(db):
+        return None
+
+    settings = get_or_create_project_face_settings(db, project_id)
+    person = (
+        db.query(Person)
+        .filter(
+            Person.project_id == project_id,
+            Person.id == person_id,
+            Person.is_named.is_(True),
+        )
+        .first()
+    )
+    if person is None:
+        return None
+
+    prototype = (
+        db.query(PersonPrototype)
+        .filter(
+            PersonPrototype.project_id == project_id,
+            PersonPrototype.person_id == person_id,
+            PersonPrototype.prototype_type == "centroid",
+            PersonPrototype.model_name == settings.face_embedding_model,
+            PersonPrototype.embedding_vector.isnot(None),
+        )
+        .order_by(PersonPrototype.updated_at.desc(), PersonPrototype.id.desc())
+        .first()
+    )
+    if prototype is not None:
+        vector = _coerce_vector(prototype.embedding_vector)
+        if len(vector) == int(prototype.embedding_dim):
+            return PersonSearchProfile(
+                project_id=project_id,
+                person_id=person_id,
+                embedding_vector=vector,
+                embedding_dim=int(prototype.embedding_dim),
+                model_name=str(prototype.model_name),
+                model_version=str(prototype.model_version or ""),
+                sample_count=int(prototype.sample_count or 0),
+                source="centroid",
+            )
+
+    rows = (
+        db.query(
+            FaceEmbedding.embedding_vector,
+            FaceEmbedding.embedding_dim,
+            FaceEmbedding.model_name,
+            FaceEmbedding.model_version,
+            FaceDetection.face_quality_score,
+            PersonFaceAssignment.updated_at,
+            FaceEmbedding.id,
+        )
+        .join(FaceDetection, FaceDetection.id == PersonFaceAssignment.face_detection_id)
+        .join(FaceEmbedding, FaceEmbedding.face_detection_id == FaceDetection.id)
+        .filter(
+            PersonFaceAssignment.project_id == project_id,
+            PersonFaceAssignment.person_id == person_id,
+            PersonFaceAssignment.is_positive_sample.is_(True),
+            PersonFaceAssignment.assignment_status.in_(POSITIVE_ASSIGNMENT_STATUSES),
+            FaceDetection.project_id == project_id,
+            FaceEmbedding.project_id == project_id,
+            FaceEmbedding.model_name == settings.face_embedding_model,
+            FaceEmbedding.embedding_vector.isnot(None),
+        )
+        .order_by(
+            FaceDetection.face_quality_score.desc().nullslast(),
+            PersonFaceAssignment.updated_at.desc(),
+            FaceEmbedding.id.desc(),
+        )
+        .all()
+    )
+    if not rows:
+        return None
+
+    embedding_dim = int(rows[0][1])
+    model_name = str(rows[0][2])
+    model_version = str(rows[0][3] or "")
+    vectors = [
+        vector
+        for row in rows[: int(settings.max_positive_samples_per_person or len(rows))]
+        if int(row[1]) == embedding_dim
+        and str(row[2]) == model_name
+        and str(row[3] or "") == model_version
+        and len(vector := _coerce_vector(row[0])) == embedding_dim
+    ]
+    if not vectors:
+        return None
+
+    return PersonSearchProfile(
+        project_id=project_id,
+        person_id=person_id,
+        embedding_vector=[sum(values) / len(vectors) for values in zip(*vectors)],
+        embedding_dim=embedding_dim,
+        model_name=model_name,
+        model_version=model_version,
+        sample_count=len(vectors),
+        source="confirmed_sample_fallback",
+    )
+
+
+def _load_candidate_prototypes(
+    db: Session,
+    *,
+    project_id: int,
+    model_name: str,
+    model_version: str,
+    embedding_dim: int,
+    target_person_id: Optional[int],
+) -> list[tuple[PersonPrototype, Person]]:
+    query = (
+        db.query(PersonPrototype, Person)
+        .join(
+            Person,
+            sa.and_(
+                Person.id == PersonPrototype.person_id,
+                Person.project_id == PersonPrototype.project_id,
+            ),
+        )
+        .filter(
+            PersonPrototype.project_id == project_id,
+            PersonPrototype.prototype_type == "centroid",
+            PersonPrototype.model_name == model_name,
+            PersonPrototype.model_version == model_version,
+            PersonPrototype.embedding_dim == embedding_dim,
+            PersonPrototype.embedding_vector.isnot(None),
+            Person.is_named.is_(True),
+        )
+    )
+    if target_person_id is not None:
+        query = query.filter(Person.id == int(target_person_id))
+    return query.all()
+
+
+def _load_negative_person_ids(
+    db: Session,
+    *,
+    project_id: int,
+    face_detection_id: int,
+    enabled: bool,
+) -> set[int]:
+    if not enabled:
+        return set()
+    return {
+        int(row[0])
+        for row in (
+            db.query(FaceNegativeConstraint.not_person_id)
+            .filter(
+                FaceNegativeConstraint.project_id == project_id,
+                FaceNegativeConstraint.face_detection_id == face_detection_id,
+            )
+            .all()
+        )
+    }
+
+
+def _search_profile_matches_embedding(
+    profile: PersonSearchProfile,
+    *,
+    project_id: int,
+    target_person_id: Optional[int],
+    model_name: str,
+    model_version: str,
+    embedding_dim: int,
+) -> bool:
+    return (
+        target_person_id is not None
+        and profile.project_id == project_id
+        and profile.person_id == int(target_person_id)
+        and profile.model_name == model_name
+        and profile.model_version == model_version
+        and profile.embedding_dim == embedding_dim
+    )
+
+
+def _best_prototype_match(
+    target_vector: list[float],
+    candidate_rows: list[tuple[PersonPrototype, Person]],
+    negatives: set[int],
+) -> tuple[Optional[int], float]:
+    best_person_id: Optional[int] = None
+    best_similarity = -1.0
+    for prototype, person in candidate_rows:
+        if person.id in negatives:
+            continue
+        similarity = _cosine_similarity(
+            target_vector,
+            _coerce_vector(prototype.embedding_vector),
+        )
+        if similarity > best_similarity:
+            best_similarity = similarity
+            best_person_id = int(person.id)
+    return best_person_id, best_similarity
+
+
+def _resolve_match_candidate(
+    db: Session,
+    *,
+    project_id: int,
+    face_detection_id: int,
+    target_vector: list[float],
+    embedding_dim: int,
+    model_name: str,
+    model_version: str,
+    negative_constraints_enabled: bool,
+    target_person_id: Optional[int],
+    target_search_profile: Optional[PersonSearchProfile],
+) -> tuple[Optional[int], float]:
+    negatives = _load_negative_person_ids(
+        db,
+        project_id=project_id,
+        face_detection_id=face_detection_id,
+        enabled=negative_constraints_enabled,
+    )
+    if target_search_profile is not None:
+        if not _search_profile_matches_embedding(
+            target_search_profile,
+            project_id=project_id,
+            target_person_id=target_person_id,
+            model_name=model_name,
+            model_version=model_version,
+            embedding_dim=embedding_dim,
+        ):
+            return None, -1.0
+        if target_search_profile.person_id in negatives:
+            return None, -1.0
+        return (
+            target_search_profile.person_id,
+            _cosine_similarity(target_vector, target_search_profile.embedding_vector),
+        )
+
+    candidate_rows = _load_candidate_prototypes(
+        db,
+        project_id=project_id,
+        model_name=model_name,
+        model_version=model_version,
+        embedding_dim=embedding_dim,
+        target_person_id=target_person_id,
+    )
+    if not candidate_rows:
+        return None, -1.0
+    return _best_prototype_match(target_vector, candidate_rows, negatives)
+
+
 def match_face_detection_to_person(
     db: Session,
     *,
     project_id: int,
     face_detection_id: int,
     target_person_id: Optional[int] = None,
+    target_search_profile: Optional[PersonSearchProfile] = None,
     force_review_pending: bool = False,
     force_auto_assigned: bool = False,
     assignment_source: str = "similarity_match",
@@ -314,56 +577,18 @@ def match_face_detection_to_person(
         return None
     embedding_model_version = str(embedding.model_version or "")
 
-    candidate_query = (
-        db.query(PersonPrototype, Person)
-        .join(
-            Person,
-            sa.and_(
-                Person.id == PersonPrototype.person_id,
-                Person.project_id == PersonPrototype.project_id,
-            ),
-        )
-        .filter(
-            PersonPrototype.project_id == project_id,
-            PersonPrototype.prototype_type == "centroid",
-            PersonPrototype.model_name == settings.face_embedding_model,
-            PersonPrototype.model_version == embedding_model_version,
-            PersonPrototype.embedding_dim == embedding_dim,
-            PersonPrototype.embedding_vector.isnot(None),
-            Person.is_named.is_(True),
-        )
+    best_person_id, best_similarity = _resolve_match_candidate(
+        db,
+        project_id=project_id,
+        face_detection_id=face_detection_id,
+        target_vector=target_vector,
+        embedding_dim=embedding_dim,
+        model_name=settings.face_embedding_model,
+        model_version=embedding_model_version,
+        negative_constraints_enabled=bool(settings.enable_negative_constraints),
+        target_person_id=target_person_id,
+        target_search_profile=target_search_profile,
     )
-    if target_person_id is not None:
-        candidate_query = candidate_query.filter(Person.id == int(target_person_id))
-
-    candidate_rows = candidate_query.all()
-    if not candidate_rows:
-        return None
-
-    negatives: set[int] = set()
-    if settings.enable_negative_constraints:
-        negatives = {
-            row[0]
-            for row in (
-                db.query(FaceNegativeConstraint.not_person_id)
-                .filter(
-                    FaceNegativeConstraint.project_id == project_id,
-                    FaceNegativeConstraint.face_detection_id == face_detection_id,
-                )
-                .all()
-            )
-        }
-
-    best_person_id: Optional[int] = None
-    best_similarity = -1.0
-    for proto, person in candidate_rows:
-        if person.id in negatives:
-            continue
-        proto_vector = _coerce_vector(proto.embedding_vector)
-        similarity = _cosine_similarity(target_vector, proto_vector)
-        if similarity > best_similarity:
-            best_similarity = similarity
-            best_person_id = int(person.id)
 
     if best_person_id is None:
         return None

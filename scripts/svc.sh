@@ -55,6 +55,9 @@ if [ "$DEPLOY_PROFILE_RAW" != "$DEPLOY_PROFILE" ]; then
   load_env_file "$ROOT/.env.$DEPLOY_PROFILE_RAW"
 fi
 
+SVC_LOG_MAX_BYTES="${SVC_LOG_MAX_BYTES:-20971520}"
+SVC_LOG_KEEP="${SVC_LOG_KEEP:-5}"
+
 POSTGRES_USER="${POSTGRES_USER:-photo}"
 POSTGRES_DB="${POSTGRES_DB:-photo}"
 POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-photo}"
@@ -105,8 +108,61 @@ EMBED_CTX="${EMBED_CTX:-8192}"
 EMBED_UB="${EMBED_UB:-8192}"
 EMBED_STOP_TIMEOUT="${EMBED_STOP_TIMEOUT:-15}"
 
+embedding_uses_external_service() {
+  [ -n "${EMBEDDING_BASE_URL:-}" ] \
+    && [ -n "${EMBEDDING_MODEL:-}" ] \
+    && { [ -z "$EMBED_SERVER" ] || [ -z "$EMBED_MODEL" ]; }
+}
+
 pid_file() { echo "$RUN_DIR/$1.pid"; }
+watchdog_pid_file() { echo "$RUN_DIR/$1.watchdog.pid"; }
 log_file() { echo "$LOG_DIR/$1.log"; }
+
+positive_integer_or_default() {
+  local value="$1"
+  local fallback="$2"
+
+  case "$value" in
+    ''|*[!0-9]*|0) printf '%s\n' "$fallback" ;;
+    *) printf '%s\n' "$value" ;;
+  esac
+}
+
+SVC_LOG_MAX_BYTES="$(positive_integer_or_default "$SVC_LOG_MAX_BYTES" 20971520)"
+SVC_LOG_KEEP="$(positive_integer_or_default "$SVC_LOG_KEEP" 5)"
+
+rotate_service_log() {
+  local name="$1"
+  local log_path
+  log_path="$(log_file "$name")"
+  [ -f "$log_path" ] || return 0
+
+  local size_bytes
+  size_bytes="$(wc -c < "$log_path" | tr -d '[:space:]')"
+  if [ "$size_bytes" -lt "$SVC_LOG_MAX_BYTES" ]; then
+    return 0
+  fi
+
+  rm -f "$log_path.$SVC_LOG_KEEP"
+  local index="$SVC_LOG_KEEP"
+  while [ "$index" -gt 1 ]; do
+    local previous=$((index - 1))
+    if [ -f "$log_path.$previous" ]; then
+      mv "$log_path.$previous" "$log_path.$index"
+    fi
+    index="$previous"
+  done
+  mv "$log_path" "$log_path.1"
+}
+
+prepare_service_log() {
+  local name="$1"
+  local log_path
+  log_path="$(log_file "$name")"
+  rotate_service_log "$name"
+  printf 'timestamp=%s level=INFO component=svc event=service_start service=%s\n' \
+    "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$name" >> "$log_path"
+}
 
 default_local_state_dir() {
   if [ -n "${DATA_DIR:-}" ]; then
@@ -296,13 +352,41 @@ save_pid() {
 }
 
 save_bg_pid() {
-  save_pid "$!" "$1"
+  local background_pid="$!"
+  save_pid "$background_pid" "$1"
+  echo "$background_pid" > "$(watchdog_pid_file "$1")"
 }
 
 run_named_process() {
-  local proc_name="$1"
-  shift
-  nohup "$ROOT/scripts/ai-photo-runner.sh" "$proc_name" "$@"
+  local service_name="$1"
+  local proc_name="$2"
+  shift 2
+  local log_path
+  log_path="$(log_file "$service_name")"
+  prepare_service_log "$service_name"
+  nohup "$ROOT/scripts/ai-photo-runner.sh" "$proc_name" "$@" >> "$log_path" 2>&1
+}
+
+stop_watchdog() {
+  local name="$1"
+  local pf
+  pf="$(watchdog_pid_file "$name")"
+  [ -f "$pf" ] || return 0
+
+  local pid
+  pid="$(cat "$pf")"
+  if kill -0 "$pid" 2>/dev/null; then
+    kill -TERM "$pid" 2>/dev/null || true
+    local waited=0
+    while kill -0 "$pid" 2>/dev/null && [ "$waited" -lt 5 ]; do
+      sleep 1
+      waited=$((waited + 1))
+    done
+    if kill -0 "$pid" 2>/dev/null; then
+      kill -KILL "$pid" 2>/dev/null || true
+    fi
+  fi
+  rm -f "$pf"
 }
 
 find_prefixed_pids() {
@@ -409,6 +493,18 @@ is_running() {
       return 0
     fi
     rm -f "$pf"
+  fi
+
+  local watchdog_pf
+  watchdog_pf="$(watchdog_pid_file "$name")"
+  if [ -f "$watchdog_pf" ]; then
+    local watchdog_pid
+    watchdog_pid="$(cat "$watchdog_pf")"
+    if kill -0 "$watchdog_pid" 2>/dev/null; then
+      save_pid "$watchdog_pid" "$name"
+      return 0
+    fi
+    rm -f "$watchdog_pf"
   fi
 
   if [ "$name" = "worker" ]; then
@@ -589,7 +685,7 @@ start_api() {
     uvicorn_args+=(--reload)
   fi
 
-  run_named_process "ai-photo-api" "$py_bin" "${uvicorn_args[@]}" > "$(log_file api)" 2>&1 &
+  run_named_process api "ai-photo-api" "$py_bin" "${uvicorn_args[@]}" &
   save_bg_pid api
 
   local waited=0
@@ -615,6 +711,7 @@ stop_api() {
     local pid
     pid="$(cat "$(pid_file api)")"
     log_info "停止 api (PID $pid)..."
+    stop_watchdog api
     kill "$pid" 2>/dev/null || true
     rm -f "$(pid_file api)"
     log_ok "api 已停止"
@@ -656,11 +753,11 @@ start_web() {
   case "$WEB_MODE" in
     dev)
       log_info "启动 Web 开发服务 (host=$WEB_HOST, port=$WEB_PORT)..."
-      run_named_process "ai-photo-web" npm run dev -- --host "$WEB_HOST" --port "$WEB_PORT" > "$(log_file web)" 2>&1 &
+      run_named_process web "ai-photo-web" npm run dev -- --host "$WEB_HOST" --port "$WEB_PORT" &
       ;;
     preview)
       log_info "构建前端并启动 Preview 服务 (host=$WEB_HOST, port=$WEB_PORT)..."
-      run_named_process "ai-photo-web" sh -c "cd '$ROOT/apps/web' && npm run build >/dev/null && npm run preview -- --host '$WEB_HOST' --port '$WEB_PORT'" > "$(log_file web)" 2>&1 &
+      run_named_process web "ai-photo-web" sh -c "cd '$ROOT/apps/web' && npm run build >/dev/null && npm run preview -- --host '$WEB_HOST' --port '$WEB_PORT'" &
       ;;
     *)
       log_error "不支持的 WEB_MODE: ${WEB_MODE}（可选: dev / preview）"
@@ -695,11 +792,11 @@ start_mobile_web() {
   case "$MOBILE_WEB_MODE" in
     dev)
       log_info "启动 Mobile Web 开发服务 (host=$MOBILE_WEB_HOST, port=$MOBILE_PORT)..."
-      run_named_process "ai-photo-mobile-web" npm run dev -- --host "$MOBILE_WEB_HOST" --port "$MOBILE_PORT" > "$(log_file mobile-web)" 2>&1 &
+      run_named_process mobile-web "ai-photo-mobile-web" npm run dev -- --host "$MOBILE_WEB_HOST" --port "$MOBILE_PORT" &
       ;;
     preview)
       log_info "构建 mobile 前端并启动 Preview 服务 (host=$MOBILE_WEB_HOST, port=$MOBILE_PORT)..."
-      run_named_process "ai-photo-mobile-web" sh -c "cd '$ROOT/apps/mobile-web' && npm run build >/dev/null && npm run preview -- --host '$MOBILE_WEB_HOST' --port '$MOBILE_PORT'" > "$(log_file mobile-web)" 2>&1 &
+      run_named_process mobile-web "ai-photo-mobile-web" sh -c "cd '$ROOT/apps/mobile-web' && npm run build >/dev/null && npm run preview -- --host '$MOBILE_WEB_HOST' --port '$MOBILE_PORT'" &
       ;;
     *)
       log_error "不支持的 MOBILE_WEB_MODE: ${MOBILE_WEB_MODE}（可选: dev / preview）"
@@ -722,6 +819,7 @@ stop_web() {
     local pid
     pid="$(cat "$(pid_file web)")"
     log_info "停止 web (PID $pid)..."
+    stop_watchdog web
     terminate_process_tree "$pid" TERM
     rm -f "$(pid_file web)"
     log_ok "web 已停止"
@@ -737,6 +835,7 @@ stop_mobile_web() {
     local pid
     pid="$(cat "$(pid_file mobile-web)")"
     log_info "停止 mobile-web (PID $pid)..."
+    stop_watchdog mobile-web
     terminate_process_tree "$pid" TERM
     rm -f "$(pid_file mobile-web)"
     log_ok "mobile-web 已停止"
@@ -758,7 +857,7 @@ start_worker() {
 
   log_info "启动 AI Worker..."
   cd "$ROOT/apps/worker"
-  run_named_process "ai-photo-worker" "$py_bin" main.py > "$(log_file worker)" 2>&1 &
+  run_named_process worker "ai-photo-worker" "$py_bin" main.py &
   save_bg_pid worker
   sleep 1
 
@@ -775,6 +874,7 @@ stop_worker() {
     local pid
     pid="$(cat "$(pid_file worker)")"
     log_info "停止 worker (PID $pid)..."
+    stop_watchdog worker
     kill "$pid" 2>/dev/null || true
     rm -f "$(pid_file worker)"
     log_ok "worker 已停止"
@@ -828,7 +928,7 @@ start_ai() {
   [ -n "$LLAMA_MEDIA_PATH" ] && args+=(--media-path "$LLAMA_MEDIA_PATH")
 
   log_info "启动 llama-server (port $LLAMA_PORT)..."
-  run_named_process "ai-photo-llama" "${args[@]}" > "$(log_file ai)" 2>&1 &
+  run_named_process ai "ai-photo-llama" "${args[@]}" &
   save_bg_pid ai
   sleep 2
 
@@ -852,6 +952,7 @@ stop_ai() {
     local waited=0
 
     log_info "停止 llama-server (PID $pid)..."
+    stop_watchdog ai
     kill -TERM "$pid" 2>/dev/null || true
     while kill -0 "$pid" 2>/dev/null; do
       if [ "$waited" -ge "$LLAMA_STOP_TIMEOUT" ]; then
@@ -903,7 +1004,7 @@ start_query_planner() {
   )
 
   log_info "启动 query-planner llama-server (port $QUERY_PLANNER_PORT)..."
-  run_named_process "ai-photo-query-planner" "${args[@]}" > "$(log_file planner)" 2>&1 &
+  run_named_process planner "ai-photo-query-planner" "${args[@]}" &
   save_bg_pid planner
   sleep 2
 
@@ -922,6 +1023,7 @@ stop_query_planner() {
     local waited=0
 
     log_info "停止 query-planner (PID $pid)..."
+    stop_watchdog planner
     kill -TERM "$pid" 2>/dev/null || true
     while kill -0 "$pid" 2>/dev/null; do
       if [ "$waited" -ge "$QUERY_PLANNER_STOP_TIMEOUT" ]; then
@@ -941,6 +1043,11 @@ stop_query_planner() {
 }
 
 start_embed() {
+  if embedding_uses_external_service; then
+    log_ok "Embedding 使用外部服务 (${EMBEDDING_BASE_URL}, model=${EMBEDDING_MODEL})，svc.sh 不重复启动 llama-embed"
+    return 0
+  fi
+
   if is_running embed; then
     log_ok "llama-embed 已在运行 (PID $(cat "$(pid_file embed)"), port $EMBED_PORT)"
     return 0
@@ -972,7 +1079,7 @@ start_embed() {
   )
 
   log_info "启动 llama-embed (port $EMBED_PORT)..."
-  run_named_process "ai-photo-embed" "${args[@]}" > "$(log_file embed)" 2>&1 &
+  run_named_process embed "ai-photo-embed" "${args[@]}" &
   save_bg_pid embed
   sleep 2
 
@@ -985,12 +1092,18 @@ start_embed() {
 }
 
 stop_embed() {
+  if embedding_uses_external_service; then
+    log_warn "Embedding 由外部服务管理，svc.sh 不执行停止操作"
+    return 0
+  fi
+
   if is_running embed; then
     local pid
     pid="$(cat "$(pid_file embed)")"
     local waited=0
 
     log_info "停止 llama-embed (PID $pid)..."
+    stop_watchdog embed
     kill -TERM "$pid" 2>/dev/null || true
     while kill -0 "$pid" 2>/dev/null; do
       if [ "$waited" -ge "$EMBED_STOP_TIMEOUT" ]; then
@@ -1061,19 +1174,24 @@ status_ai() {
 }
 
 status_embed() {
-  local url="${EMBEDDING_BASE_URL:-http://127.0.0.1:${EMBED_PORT}/v1}/models"
+  local base_url="${EMBEDDING_BASE_URL:-http://127.0.0.1:${EMBED_PORT}/v1}"
+  local url="${base_url%/}/models"
   local http_code
   http_code="$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 2 --max-time 4 "$url" 2>/dev/null || true)"
   if [ -z "$http_code" ] || [ "$http_code" = "000" ]; then
     http_code="000"
   fi
 
-  if [ "$http_code" = "200" ]; then
+  if [ "$http_code" = "200" ] && embedding_uses_external_service; then
+    printf "  ${YELLOW}%-10s${RESET} ${GREEN}external${RESET} endpoint=%s model=%s\n" \
+      "Embed" "$base_url" "$EMBEDDING_MODEL"
+  elif [ "$http_code" = "200" ]; then
     printf "  ${GREEN}%-10s${RESET} ${GREEN}online${RESET}   port=%s\n" "Embed" "$EMBED_PORT"
   elif [ "$http_code" = "000" ]; then
-    printf "  ${RED}%-10s${RESET} ${RED}offline${RESET}  port=%s\n" "Embed" "$EMBED_PORT"
+    printf "  ${RED}%-10s${RESET} ${RED}offline${RESET}  endpoint=%s\n" "Embed" "$base_url"
   else
-    printf "  ${YELLOW}%-10s${RESET} ${YELLOW}unknown${RESET}  port=%s (HTTP %s)\n" "Embed" "$EMBED_PORT" "$http_code"
+    printf "  ${YELLOW}%-10s${RESET} ${YELLOW}unknown${RESET}  endpoint=%s (HTTP %s)\n" \
+      "Embed" "$base_url" "$http_code"
   fi
 }
 
@@ -1092,7 +1210,9 @@ show_status() {
     status_process "ai" "llama-srv" "$LLAMA_PORT"
   fi
   status_ai
-  status_process "embed" "llama-emb" "$EMBED_PORT"
+  if ! embedding_uses_external_service; then
+    status_process "embed" "llama-emb" "$EMBED_PORT"
+  fi
   status_embed
   echo ""
 }
@@ -1354,6 +1474,14 @@ case "$COMMAND" in
     echo "  --web-mode <dev|preview>     仅设置 web 模式"
     echo "  --mobile-web-mode <dev|preview> 仅设置 mobile-web 模式"
     echo "  --allowed-host <host>        允许额外 Host（可重复传入）"
+    echo ""
+    echo -e "${BOLD}Watchdog 与日志:${RESET}"
+    echo "  SVC_WATCHDOG_BACKOFF_INITIAL  异常退出后的初始重启间隔（默认 1 秒）"
+    echo "  SVC_WATCHDOG_BACKOFF_MAX      连续异常退出的最大间隔（默认 30 秒）"
+    echo "  SVC_WATCHDOG_STABLE_SECONDS   运行多久后重置退避（默认 60 秒）"
+    echo "  SVC_LOG_MAX_BYTES             单个当前日志轮转阈值（默认 20971520，即 20 MiB）"
+    echo "  SVC_LOG_KEEP                  保留的历史日志份数（默认 5）"
+    echo "  服务重启时日志只追加、不清空；达到阈值后轮转为 .log.1、.log.2 ..."
     echo ""
     ;;
   *)

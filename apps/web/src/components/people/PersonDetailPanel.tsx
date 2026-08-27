@@ -1,9 +1,13 @@
 import { useEffect, useState } from "react";
 import {
   AlertCircle,
+  CheckCircle2,
+  ChevronDown,
   Loader2,
+  MoveRight,
   RefreshCw,
   ScanFace,
+  Star,
   UserRound,
   Users,
   X,
@@ -43,15 +47,18 @@ function PersonOriginalPhotoLightbox({
     >
       <div
         className="relative max-w-[92vw] max-h-[92vh] flex flex-col items-center"
+        role="dialog"
+        aria-modal="true"
+        aria-label="查看人脸原图"
         onClick={(e) => e.stopPropagation()}
       >
         <button
           type="button"
           onClick={onClose}
-          className="absolute top-3 right-3 z-10 w-9 h-9 rounded-full bg-black/60 flex items-center justify-center hover:bg-black/80 transition-colors"
+          className="absolute top-3 right-3 z-10 flex h-11 w-11 items-center justify-center rounded-full bg-black/60 transition-colors hover:bg-black/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white motion-reduce:transition-none"
           aria-label="关闭预览"
         >
-          <X className="w-4 h-4 text-white" />
+          <X className="h-5 w-5 text-white" aria-hidden="true" />
         </button>
 
         {!imgLoaded && (
@@ -59,14 +66,14 @@ function PersonOriginalPhotoLightbox({
             {imgError ? (
               <div className="max-w-[320px] text-center text-white/85 text-sm px-4">{imgError}</div>
             ) : (
-              <Loader2 className="w-8 h-8 animate-spin text-white/70" />
+              <Loader2 className="h-8 w-8 animate-spin text-white/70 motion-reduce:animate-none" aria-hidden="true" />
             )}
           </div>
         )}
 
         <img
           src={api.projectPhotos.previewUrl(projectId, photoId)}
-          alt={`face-${faceId}-photo-${photoId}`}
+          alt={`人脸 ${faceId} 的原始照片`}
           decoding="async"
           className="rounded-md object-contain shadow-2xl"
           style={{
@@ -93,14 +100,75 @@ function PersonOriginalPhotoLightbox({
   );
 }
 
-function AssignmentChip({ label, value }: { label: string; value: number }) {
+function AssignmentOverview({
+  total,
+  positive,
+  candidate,
+  negative,
+  autoAssigned,
+  reviewPending,
+}: {
+  total: number;
+  positive: number;
+  candidate: number;
+  negative: number;
+  autoAssigned: number;
+  reviewPending: number;
+}) {
+  const distributionTotal = Math.max(positive + candidate + negative, 1);
+  const segments = [
+    { label: "正样本", value: positive, className: "bg-success" },
+    { label: "候选", value: candidate, className: "bg-warning" },
+    { label: "负样本", value: negative, className: "bg-danger/70" },
+  ];
+
   return (
-    <div className="rounded-lg bg-surface-soft border border-hairline px-3 py-2">
-      <div className="text-caption-sm text-mute">{label}</div>
-      <div className="text-body-sm font-semibold text-ink mt-0.5">{value}</div>
-    </div>
+    <section className="rounded-lg border border-hairline bg-surface-soft p-3" aria-labelledby="sample-overview-title">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-baseline gap-2">
+          <h3 id="sample-overview-title" className="text-caption-sm font-medium text-mute">样本结构</h3>
+          <strong className="text-heading-md font-semibold tabular-nums text-ink">{total.toLocaleString()}</strong>
+        </div>
+        <div className="flex flex-wrap gap-2 text-caption-sm text-secondary">
+          <span>自动识别 <strong className="tabular-nums text-ink">{autoAssigned.toLocaleString()}</strong></span>
+          <span>待确认 <strong className="tabular-nums text-ink">{reviewPending.toLocaleString()}</strong></span>
+        </div>
+      </div>
+      <div
+        className="mt-3 flex h-2.5 overflow-hidden rounded-full bg-secondary-bg"
+        role="img"
+        aria-label={`样本结构：正样本 ${positive}，候选 ${candidate}，负样本 ${negative}`}
+      >
+        {segments.map((segment) => (
+          segment.value > 0 && (
+            <span
+              key={segment.label}
+              className={segment.className}
+              style={{ width: `${(segment.value / distributionTotal) * 100}%` }}
+            />
+          )
+        ))}
+      </div>
+      <div className="mt-2 grid grid-cols-3 gap-2 text-caption-sm text-secondary">
+        {segments.map((segment) => (
+          <div key={segment.label} className="flex min-w-0 items-center gap-1.5">
+            <span className={`h-2 w-2 shrink-0 rounded-full ${segment.className}`} aria-hidden="true" />
+            <span className="truncate">{segment.label}</span>
+            <strong className="ml-auto tabular-nums text-ink">{segment.value.toLocaleString()}</strong>
+          </div>
+        ))}
+      </div>
+    </section>
   );
 }
+
+const ASSIGNMENT_STATUS_LABELS: Record<string, string> = {
+  human_confirmed: "人工确认",
+  human_corrected: "人工修正",
+  auto_assigned: "自动识别",
+  review_pending: "待确认",
+  rejected: "已排除",
+};
 
 export function PersonDetailPanel({
   projectId,
@@ -288,12 +356,12 @@ export function PersonDetailPanel({
     return (
       <div
         key={assignment.id}
-        className="rounded-xl border border-hairline bg-surface-soft p-3 flex gap-3"
+        className="flex flex-col gap-3 rounded-lg border border-hairline bg-surface-soft p-3 sm:flex-row"
       >
         <button
           type="button"
           onClick={() => setPreviewTarget({ photoId: face.photo_id, faceId: face.id })}
-          className="w-24 h-24 rounded-lg overflow-hidden border border-hairline bg-canvas flex-shrink-0 relative group cursor-zoom-in"
+          className="group relative h-24 w-24 flex-shrink-0 cursor-zoom-in overflow-hidden rounded-lg border border-hairline bg-canvas focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-outer"
           title="预览原始照片"
           aria-label={`预览 face ${face.id} 的原始照片`}
         >
@@ -306,18 +374,18 @@ export function PersonDetailPanel({
               className="w-full h-full object-cover"
             />
           ) : (
-            <div className="w-full h-full flex items-center justify-center text-mute">
-              <ScanFace className="w-5 h-5" />
+            <div className="flex h-full w-full items-center justify-center text-mute">
+              <ScanFace className="h-5 w-5" aria-hidden="true" />
             </div>
           )}
           <div className="absolute inset-0 bg-black/0 group-hover:bg-black/25 transition-colors flex items-center justify-center">
-            <ZoomIn className="w-4 h-4 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
+            <ZoomIn className="h-4 w-4 text-white opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100" aria-hidden="true" />
           </div>
         </button>
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex flex-wrap items-center gap-2">
             {splitSelectable && (
-              <label className="inline-flex items-center gap-1 text-caption-sm text-mute">
+              <label className="inline-flex min-h-9 cursor-pointer items-center gap-1.5 rounded-md px-1 text-caption-sm text-mute">
                 <input
                   type="checkbox"
                   checked={splitChecked}
@@ -331,64 +399,49 @@ export function PersonDetailPanel({
                 拆分
               </label>
             )}
-            <span className="text-body-sm font-medium text-ink">face #{face.id}</span>
-            <span className="px-2 py-0.5 rounded-full bg-canvas text-caption-sm text-ink border border-hairline">
-              {assignment.assignment_status}
+            <span className="text-body-sm font-semibold text-ink">face #{face.id}</span>
+            <span className={`rounded-full border px-2 py-0.5 text-caption-sm font-medium ${assignment.assignment_status === "review_pending" ? "border-warning/30 bg-warning/10 text-secondary" : assignment.assignment_status === "rejected" ? "border-danger/20 bg-danger/5 text-danger" : "border-hairline bg-canvas text-secondary"}`}>
+              {ASSIGNMENT_STATUS_LABELS[assignment.assignment_status] ?? assignment.assignment_status}
             </span>
           </div>
-          <p className="mt-1 text-caption-sm text-mute">source: {assignment.assignment_source}</p>
-          <p className="mt-1 text-caption-sm text-mute">
-            bbox {face.bbox_x}, {face.bbox_y}, {face.bbox_w}, {face.bbox_h}
-          </p>
-          <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-caption-sm text-mute">
+          <div className="mt-2 flex flex-wrap gap-2 text-caption-sm">
             {assignment.confidence != null && (
-              <span>置信度 {(assignment.confidence * 100).toFixed(0)}%</span>
+              <span className="rounded-full bg-canvas px-2 py-1 text-secondary">置信度 <strong className="tabular-nums text-ink">{(assignment.confidence * 100).toFixed(0)}%</strong></span>
             )}
             {assignment.similarity_score != null && (
-              <span>相似度 {(assignment.similarity_score * 100).toFixed(0)}%</span>
+              <span className="rounded-full bg-canvas px-2 py-1 text-secondary">相似度 <strong className="tabular-nums text-ink">{(assignment.similarity_score * 100).toFixed(0)}%</strong></span>
             )}
             {face.face_quality_score != null && (
-              <span>质量 {(face.face_quality_score * 100).toFixed(0)}%</span>
+              <span className="rounded-full bg-canvas px-2 py-1 text-secondary">质量 <strong className="tabular-nums text-ink">{(face.face_quality_score * 100).toFixed(0)}%</strong></span>
             )}
           </div>
-          <div className="mt-2 rounded-md border border-hairline bg-canvas px-2.5 py-2 text-caption-sm text-mute space-y-1">
-            <p>
-              匹配解释：source={explanation?.source ?? assignment.assignment_source}
-              {" · auto="}
-              {String(explanation?.is_auto ?? assignment.assignment_status === "auto_assigned")}
-              {" · human_confirmed="}
-              {String(
-                explanation?.is_human_confirmed ??
-                  ["human_confirmed", "human_corrected"].includes(assignment.assignment_status),
-              )}
-            </p>
-            <p>
-              similarity=
-              {explanation?.similarity != null
-                ? `${(explanation.similarity * 100).toFixed(0)}%`
-                : assignment.similarity_score != null
-                  ? `${(assignment.similarity_score * 100).toFixed(0)}%`
-                  : "n/a"}
-              {" · negative_constraint="}
-              {String(explanation?.negative_constraint_affected ?? false)}
-              {" · negative_count="}
-              {explanation?.negative_constraint_count ?? 0}
-            </p>
-          </div>
+          <details className="group mt-2 rounded-md border border-hairline bg-canvas px-2.5 py-1.5 text-caption-sm text-mute">
+            <summary className="flex min-h-7 cursor-pointer list-none items-center justify-between text-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-outer [&::-webkit-details-marker]:hidden">
+              技术信息
+              <ChevronDown className="h-3.5 w-3.5 transition-transform group-open:rotate-180 motion-reduce:transition-none" aria-hidden="true" />
+            </summary>
+            <div className="space-y-1 border-t border-hairline pt-2">
+              <p>来源：{explanation?.source ?? assignment.assignment_source}</p>
+              <p>边界框：{face.bbox_x}, {face.bbox_y}, {face.bbox_w}, {face.bbox_h}</p>
+              <p>自动匹配：{String(explanation?.is_auto ?? assignment.assignment_status === "auto_assigned")} · 人工确认：{String(explanation?.is_human_confirmed ?? ["human_confirmed", "human_corrected"].includes(assignment.assignment_status))}</p>
+              <p>负样本约束：{String(explanation?.negative_constraint_affected ?? false)} · 命中 {explanation?.negative_constraint_count ?? 0}</p>
+            </div>
+          </details>
           <div className="mt-2 flex flex-wrap gap-2">
             <button
               type="button"
               disabled={actionBusy}
               onClick={() => onConfirmFace(face.id)}
-              className="px-2.5 py-1 rounded-md border border-hairline text-caption-sm text-ink hover:bg-canvas disabled:opacity-50"
+              className="inline-flex min-h-11 items-center gap-1.5 rounded-md bg-primary px-3 text-btn-sm font-medium text-white hover:bg-primary/90 disabled:opacity-50"
             >
+              <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
               确认属于此人
             </button>
             <button
               type="button"
               disabled={actionBusy}
               onClick={() => onRejectFace(face.id)}
-              className="px-2.5 py-1 rounded-md border border-hairline text-caption-sm text-ink hover:bg-canvas disabled:opacity-50"
+              className="min-h-11 rounded-md border border-danger/30 bg-canvas px-3 text-btn-sm font-medium text-danger hover:bg-danger/10 disabled:opacity-50"
             >
               不是此人
             </button>
@@ -396,8 +449,9 @@ export function PersonDetailPanel({
               type="button"
               disabled={actionBusy}
               onClick={() => onSetRepresentative(face.id)}
-              className="px-2.5 py-1 rounded-md border border-hairline text-caption-sm text-ink hover:bg-canvas disabled:opacity-50"
+              className="inline-flex min-h-11 items-center gap-1.5 rounded-md border border-hairline bg-canvas px-3 text-btn-sm font-medium text-secondary hover:text-ink disabled:opacity-50"
             >
+              <Star className="h-4 w-4" aria-hidden="true" />
               设为代表头像
             </button>
             {moveCandidates.length > 0 && (
@@ -410,7 +464,8 @@ export function PersonDetailPanel({
                       [face.id]: Number(e.target.value),
                     }))
                   }
-                  className="px-2 py-1 rounded-md border border-hairline bg-canvas text-caption-sm"
+                  aria-label={`face ${face.id} 移动目标`}
+                  className="min-h-11 rounded-md border border-hairline bg-canvas px-3 text-body-sm text-ink"
                 >
                   {moveCandidates.map((candidate) => (
                     <option key={candidate.id} value={candidate.id}>
@@ -424,8 +479,9 @@ export function PersonDetailPanel({
                   onClick={() =>
                     onMoveFace(face.id, moveTargets[face.id] ?? moveCandidates[0].id)
                   }
-                  className="px-2.5 py-1 rounded-md border border-hairline text-caption-sm text-ink hover:bg-canvas disabled:opacity-50"
+                  className="inline-flex min-h-11 items-center gap-1.5 rounded-md border border-hairline bg-canvas px-3 text-btn-sm font-medium text-secondary hover:text-ink disabled:opacity-50"
                 >
+                  <MoveRight className="h-4 w-4" aria-hidden="true" />
                   移动
                 </button>
               </>
@@ -437,20 +493,20 @@ export function PersonDetailPanel({
   };
 
   return (
-    <div className="bg-canvas rounded-xl border border-hairline overflow-hidden">
-      <div className="px-6 py-5 border-b border-hairline">
+    <div className="overflow-hidden rounded-xl border border-hairline bg-canvas">
+      <div className="border-b border-hairline p-4 sm:p-5">
         {statusMessage && (
-          <div className="mb-3 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-caption-sm text-emerald-800">
+          <div role="status" aria-live="polite" className="mb-3 rounded-md border border-success/30 bg-success/5 px-3 py-2 text-caption-sm text-success">
             {statusMessage}
           </div>
         )}
         {errorMessage && (
-          <div className="mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-caption-sm text-red-800">
+          <div role="alert" className="mb-3 rounded-md border border-danger/30 bg-danger/5 px-3 py-2 text-caption-sm text-danger">
             {errorMessage}
           </div>
         )}
-        <div className="flex items-start gap-4">
-          <div className="w-20 h-20 rounded-xl overflow-hidden border border-hairline bg-surface-soft flex-shrink-0">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
+          <div className="h-20 w-20 flex-shrink-0 overflow-hidden rounded-xl border border-hairline bg-surface-soft">
             {faceCropEnabled && detail.representative_face_detection_id ? (
               <button
                 type="button"
@@ -459,7 +515,7 @@ export function PersonDetailPanel({
                   setPreviewTarget({ photoId: representativeFace.photo_id, faceId: representativeFace.id });
                 }}
                 disabled={!representativeFace}
-                className="w-full h-full relative group cursor-zoom-in disabled:cursor-default"
+                className="group relative h-full w-full cursor-zoom-in disabled:cursor-default focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-outer"
                 title={representativeFace ? "预览原始照片" : "无可预览原图"}
                 aria-label={representativeFace ? "预览代表头像对应原图" : "无可预览原图"}
               >
@@ -479,25 +535,25 @@ export function PersonDetailPanel({
                 />
                 {representativeFace && (
                   <div className="absolute inset-0 bg-black/0 group-hover:bg-black/25 transition-colors flex items-center justify-center">
-                    <ZoomIn className="w-4 h-4 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
+                    <ZoomIn className="h-4 w-4 text-white opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100" aria-hidden="true" />
                   </div>
                 )}
               </button>
             ) : (
               <div className="w-full h-full flex items-center justify-center text-mute">
-                <UserRound className="w-8 h-8" />
+                <UserRound className="h-8 w-8" aria-hidden="true" />
               </div>
             )}
           </div>
           <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2 flex-wrap">
-              <h2 className="text-heading-md font-semibold text-ink">{detail.display_name}</h2>
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="text-heading-lg font-semibold text-ink">{detail.display_name}</h2>
               <span
                 className={[
-                  "px-2 py-0.5 rounded-full text-caption-sm",
+                  "rounded-full px-2 py-0.5 text-caption-sm font-medium",
                   detail.is_named
-                    ? "bg-emerald-100 text-emerald-800"
-                    : "bg-secondary-bg text-mute",
+                    ? "bg-success/10 text-success"
+                    : "bg-secondary-bg text-secondary",
                 ].join(" ")}
               >
                 {detail.is_named ? "已命名人物" : "系统人物"}
@@ -516,26 +572,28 @@ export function PersonDetailPanel({
               </div>
             )}
             <p className="mt-1 text-caption-sm text-mute">
-              created by {detail.created_by} · 最近更新 {formatDateTime(detail.updated_at)}
+              {detail.created_by === "system_cluster" ? "系统聚类创建" : `创建者 ${detail.created_by}`} · 更新于 {formatDateTime(detail.updated_at)}
             </p>
 
             <form
-              className="mt-3 flex items-center gap-2"
+              className="mt-3 flex flex-wrap items-center gap-2"
               onSubmit={(e) => {
                 e.preventDefault();
                 onRename(renameValue);
               }}
             >
+              <label className="sr-only" htmlFor="person-display-name">人物名称</label>
               <input
+                id="person-display-name"
                 value={renameValue}
                 onChange={(e) => setRenameValue(e.target.value)}
-                className="w-full max-w-xs px-3 py-1.5 rounded-md border border-hairline bg-canvas text-body-sm"
+                className="min-h-11 w-full max-w-sm rounded-md border border-hairline bg-canvas px-3 text-body-sm text-ink focus:outline-none focus:ring-2 focus:ring-focus-outer"
                 placeholder="输入人物名称，可追加 #标签"
               />
               <button
                 type="submit"
                 disabled={actionBusy || !renameValue.trim()}
-                className="px-3 py-1.5 rounded-md border border-hairline text-body-sm text-ink hover:bg-surface-card disabled:opacity-50"
+                className="min-h-11 rounded-md border border-hairline px-3 text-btn-sm font-medium text-ink hover:bg-surface-card disabled:opacity-50"
               >
                 重命名
               </button>
@@ -551,47 +609,50 @@ export function PersonDetailPanel({
                   detail.confirmed_sample_count === 0
                 }
                 onClick={onRematchPersonFaces}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-hairline text-body-sm text-ink hover:bg-surface-card disabled:opacity-50"
+                className="inline-flex min-h-11 items-center gap-2 rounded-md border border-hairline px-3 text-btn-sm font-medium text-ink hover:bg-surface-card disabled:opacity-50"
                 title={
                   detail.is_named && detail.confirmed_sample_count > 0
                     ? "从已有扫描人脸中查找相似候选，并追加到候选样本"
                     : "需要已命名人物和至少一张正样本"
                 }
               >
-                <RefreshCw className={["w-3.5 h-3.5", rematchBusy ? "animate-spin" : ""].join(" ")} />
+                <RefreshCw className={["h-4 w-4", rematchBusy ? "animate-spin motion-reduce:animate-none" : ""].join(" ")} aria-hidden="true" />
                 {rematchBusy ? "聚合候选中..." : "从已扫描人脸找相似候选"}
               </button>
-              <span className="text-caption-sm text-mute">
-                命中的相似人脸会追加到当前详情页的候选样本。
-              </span>
+              <span className="text-caption-sm text-mute">结果将加入候选样本</span>
             </div>
           </div>
         </div>
 
-        <div className="mt-4 grid grid-cols-2 md:grid-cols-6 gap-3">
-          <AssignmentChip label="总样本" value={detail.sample_count} />
-          <AssignmentChip label="正样本" value={confirmed} />
-          <AssignmentChip label="候选" value={candidateAssignments.length} />
-          <AssignmentChip label="负样本" value={negativeAssignments.length} />
-          <AssignmentChip label="自动识别" value={autoAssigned} />
-          <AssignmentChip label="待确认" value={reviewPending} />
+        <div className="mt-4">
+          <AssignmentOverview
+            total={detail.sample_count}
+            positive={confirmed}
+            candidate={candidateAssignments.length}
+            negative={negativeAssignments.length}
+            autoAssigned={autoAssigned}
+            reviewPending={reviewPending}
+          />
         </div>
       </div>
 
-      <div className="px-6 py-5 space-y-4">
+      <div className="space-y-5 p-4 sm:p-5">
         {reviewFaceIds.length > 0 && (
-          <div className="sticky top-3 z-10 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 shadow-sm">
-            <div className="flex items-center justify-between gap-3 flex-wrap">
-              <div>
-                <h3 className="text-body-sm font-semibold text-amber-900">Review Pending 快速处理</h3>
-                <p className="text-caption-sm text-amber-800 mt-1">
-                  当前人物仍有 {reviewFaceIds.length} 张 review_pending 人脸，可批量排除或移动。
+          <aside className="rounded-lg border border-warning/40 bg-warning/10 p-3" aria-labelledby="review-pending-title">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex min-w-0 items-start gap-2">
+                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-warning" aria-hidden="true" />
+                <div>
+                <h3 id="review-pending-title" className="text-body-sm font-semibold text-ink">待确认人脸</h3>
+                <p className="mt-0.5 text-caption-sm text-secondary">
+                  当前人物仍有 {reviewFaceIds.length} 张待确认人脸，可批量排除或移动。
                 </p>
+                </div>
               </div>
-              <div className="flex items-center gap-2 flex-wrap">
+              <div className="flex flex-wrap items-center gap-2">
                 <Link
                   to={`/projects/${projectId}/people/review?person_id=${detail.id}`}
-                  className="px-2.5 py-1 rounded-md border border-amber-300 bg-canvas text-caption-sm text-ink hover:bg-white"
+                  className="inline-flex min-h-11 items-center rounded-md bg-primary px-3 text-btn-sm font-semibold text-white hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-outer"
                 >
                   去 Review 页逐张审核
                 </Link>
@@ -599,16 +660,17 @@ export function PersonDetailPanel({
                   type="button"
                   disabled={actionBusy}
                   onClick={() => onBatchRejectReview(reviewFaceIds)}
-                  className="px-2.5 py-1 rounded-md border border-hairline text-caption-sm text-ink hover:bg-canvas disabled:opacity-50"
+                  className="min-h-11 rounded-md border border-hairline bg-canvas px-3 text-btn-sm font-medium text-ink hover:bg-surface-card disabled:opacity-50"
                 >
-                  排除 review_pending
+                  排除待确认人脸
                 </button>
                 {reviewFaceIds.length > 0 && moveCandidates.length > 0 && batchMoveTargetId != null && (
                   <>
                     <select
                       value={batchMoveTargetId}
                       onChange={(e) => setBatchMoveTargetId(Number(e.target.value))}
-                      className="px-2 py-1 rounded-md border border-hairline bg-canvas text-caption-sm"
+                      aria-label="待确认人脸批量移动目标"
+                      className="min-h-11 rounded-md border border-hairline bg-canvas px-3 text-body-sm text-ink"
                     >
                       {moveCandidates.map((candidate) => (
                         <option key={candidate.id} value={candidate.id}>
@@ -620,7 +682,7 @@ export function PersonDetailPanel({
                       type="button"
                       disabled={actionBusy}
                       onClick={() => onBatchMoveReview(reviewFaceIds, batchMoveTargetId)}
-                      className="px-2.5 py-1 rounded-md border border-hairline text-caption-sm text-ink hover:bg-canvas disabled:opacity-50"
+                      className="min-h-11 rounded-md border border-hairline bg-canvas px-3 text-btn-sm font-medium text-ink hover:bg-surface-card disabled:opacity-50"
                     >
                       批量移动
                     </button>
@@ -628,15 +690,13 @@ export function PersonDetailPanel({
                 )}
               </div>
             </div>
-          </div>
+          </aside>
         )}
 
         <div className="flex items-center justify-between gap-3">
           <div>
             <h3 className="text-body-sm font-semibold text-ink">关联人脸</h3>
-            <p className="text-caption-sm text-mute mt-1">
-              当前支持人物命名、确认、排除、移动和代表头像设置。
-            </p>
+            <p className="mt-1 text-caption-sm text-mute">确认归属，整理这个人物的人脸样本。</p>
           </div>
           <span className="text-caption-sm text-mute">
             已加载 {loadedAssignmentCount} / {totalAssignmentCount} 条
@@ -649,32 +709,31 @@ export function PersonDetailPanel({
           </div>
         ) : (
           <>
-            <div className="rounded-lg border border-hairline bg-canvas px-4 py-3">
-              <div className="flex items-center justify-between gap-3 flex-wrap">
-                <div>
-                  <p className="text-body-sm font-medium text-ink">拆分人物</p>
-                  <p className="text-caption-sm text-mute mt-1">
-                    仅可选择 active 样本（非 rejected）拆分到新人物。
-                  </p>
-                </div>
-                <div className="flex items-center gap-2 flex-wrap">
+            <details className="group rounded-lg border border-hairline bg-canvas">
+              <summary className="flex min-h-12 cursor-pointer list-none items-center justify-between gap-3 px-4 text-body-sm font-medium text-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-outer [&::-webkit-details-marker]:hidden">
+                <span>拆分人物 <span className="ml-1 text-caption-sm text-mute">已选 {splitFaceIds.length} 张</span></span>
+                <ChevronDown className="h-4 w-4 transition-transform group-open:rotate-180 motion-reduce:transition-none" aria-hidden="true" />
+              </summary>
+              <div className="flex flex-wrap items-end justify-between gap-3 border-t border-hairline p-4">
+                <p className="max-w-xl text-caption-sm text-mute">勾选非 rejected 样本，将其拆分到一个新人物。</p>
+                <div className="flex flex-wrap items-center gap-2">
                   <input
                     value={splitName}
                     onChange={(e) => setSplitName(e.target.value)}
-                    className="px-3 py-1.5 rounded-md border border-hairline bg-canvas text-caption-sm"
+                    className="min-h-11 rounded-md border border-hairline bg-canvas px-3 text-body-sm text-ink"
                     placeholder="新人物名称（可选）"
                   />
                   <button
                     type="button"
                     disabled={actionBusy || splitFaceIds.length === 0}
                     onClick={() => onSplitFaces(splitFaceIds, splitName.trim() || undefined)}
-                    className="px-2.5 py-1 rounded-md border border-hairline text-caption-sm text-ink hover:bg-surface-card disabled:opacity-50"
+                    className="min-h-11 rounded-md border border-hairline px-3 text-btn-sm font-medium text-ink hover:bg-surface-card disabled:opacity-50"
                   >
                     拆分选中 {splitFaceIds.length} 张
                   </button>
                 </div>
               </div>
-            </div>
+            </details>
 
             <section className="space-y-2">
               <div className="flex items-center justify-between">
@@ -702,7 +761,7 @@ export function PersonDetailPanel({
                       type="button"
                       disabled={actionBusy}
                       onClick={() => onBatchConfirmReview(allConfirmableCandidateFaceIds)}
-                      className="px-2.5 py-1 rounded-md border border-hairline text-caption-sm text-ink hover:bg-canvas disabled:opacity-50"
+                      className="min-h-11 rounded-md border border-hairline px-3 text-caption-sm font-medium text-ink hover:bg-canvas focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-outer disabled:opacity-50"
                     >
                       全部确认候选
                     </button>
@@ -717,13 +776,13 @@ export function PersonDetailPanel({
                 <>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     <div className="rounded-lg border border-hairline bg-canvas px-3 py-2">
-                      <p className="text-caption-sm text-mute">review_pending</p>
+                      <p className="text-caption-sm text-mute">待确认</p>
                       <p className="text-body-sm font-semibold text-ink mt-0.5">
                         {candidateReviewPendingAssignments.length}
                       </p>
                     </div>
                     <div className="rounded-lg border border-hairline bg-canvas px-3 py-2">
-                      <p className="text-caption-sm text-mute">auto_assigned</p>
+                      <p className="text-caption-sm text-mute">自动识别</p>
                       <p className="text-body-sm font-semibold text-ink mt-0.5">
                         {candidateAutoAssignedAssignments.length}
                       </p>
@@ -738,19 +797,19 @@ export function PersonDetailPanel({
                       </div>
                       <div className="grid grid-cols-3 gap-2">
                         <div className="rounded-md border border-hairline px-2 py-1.5 text-center">
-                          <p className="text-caption-sm text-mute">top</p>
+                          <p className="text-caption-sm text-mute">最高</p>
                           <p className="text-body-sm font-semibold text-ink">
                             {(similarityDistribution.top * 100).toFixed(1)}%
                           </p>
                         </div>
                         <div className="rounded-md border border-hairline px-2 py-1.5 text-center">
-                          <p className="text-caption-sm text-mute">median</p>
+                          <p className="text-caption-sm text-mute">中位数</p>
                           <p className="text-body-sm font-semibold text-ink">
                             {(similarityDistribution.median * 100).toFixed(1)}%
                           </p>
                         </div>
                         <div className="rounded-md border border-hairline px-2 py-1.5 text-center">
-                          <p className="text-caption-sm text-mute">bottom</p>
+                          <p className="text-caption-sm text-mute">最低</p>
                           <p className="text-body-sm font-semibold text-ink">
                             {(similarityDistribution.bottom * 100).toFixed(1)}%
                           </p>
@@ -762,14 +821,14 @@ export function PersonDetailPanel({
                   <div className="space-y-3">
                     <div>
                       <div className="flex items-center justify-between mb-2">
-                        <h5 className="text-caption-sm font-semibold text-ink">Review Pending</h5>
+                        <h5 className="text-caption-sm font-semibold text-ink">待确认</h5>
                         <span className="text-caption-sm text-mute">
                           {candidateReviewPendingAssignments.length} 条
                         </span>
                       </div>
                       {candidateReviewPendingAssignments.length === 0 ? (
                         <div className="rounded-lg border border-dashed border-hairline px-4 py-3 text-caption-sm text-mute">
-                          暂无 review_pending 候选
+                          暂无待确认候选
                         </div>
                       ) : (
                         <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
@@ -780,7 +839,7 @@ export function PersonDetailPanel({
 
                     <div>
                       <div className="flex items-center justify-between mb-2">
-                        <h5 className="text-caption-sm font-semibold text-ink">Auto Assigned</h5>
+                        <h5 className="text-caption-sm font-semibold text-ink">自动识别</h5>
                         <div className="flex items-center gap-2">
                           <span className="text-caption-sm text-mute">
                             {candidateAutoAssignedAssignments.length} 条
@@ -789,7 +848,7 @@ export function PersonDetailPanel({
                       </div>
                       {candidateAutoAssignedAssignments.length === 0 ? (
                         <div className="rounded-lg border border-dashed border-hairline px-4 py-3 text-caption-sm text-mute">
-                          暂无 auto_assigned 候选
+                          暂无自动识别候选
                         </div>
                       ) : (
                         <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
@@ -801,9 +860,7 @@ export function PersonDetailPanel({
                     {candidateOtherAssignments.length > 0 && (
                       <div>
                         <div className="flex items-center justify-between mb-2">
-                          <h5 className="text-caption-sm font-semibold text-ink">
-                            Other Candidate Status
-                          </h5>
+                          <h5 className="text-caption-sm font-semibold text-ink">其他候选</h5>
                           <span className="text-caption-sm text-mute">
                             {candidateOtherAssignments.length} 条
                           </span>
@@ -840,7 +897,7 @@ export function PersonDetailPanel({
                   type="button"
                   disabled={isFetching}
                   onClick={onLoadMoreAssignments}
-                  className="px-3 py-1.5 rounded-md border border-hairline text-caption-sm text-ink hover:bg-surface-card disabled:opacity-50"
+                  className="min-h-11 rounded-md border border-hairline px-4 text-caption-sm font-medium text-ink hover:bg-surface-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-outer disabled:opacity-50"
                 >
                   {isFetching ? "正在加载更多..." : "加载更多人脸"}
                 </button>

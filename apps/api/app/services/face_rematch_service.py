@@ -18,6 +18,7 @@ from .people_assignment_constants import (
 from .people_learning_service import (
     _has_people_learning_tables,
     _refresh_person_counters,
+    build_person_search_profile,
     match_face_detection_to_person,
 )
 from .project_face_settings_service import get_or_create_project_face_settings
@@ -55,6 +56,24 @@ def rematch_unknown_faces(
         )
 
     settings = get_or_create_project_face_settings(db, project_id)
+    target_search_profile = None
+    if scope == "person":
+        if person_id is None:
+            raise ValueError("person_id is required when scope=person")
+        target_search_profile = build_person_search_profile(
+            db,
+            project_id=project_id,
+            person_id=int(person_id),
+        )
+        if target_search_profile is None:
+            return FaceRematchUnknownResult(
+                project_id=project_id,
+                faces_considered=0,
+                matched_faces=0,
+                auto_assigned=0,
+                review_pending=0,
+                skipped_reason="missing_target_search_profile",
+            )
 
     query = (
         db.query(FaceDetection.id)
@@ -154,7 +173,8 @@ def rematch_unknown_faces(
             project_id=project_id,
             face_detection_id=face_id,
             target_person_id=person_id if scope == "person" else None,
-            force_auto_assigned=scope == "person",
+            target_search_profile=target_search_profile,
+            force_review_pending=scope == "person",
             assignment_source=(
                 "targeted_person_rematch" if scope == "person" else "similarity_match"
             ),
@@ -162,26 +182,27 @@ def rematch_unknown_faces(
         if decision is None:
             continue
 
-        active_assignments = (
-            db.query(PersonFaceAssignment)
-            .filter(
-                PersonFaceAssignment.project_id == project_id,
-                PersonFaceAssignment.face_detection_id == face_id,
-                PersonFaceAssignment.person_id != decision.person_id,
-                PersonFaceAssignment.assignment_status != STATUS_REJECTED,
+        if scope != "person":
+            active_assignments = (
+                db.query(PersonFaceAssignment)
+                .filter(
+                    PersonFaceAssignment.project_id == project_id,
+                    PersonFaceAssignment.face_detection_id == face_id,
+                    PersonFaceAssignment.person_id != decision.person_id,
+                    PersonFaceAssignment.assignment_status != STATUS_REJECTED,
+                )
+                .all()
             )
-            .all()
-        )
-        for assignment in active_assignments:
-            if assignment.assignment_status in {STATUS_HUMAN_CONFIRMED, STATUS_HUMAN_CORRECTED}:
-                continue
-            assignment.assignment_status = STATUS_REJECTED
-            assignment.assignment_source = "prototype_rematch"
-            assignment.is_positive_sample = False
-            assignment.is_training_candidate = False
-            touched_person_ids.add(int(assignment.person_id))
-        for touched_person_id in touched_person_ids:
-            _refresh_person_counters(db, project_id=project_id, person_id=touched_person_id)
+            for assignment in active_assignments:
+                if assignment.assignment_status in {STATUS_HUMAN_CONFIRMED, STATUS_HUMAN_CORRECTED}:
+                    continue
+                assignment.assignment_status = STATUS_REJECTED
+                assignment.assignment_source = "prototype_rematch"
+                assignment.is_positive_sample = False
+                assignment.is_training_candidate = False
+                touched_person_ids.add(int(assignment.person_id))
+            for touched_person_id in touched_person_ids:
+                _refresh_person_counters(db, project_id=project_id, person_id=touched_person_id)
 
         matched_faces += 1
         if decision.assignment_status == STATUS_AUTO_ASSIGNED:

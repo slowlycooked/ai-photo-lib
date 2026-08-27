@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Navigate } from "react-router-dom";
 import { PeopleHeader } from "@/components/people/PeopleHeader";
 import { PeopleSidebar } from "@/components/people/PeopleSidebar";
@@ -6,6 +7,7 @@ import { PersonDetailPanel } from "@/components/people/PersonDetailPanel";
 import { usePeoplePage } from "@/hooks/usePeoplePage";
 
 export function PeoplePage() {
+  const [mobilePane, setMobilePane] = useState<"list" | "detail">("list");
   const {
     currentProject,
     selectedProjectId,
@@ -41,6 +43,8 @@ export function PeoplePage() {
     setSelectedPersonId,
     setMergeTargetId,
     toggleSelectPerson,
+    selectVisiblePeople,
+    clearSelectedPeople,
     archivePerson,
     archiveSelectedPerson,
     archiveSelectedPeople,
@@ -81,7 +85,7 @@ export function PeoplePage() {
   }
 
   return (
-    <main className="max-w-[1440px] mx-auto px-4 sm:px-6 py-6 space-y-6">
+    <main className="mx-auto max-w-[1440px] space-y-4 px-4 py-5 sm:px-6">
       <PeopleHeader
         projectId={selectedProjectId}
         projectName={
@@ -115,26 +119,69 @@ export function PeoplePage() {
         }}
       />
 
-      <div className="grid grid-cols-1 gap-5 lg:h-[calc(100vh-260px)] lg:min-h-[560px] lg:grid-cols-[360px_minmax(0,1fr)] lg:overflow-hidden">
-        <PeopleSidebar
-          projectId={selectedProjectId}
-          faceCropEnabled={faceCropEnabled}
-          people={people}
-          archivedPeople={archivedPeople}
-          manualArchivedPersonIds={manualArchivedPersonIds}
-          selectedPersonIds={selectedPersonIds}
-          peopleLoading={peopleLoading}
-          peopleError={peopleError as Error | null}
-          selectedPersonId={resolvedSelectedPersonId}
-          actionBusy={actionBusy}
-          onSelectPerson={setSelectedPersonId}
-          onToggleSelectPerson={toggleSelectPerson}
-          onArchivePerson={archivePerson}
-          onDeletePerson={deletePerson}
-          onUnarchivePerson={unarchivePerson}
-        />
+      <nav
+        className="grid grid-cols-2 gap-1 rounded-lg border border-hairline bg-surface-soft p-1 lg:hidden"
+        aria-label="人物页面视图"
+      >
+        <button
+          type="button"
+          aria-pressed={mobilePane === "list"}
+          aria-controls="people-list-pane"
+          onClick={() => setMobilePane("list")}
+          className={[
+            "min-h-11 rounded-md px-3 text-btn-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-outer motion-reduce:transition-none",
+            mobilePane === "list" ? "bg-canvas text-ink shadow-sm" : "text-mute hover:text-ink",
+          ].join(" ")}
+        >
+          人物列表
+        </button>
+        <button
+          type="button"
+          aria-pressed={mobilePane === "detail"}
+          aria-controls="person-detail-pane"
+          onClick={() => setMobilePane("detail")}
+          className={[
+            "min-h-11 rounded-md px-3 text-btn-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-outer motion-reduce:transition-none",
+            mobilePane === "detail" ? "bg-canvas text-ink shadow-sm" : "text-mute hover:text-ink",
+          ].join(" ")}
+        >
+          人物详情
+        </button>
+      </nav>
 
-        <section className="min-h-0 lg:overflow-y-auto lg:overscroll-contain lg:pr-1">
+      <div className="grid grid-cols-1 gap-4 lg:h-[calc(100dvh-330px)] lg:min-h-[520px] lg:grid-cols-[340px_minmax(0,1fr)] lg:overflow-hidden">
+        <div id="people-list-pane" className={mobilePane === "list" ? "min-h-0" : "hidden min-h-0 lg:block"}>
+          <PeopleSidebar
+            projectId={selectedProjectId}
+            faceCropEnabled={faceCropEnabled}
+            people={people}
+            archivedPeople={archivedPeople}
+            manualArchivedPersonIds={manualArchivedPersonIds}
+            selectedPersonIds={selectedPersonIds}
+            peopleLoading={peopleLoading}
+            peopleError={peopleError as Error | null}
+            selectedPersonId={resolvedSelectedPersonId}
+            actionBusy={actionBusy}
+            onSelectPerson={(personId) => {
+              setSelectedPersonId(personId);
+              setMobilePane("detail");
+            }}
+            onToggleSelectPerson={toggleSelectPerson}
+            onSelectAllPeople={selectVisiblePeople}
+            onClearSelectedPeople={clearSelectedPeople}
+            onArchivePerson={archivePerson}
+            onDeletePerson={deletePerson}
+            onUnarchivePerson={unarchivePerson}
+          />
+        </div>
+
+        <section
+          id="person-detail-pane"
+          className={[
+            "min-h-0 lg:overflow-y-auto lg:overscroll-contain lg:pr-1",
+            mobilePane === "detail" ? "" : "hidden lg:block",
+          ].join(" ")}
+        >
           <PersonDetailPanel
             projectId={selectedProjectId}
             faceCropEnabled={faceCropEnabled}

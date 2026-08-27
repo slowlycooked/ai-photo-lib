@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { Calendar, ImageIcon, MapPin, ZoomIn } from "lucide-react";
+import { Link } from "react-router-dom";
+import { Calendar, FolderSearch, ImageIcon, MapPin, ZoomIn } from "lucide-react";
 import type { SearchResultItem } from "@/api/types";
 import { formatLocationAddress, formatLocationSummary } from "@/lib/utils";
 
@@ -86,6 +87,14 @@ export function SearchCard({ item, debug, onPreview }: SearchCardProps) {
           )}
 
           <p className="text-caption-sm text-ash truncate">{item.file_name}</p>
+          <Link
+            to={`/photos?photo_id=${item.photo_id}`}
+            aria-label={`在原文件夹中查看 ${item.file_name}`}
+            className="inline-flex items-center gap-1.5 text-caption-sm font-semibold text-primary hover:text-primary-pressed"
+          >
+            <FolderSearch className="h-3.5 w-3.5" />
+            查看原文件夹
+          </Link>
           {item.face_count != null && item.face_count > 0 && (
             <p className="text-caption-sm text-mute">人脸 {item.face_count}</p>
           )}

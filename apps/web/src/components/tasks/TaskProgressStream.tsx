@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { AlertCircle, CheckCircle2, Loader2 } from "lucide-react";
+import { Activity, AlertCircle, CheckCircle2, Loader2 } from "lucide-react";
 
 import { api } from "@/api";
 
@@ -17,6 +17,13 @@ const STATUS_CLASS: Record<JobStatus, string> = {
   running: "text-primary",
   success: "text-green-700",
   failed: "text-danger",
+};
+
+const STATUS_DOT_CLASS: Record<JobStatus, string> = {
+  queued: "bg-stone",
+  running: "bg-primary",
+  success: "bg-green-700",
+  failed: "bg-danger",
 };
 
 function asJobStatus(value: string): JobStatus {
@@ -58,52 +65,75 @@ export function TaskProgressStream({
     );
   }
 
-  const items = (data?.items ?? []).slice(0, 15);
+  const items = (data?.items ?? []).slice(0, 6);
   if (items.length === 0) return null;
+  const hasActive = items.some((item) => item.status === "queued" || item.status === "running");
 
   return (
-    <section className="space-y-2">
-      <div className="flex items-center gap-2">
-        <Loader2 className="w-4 h-4 text-primary" />
-        <h3 className="text-body-sm font-semibold text-ink">{title}</h3>
-        <span className="text-caption-sm text-mute">最近 {items.length} 条</span>
+    <section className="rounded-md border border-hairline bg-canvas p-4" aria-label={title}>
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <Activity className="h-4 w-4 text-primary" aria-hidden="true" />
+          <h3 className="text-body-sm font-semibold text-ink">实时活动</h3>
+        </div>
+        {hasActive ? (
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-primary/5 px-2 py-1 text-caption-sm font-medium text-primary">
+            <span className="h-1.5 w-1.5 rounded-full bg-primary" aria-hidden="true" />
+            LIVE
+          </span>
+        ) : (
+          <span className="text-caption-sm text-mute">最近 {items.length} 条</span>
+        )}
       </div>
-      <div className="space-y-1.5 max-h-72 overflow-auto pr-1">
-        {items.map((job) => {
+
+      <ol className="mt-4 space-y-0">
+        {items.map((job, index) => {
           const status = asJobStatus(job.status);
           const fileName = job.file_name ?? `photo#${job.photo_id}`;
           return (
-            <div
+            <li
               key={job.id}
-              className="bg-canvas border border-hairline rounded-md px-4 py-2.5 space-y-0.5"
+              className="relative grid grid-cols-[12px_minmax(0,1fr)] gap-3 pb-4 last:pb-0"
             >
-              <div className="flex items-center justify-between gap-2">
-                <p className="text-body-sm text-ink truncate" title={fileName}>
-                  {fileName}
-                </p>
-                <span className={`text-caption-sm font-medium whitespace-nowrap ${STATUS_CLASS[status]}`}>
-                  {STATUS_LABEL[status]}
-                </span>
+              <div className="relative flex justify-center">
+                <span
+                  className={`relative z-10 mt-1 h-2.5 w-2.5 rounded-full ${STATUS_DOT_CLASS[status]}`}
+                  aria-hidden="true"
+                />
+                {index < items.length - 1 && (
+                  <span className="absolute bottom-0 top-3 w-px bg-hairline" aria-hidden="true" />
+                )}
               </div>
-              <p className="text-caption-sm text-mute">job#{job.id} · retry={job.retry_count}</p>
-              {status === "failed" && job.error_message && (
-                <div className="flex items-start gap-2 pt-0.5">
-                  <AlertCircle className="w-3.5 h-3.5 text-danger shrink-0 mt-0.5" />
-                  <p className="text-caption-sm text-danger whitespace-pre-wrap break-all">
-                    {job.error_message}
-                  </p>
+
+              <div className="min-w-0">
+                <div className="flex items-start justify-between gap-2">
+                  <p className="min-w-0 break-words text-body-sm font-medium text-ink">{fileName}</p>
+                  <span className={`shrink-0 text-caption-sm font-medium ${STATUS_CLASS[status]}`}>
+                    {STATUS_LABEL[status]}
+                  </span>
                 </div>
-              )}
-              {status === "success" && (
-                <div className="flex items-center gap-1.5 pt-0.5">
-                  <CheckCircle2 className="w-3.5 h-3.5 text-green-700" />
-                  <p className="text-caption-sm text-green-700">处理完成</p>
-                </div>
-              )}
-            </div>
+                <p className="text-caption-sm tabular-nums text-mute">
+                  #{job.id}{job.retry_count > 0 ? ` · 重试 ${job.retry_count}` : ""}
+                </p>
+                {status === "failed" && job.error_message && (
+                  <div className="mt-1 flex items-start gap-1.5 rounded-sm bg-red-50 px-2 py-1.5">
+                    <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-danger" aria-hidden="true" />
+                    <p className="text-caption-sm text-danger whitespace-pre-wrap break-words">
+                      {job.error_message}
+                    </p>
+                  </div>
+                )}
+                {status === "success" && (
+                  <div className="mt-1 flex items-center gap-1.5 text-caption-sm text-green-700">
+                    <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />
+                    <span>处理完成</span>
+                  </div>
+                )}
+              </div>
+            </li>
           );
         })}
-      </div>
+      </ol>
     </section>
   );
 }

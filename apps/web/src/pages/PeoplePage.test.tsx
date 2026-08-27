@@ -403,6 +403,22 @@ describe("PeoplePage", () => {
     await waitFor(() => {
       expect(personMock).toHaveBeenCalledWith(1, 101, 40);
     });
+    expect(
+      await screen.findByRole("img", { name: "样本结构：正样本 0，候选 1，负样本 0" }),
+    ).toBeInTheDocument();
+  });
+
+  it("switches between list and detail views on compact layouts", async () => {
+    const user = userEvent.setup();
+    renderPage("/projects/1/people");
+
+    await screen.findByText("爸爸");
+    const listView = screen.getByRole("button", { name: "人物列表" });
+    const detailView = screen.getByRole("button", { name: "人物详情" });
+
+    expect(listView).toHaveAttribute("aria-pressed", "true");
+    await user.click(detailView);
+    expect(detailView).toHaveAttribute("aria-pressed", "true");
   });
 
   it("passes filter and search text to the people query", async () => {
@@ -469,6 +485,56 @@ describe("PeoplePage", () => {
         max_faces: 10000,
       });
     });
+  });
+
+  it("shows a recovery message when targeted rematch has no usable face profile", async () => {
+    const user = userEvent.setup();
+    rematchUnknownStatusMock
+      .mockResolvedValueOnce({
+        project_id: 1,
+        task_id: null,
+        status: "idle",
+        running: false,
+        max_faces: 10000,
+        scope: "person",
+        person_id: 101,
+        start_time: null,
+        end_time: null,
+        faces_considered: 0,
+        matched_faces: 0,
+        auto_assigned: 0,
+        review_pending: 0,
+        skipped_reason: null,
+        errors: 0,
+        recent_errors: [],
+        message: "idle",
+      })
+      .mockResolvedValue({
+        project_id: 1,
+        task_id: 3001,
+        status: "success",
+        running: false,
+        max_faces: 10000,
+        scope: "person",
+        person_id: 101,
+        start_time: null,
+        end_time: null,
+        faces_considered: 0,
+        matched_faces: 0,
+        auto_assigned: 0,
+        review_pending: 0,
+        skipped_reason: "missing_target_search_profile",
+        errors: 0,
+        recent_errors: [],
+        message: "This person has no usable confirmed face embedding.",
+      });
+    renderPage("/projects/1/people");
+
+    await user.click(await screen.findByRole("button", { name: "从已扫描人脸找相似候选" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "无法查找相似候选：该人物没有可用的已确认人脸向量。请先确认一张已完成人脸扫描的照片后重试。",
+    );
   });
 
   it("targets and tracks rematch status for a non-first person", async () => {
@@ -599,7 +665,7 @@ describe("PeoplePage", () => {
 
     const reviewLink = await screen.findByRole("link", { name: "去 Review 页逐张审核" });
     expect(reviewLink).toHaveAttribute("href", "/projects/1/people/review?person_id=101");
-    expect(screen.getByText(/当前人物仍有 1 张 review_pending 人脸/)).toBeInTheDocument();
+    expect(screen.getByText(/当前人物仍有 1 张待确认人脸/)).toBeInTheDocument();
   });
 
   it("falls back to a valid merge target when the URL target is missing or invalid", async () => {
@@ -607,6 +673,7 @@ describe("PeoplePage", () => {
     renderPage("/projects/1/people?person_id=101&merge_target_id=0");
 
     await screen.findByText("爸爸");
+    await user.click(screen.getByText("管理当前人物"));
     await user.click(screen.getByRole("button", { name: "合并当前人物" }));
 
     await waitFor(() => {
@@ -712,6 +779,7 @@ describe("PeoplePage", () => {
     renderPage("/projects/1/people?person_id=101");
 
     await screen.findByText("爸爸");
+    await user.click(screen.getByText("管理当前人物"));
     await user.click(screen.getByRole("button", { name: "加入 archive" }));
 
     await waitFor(() => {
@@ -725,7 +793,7 @@ describe("PeoplePage", () => {
     await user.click(screen.getByRole("button", { name: "恢复管理" }));
 
     await waitFor(() => {
-      expect(screen.getByText("爸爸")).toBeInTheDocument();
+      expect(screen.getAllByText("爸爸").length).toBeGreaterThan(0);
     });
   });
 
@@ -767,7 +835,9 @@ describe("PeoplePage", () => {
     renderPage("/projects/1/people?person_id=101");
 
     await screen.findByText("爸爸");
-    await user.click(screen.getByRole("checkbox", { name: "选择人物 爸爸" }));
+    const dadCheckbox = screen.getByRole("checkbox", { name: "选择人物 爸爸" });
+    expect(dadCheckbox.closest("label")).not.toHaveClass("absolute");
+    await user.click(dadCheckbox);
     await user.click(screen.getByRole("checkbox", { name: "选择人物 妈妈" }));
     await user.click(screen.getByRole("button", { name: "批量加入 archive（2）" }));
 
@@ -783,5 +853,21 @@ describe("PeoplePage", () => {
     await waitFor(() => {
       expect(personMock).toHaveBeenCalledWith(1, 102, 40);
     });
+  });
+
+  it("selects all visible people and clears the selection", async () => {
+    const user = userEvent.setup();
+    renderPage("/projects/1/people");
+
+    await screen.findByText("爸爸");
+    await user.click(screen.getByRole("button", { name: "全选当前结果" }));
+
+    expect(screen.getByRole("checkbox", { name: "选择人物 爸爸" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "选择人物 人物 2" })).toBeChecked();
+    expect(screen.getByRole("status")).toHaveTextContent("已选择 2 人");
+
+    await user.click(screen.getByRole("button", { name: "清空人物选择" }));
+    expect(screen.getByRole("checkbox", { name: "选择人物 爸爸" })).not.toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "选择人物 人物 2" })).not.toBeChecked();
   });
 });

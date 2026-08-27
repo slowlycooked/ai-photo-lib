@@ -214,6 +214,14 @@ describe("PhotoQuarantinePage", () => {
     expect(await screen.findByText("照片已安全放回原位置，并记为应保留")).toBeInTheDocument();
   });
 
+  it("links a review item back to its original folder context", async () => {
+    renderPage();
+
+    expect(
+      await screen.findByRole("link", { name: "查看照片 70 的原文件夹" }),
+    ).toHaveAttribute("href", "/photos?photo_id=70");
+  });
+
   it("uses the server batch endpoint for selected restores", async () => {
     const user = userEvent.setup();
     renderPage();

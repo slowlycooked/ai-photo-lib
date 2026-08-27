@@ -105,6 +105,18 @@ export interface PhotoListResponse {
   has_more?: boolean | null;
 }
 
+export interface PhotoLocationResponse {
+  project_id: number;
+  photo_id: number;
+  folder_id: number | null;
+  folder_path: string | null;
+  page: number;
+  page_size: number;
+  position: number;
+  total: number;
+  is_browsable: boolean;
+}
+
 export interface PhotoDeleteResponse {
   project_id: number;
   photo_id: number;

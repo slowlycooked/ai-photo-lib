@@ -1,8 +1,10 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { MemoryRouter } from "react-router-dom";
 import { getLatestObserverCallback, intersectingEntry, stubIntersectionObserver } from "@/test/intersectionObserver";
 
 import { SearchResultGrid } from "./SearchResultGrid";
+import { SearchCard } from "./search/SearchCard";
 import type { SearchResultItem } from "@/api/types";
 
 const useSearchMock = vi.fn();
@@ -132,5 +134,32 @@ describe("SearchResultGrid", () => {
 
     callback!([intersectingEntry()], {} as IntersectionObserver);
     expect(fetchNextPage).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("SearchCard", () => {
+  it("links a result back to its photo-library location", () => {
+    const item = {
+      photo_id: 42,
+      file_name: "beach.jpg",
+      thumbnail_url: "/thumbnail.jpg",
+      updated_at: "2026-08-26T00:00:00Z",
+      taken_at: null,
+      width: 400,
+      height: 300,
+      caption: null,
+      matched_tags: [],
+      score: 1,
+    } satisfies SearchResultItem;
+
+    render(
+      <MemoryRouter>
+        <SearchCard item={item} />
+      </MemoryRouter>,
+    );
+
+    expect(
+      screen.getByRole("link", { name: "在原文件夹中查看 beach.jpg" }),
+    ).toHaveAttribute("href", "/photos?photo_id=42");
   });
 });

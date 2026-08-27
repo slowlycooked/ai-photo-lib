@@ -28,6 +28,19 @@ class PhotoCursorPage:
     has_more: bool
 
 
+@dataclass(frozen=True)
+class PhotoLocation:
+    project_id: int
+    photo_id: int
+    folder_id: Optional[int]
+    folder_path: Optional[str]
+    page: int
+    page_size: int
+    position: int
+    total: int
+    is_browsable: bool
+
+
 @dataclass
 class ProjectPhotosQueryService:
     db: Session
@@ -177,6 +190,57 @@ class ProjectPhotosQueryService:
             items=items,
             next_cursor=next_cursor,
             has_more=has_more,
+        )
+
+    def locate_photo(self, photo: Photo, *, page_size: int = 50) -> PhotoLocation:
+        """Locate a photo in the app's direct-folder browse order.
+
+        Quarantined photos are no longer part of the normal library query. For
+        those records, return the page where the photo used to sit so the UI can
+        still show its original neighbours.
+        """
+        page_size = max(1, min(page_size, 100))
+        base_query = self._base_query(
+            project_id=photo.project_id,
+            date_from=None,
+            date_to=None,
+            folder_id=None,
+            folder_scope="direct",
+        )
+        if photo.folder_id is not None:
+            base_query = base_query.filter(Photo.folder_id == photo.folder_id)
+
+        created_before = or_(
+            Photo.created_at > photo.created_at,
+            and_(Photo.created_at == photo.created_at, Photo.id > photo.id),
+        )
+        if photo.taken_at is None:
+            before_target = or_(
+                Photo.taken_at.is_not(None),
+                and_(Photo.taken_at.is_(None), created_before),
+            )
+        else:
+            before_target = or_(
+                Photo.taken_at > photo.taken_at,
+                and_(Photo.taken_at == photo.taken_at, created_before),
+            )
+
+        total = base_query.count()
+        before_count = base_query.filter(before_target).count()
+        position = before_count + 1
+        max_page = max(1, (total + page_size - 1) // page_size)
+        page = min(((position - 1) // page_size) + 1, max_page)
+
+        return PhotoLocation(
+            project_id=photo.project_id,
+            photo_id=photo.id,
+            folder_id=photo.folder_id,
+            folder_path=photo.folder_path,
+            page=page,
+            page_size=page_size,
+            position=position,
+            total=total,
+            is_browsable=photo.status != "quarantined",
         )
 
     @staticmethod

@@ -42,6 +42,7 @@ export type {
   PhotoBatchDeleteResponse,
   PhotoDetail,
   PhotoListResponse,
+  PhotoLocationResponse,
   PhotoQuarantineItem,
   PhotoQuarantineBatchAction,
   PhotoQuarantineBatchItemResult,
