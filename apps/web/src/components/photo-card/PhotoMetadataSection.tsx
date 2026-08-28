@@ -40,10 +40,13 @@ function formatExifDecimal(value: string | null, maximumFractionDigits = 2): str
 export function PhotoMetadataSection({ photo, detail }: PhotoMetadataSectionProps) {
   const locationSummary = formatLocationSummary(detail, { short: true });
   const locationAddress = formatLocationAddress(detail);
+  const isVideo = photo.mime_type?.startsWith("video/") ?? false;
 
   return (
     <div className="space-y-3">
-      <h3 className="text-caption-sm font-semibold uppercase tracking-wide text-mute">照片信息</h3>
+      <h3 className="text-caption-sm font-semibold uppercase tracking-wide text-mute">
+        {isVideo ? "视频信息" : "照片信息"}
+      </h3>
       <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-body-sm">
         <InfoRow icon={<Calendar className="w-3.5 h-3.5" />} label="拍摄时间" value={formatDate(photo.taken_at)} />
         <InfoRow
@@ -55,7 +58,7 @@ export function PhotoMetadataSection({ photo, detail }: PhotoMetadataSectionProp
         <InfoRow
           icon={<ImageIcon className="w-3.5 h-3.5" />}
           label="格式"
-          value={photo.mime_type?.replace("image/", "").toUpperCase() ?? "—"}
+          value={photo.mime_type?.replace(/^(image|video)\//, "").toUpperCase() ?? "—"}
         />
       </div>
 

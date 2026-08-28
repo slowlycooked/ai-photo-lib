@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Download, ImageIcon, Loader2, Trash2, X } from "lucide-react";
+import { Download, ImageIcon, Loader2, Trash2, Video, X } from "lucide-react";
 import { api, type Photo } from "@/api";
 
 interface PhotoDetailHeaderProps {
@@ -21,21 +21,40 @@ export function PhotoDetailHeader({
 }: PhotoDetailHeaderProps) {
   const [loaded, setLoaded] = useState(false);
   const projectId = photo.project_id;
+  const isVideo = photo.mime_type?.startsWith("video/") ?? false;
+  const previewUrl = api.projectPhotos.previewUrl(projectId, photo.id);
 
   return (
     <div className="relative flex min-h-52 items-center justify-center bg-black">
       {!loaded && (
         <div className="absolute inset-0 flex items-center justify-center">
-          <ImageIcon className="w-10 h-10 text-white/50" />
+          {isVideo ? (
+            <Video className="w-10 h-10 text-white/50" />
+          ) : (
+            <ImageIcon className="w-10 h-10 text-white/50" />
+          )}
         </div>
       )}
-      <img
-        src={api.projectPhotos.previewUrl(projectId, photo.id)}
-        alt={photo.file_name}
-        className="max-h-[70vh] max-w-full object-contain"
-        style={{ opacity: loaded ? 1 : 0, transition: "opacity 0.2s" }}
-        onLoad={() => setLoaded(true)}
-      />
+      {isVideo ? (
+        <video
+          src={previewUrl}
+          poster={api.projectPhotos.thumbnailUrl(projectId, photo.id, photo.updated_at)}
+          controls
+          playsInline
+          preload="metadata"
+          aria-label={`播放视频 ${photo.file_name}`}
+          className="max-h-[70vh] max-w-full object-contain focus-visible:ring-2 focus-visible:ring-primary"
+          onLoadedMetadata={() => setLoaded(true)}
+        />
+      ) : (
+        <img
+          src={previewUrl}
+          alt={photo.file_name}
+          className="max-h-[70vh] max-w-full object-contain"
+          style={{ opacity: loaded ? 1 : 0, transition: "opacity 0.2s" }}
+          onLoad={() => setLoaded(true)}
+        />
+      )}
       <button
         onClick={onClose}
         className="absolute top-3 right-3 w-9 h-9 rounded-full bg-black/60 flex items-center justify-center shadow-md hover:bg-black/80 transition-colors"
@@ -48,8 +67,8 @@ export function PhotoDetailHeader({
         download={photo.file_name}
         onClick={(e) => e.stopPropagation()}
         className="absolute top-3 right-14 w-9 h-9 rounded-full bg-black/60 flex items-center justify-center shadow-md hover:bg-black/80 transition-colors"
-        aria-label="下载原图"
-        title="下载原图"
+        aria-label={isVideo ? "下载原视频" : "下载原图"}
+        title={isVideo ? "下载原视频" : "下载原图"}
       >
         <Download className="w-4 h-4 text-white" />
       </a>

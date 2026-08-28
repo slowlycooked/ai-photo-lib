@@ -53,11 +53,12 @@ class ProjectPhotoAssetServiceTest(unittest.TestCase):
         *,
         file_path: Path,
         thumbnail_path: Path | None = None,
+        mime_type: str = "image/jpeg",
     ) -> SimpleNamespace:
         return SimpleNamespace(
             file_path=str(file_path),
             file_name=file_path.name,
-            mime_type="image/jpeg",
+            mime_type=mime_type,
             thumbnail_path=str(thumbnail_path) if thumbnail_path else None,
         )
 
@@ -124,6 +125,20 @@ class ProjectPhotoAssetServiceTest(unittest.TestCase):
             asset.headers["Cache-Control"],
             "private, max-age=86400, stale-while-revalidate=604800",
         )
+
+    def test_video_preview_streams_original_inline(self) -> None:
+        video_path = self._library / "clip.mp4"
+        video_path.write_bytes(b"video")
+
+        asset = ProjectPhotoAssetService().get_preview_asset(
+            project=self.project,
+            photo=self._photo(file_path=video_path, mime_type="video/mp4"),
+        )
+
+        self.assertIsInstance(asset, PhotoFileAsset)
+        self.assertEqual(asset.path, str(video_path))
+        self.assertEqual(asset.media_type, "video/mp4")
+        self.assertEqual(asset.headers["Content-Disposition"], "inline")
 
     def test_photo_file_response_streams_from_disk(self) -> None:
         photo_path = self._library / "inside.jpg"

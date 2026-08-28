@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import hashlib
-from typing import Optional
 import logging
 from pathlib import Path
+from typing import Optional
 
+import cv2
 from PIL import Image
 
 from ..config import settings
@@ -12,7 +13,9 @@ from .image_decode_service import read_image_pil
 
 logger = logging.getLogger(__name__)
 
-SUPPORTED_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif"}
+IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif"}
+VIDEO_SUFFIXES = {".mp4", ".mov", ".m4v", ".avi", ".mkv", ".webm"}
+SUPPORTED_SUFFIXES = IMAGE_SUFFIXES | VIDEO_SUFFIXES
 
 
 class ThumbnailGenerationError(RuntimeError):
@@ -65,12 +68,35 @@ def generate_thumbnail(
     ``thumbnail_root`` overrides the global thumbnail directory, allowing
     per-project thumbnail isolation.
     """
-    thumb_path = _thumb_path(file_path, project_id=project_id, thumbnail_root=thumbnail_root)
+    thumb_path = _thumb_path(
+        file_path,
+        project_id=project_id,
+        thumbnail_root=thumbnail_root,
+    )
     if thumb_path.exists() and not force:
         return str(thumb_path)
 
     try:
-        img = read_image_pil(file_path)
+        suffix = Path(file_path).suffix.lower()
+        if suffix in VIDEO_SUFFIXES:
+            capture = cv2.VideoCapture(file_path)
+            try:
+                if not capture.isOpened():
+                    raise OSError("video decoder could not open the file")
+                frame_count = int(capture.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+                if frame_count > 1:
+                    capture.set(cv2.CAP_PROP_POS_FRAMES, max(0, int(frame_count * 0.1)))
+                ok, frame = capture.read()
+                if not ok or frame is None:
+                    capture.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                    ok, frame = capture.read()
+                if not ok or frame is None:
+                    raise OSError("video decoder could not read a preview frame")
+                img = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+            finally:
+                capture.release()
+        else:
+            img = read_image_pil(file_path)
         try:
             max_size = settings.thumbnail_size
             img.thumbnail((max_size, max_size), Image.LANCZOS)
@@ -79,7 +105,6 @@ def generate_thumbnail(
             img.close()
         return str(thumb_path)
     except Exception as exc:
-        suffix = Path(file_path).suffix.lower()
         level = logging.ERROR if suffix in (".heic", ".heif") else logging.WARNING
         logger.log(level, "Thumbnail failed for %s: %s", file_path, exc, exc_info=True)
         if raise_on_error:

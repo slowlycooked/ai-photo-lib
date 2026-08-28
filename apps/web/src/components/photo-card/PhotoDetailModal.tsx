@@ -18,6 +18,7 @@ interface PhotoDetailModalProps {
 export function PhotoDetailModal({ photo, onClose, onDeleted }: PhotoDetailModalProps) {
   const auth = useAuth();
   const canDeletePhoto = canManageProjects(auth.session);
+  const isVideo = photo.mime_type?.startsWith("video/") ?? false;
   const {
     aiData,
     aiLoading,
@@ -118,16 +119,18 @@ export function PhotoDetailModal({ photo, onClose, onDeleted }: PhotoDetailModal
                 onDeleteRecord={handleDeleteRecord}
               />
             )}
-            <PhotoFacesSection
-              projectId={projectId}
-              photoId={photo.id}
-              facesData={facesData}
-              facesLoading={facesLoading}
-              facesError={facesError}
-              faceMessage={faceMessage}
-              faceScanMutation={faceScanMutation}
-              refreshFaces={refreshFaces}
-            />
+            {!isVideo && (
+              <PhotoFacesSection
+                projectId={projectId}
+                photoId={photo.id}
+                facesData={facesData}
+                facesLoading={facesLoading}
+                facesError={facesError}
+                faceMessage={faceMessage}
+                faceScanMutation={faceScanMutation}
+                refreshFaces={refreshFaces}
+              />
+            )}
           </div>
         </div>
       </div>

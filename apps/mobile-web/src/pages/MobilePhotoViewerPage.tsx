@@ -116,7 +116,9 @@ export function MobilePhotoViewerPage() {
 
         <PhotoViewer
           src={api.photos.previewUrl(currentProjectId, photo.id)}
+          poster={api.photos.thumbnailUrl(currentProjectId, photo.id, photo.updated_at)}
           alt={photo.file_name}
+          mediaType={photo.mime_type}
           canPrev={prevId != null}
           canNext={nextId != null}
           onPrev={goPrev}
@@ -127,11 +129,13 @@ export function MobilePhotoViewerPage() {
         <section className="rounded-2xl border border-mobileHairline bg-mobileCard px-4 py-3">
           <h2 className="mb-3 break-all text-sm font-semibold text-mobileInk">{photo.file_name}</h2>
 
-          <h3 className="pt-1 text-xs font-semibold uppercase tracking-wide text-mobileMute">照片信息</h3>
+          <h3 className="pt-1 text-xs font-semibold uppercase tracking-wide text-mobileMute">
+            {photo.mime_type?.startsWith("video/") ? "视频信息" : "照片信息"}
+          </h3>
           {infoRow("拍摄时间", photo.taken_at ? new Date(photo.taken_at).toLocaleString("zh-CN") : null)}
           {infoRow("分辨率", photo.width && photo.height ? `${photo.width} x ${photo.height}` : null)}
           {infoRow("文件大小", formatSize(photo.file_size))}
-          {infoRow("格式", photo.mime_type?.replace("image/", "").toUpperCase())}
+          {infoRow("格式", photo.mime_type?.replace(/^(image|video)\//, "").toUpperCase())}
 
           {(photo.formatted_address || photo.city || photo.country_name) && (
             <>

@@ -4,6 +4,7 @@ import os
 import tempfile
 import threading
 import unittest
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
 
@@ -140,6 +141,176 @@ class ScannerPipelineTest(unittest.TestCase):
         self.assertEqual(state["errors"], 0)
         self.assertGreaterEqual(max_active, 2)
         self.assertEqual(state["current_stage"], "done")
+        db.close()
+
+    def test_scan_project_discovers_supported_video_files(self) -> None:
+        self._create_files(["clip.mp4", "notes.txt"])
+        db = self._SessionLocal()
+        prepared_names: list[str] = []
+
+        def fake_prepare(file_path, **kwargs):
+            prepared_names.append(file_path.name)
+            return PreparedScanFile(
+                path=file_path,
+                path_str=str(file_path),
+                relative_path=file_path.name,
+                folder_path="",
+                file_hash=f"hash-{file_path.name}",
+                file_size=10,
+                mime_type="video/mp4",
+                width=1920,
+                height=1080,
+                exif=StructuredExif(),
+                thumbnail_path=str(self._thumbs / "clip.jpg"),
+                action="upsert",
+                latency_ms=1,
+            )
+
+        def fake_persist(session, prepared, state, project_id):
+            state["inserted"] += 1
+
+        with patch(
+            "app.services.scanner._prepare_scan_file_with_retries",
+            side_effect=fake_prepare,
+        ), patch(
+            "app.services.scanner._persist_prepared_file",
+            side_effect=fake_persist,
+        ), patch("app.services.scanner.cleanup_missing_project_photos"), patch(
+            "app.services.folder_service.recompute_project_folder_counts"
+        ):
+            state = scan_project(db, 1)
+
+        self.assertEqual(prepared_names, ["clip.mp4"])
+        self.assertEqual(state["discovered_count"], 1)
+        self.assertEqual(state["inserted"], 1)
+        db.close()
+
+    def test_scan_project_skips_soft_deleted_quarantined_photo(self) -> None:
+        self._create_files(["quarantined.jpg"])
+        photo_path = self._library / "quarantined.jpg"
+        db = self._SessionLocal()
+        db.add(
+            Photo(
+                id=101,
+                project_id=1,
+                file_path=str(photo_path),
+                file_name=photo_path.name,
+                status="quarantined",
+                deleted_at=datetime.now(),
+            )
+        )
+        db.commit()
+
+        with patch(
+            "app.services.scanner._prepare_scan_file_with_retries"
+        ) as prepare_mock, patch(
+            "app.services.scanner.cleanup_missing_project_photos"
+        ), patch(
+            "app.services.folder_service.recompute_project_folder_counts"
+        ):
+            state = scan_project(db, 1)
+
+        prepare_mock.assert_not_called()
+        self.assertEqual(state["scanned"], 1)
+        self.assertEqual(state["discovered_count"], 1)
+        self.assertEqual(state["inserted"], 0)
+        self.assertEqual(state["errors"], 0)
+        self.assertEqual(
+            db.query(Photo).filter(Photo.file_path == str(photo_path)).count(),
+            1,
+        )
+        db.close()
+
+    def test_scan_project_preserves_successful_writes_after_unique_violation(self) -> None:
+        self._create_files(["a.jpg", "b.jpg", "c.jpg"])
+        db = self._SessionLocal()
+        conflict_path = self._library / "existing.jpg"
+        db.add(
+            Photo(
+                id=500,
+                project_id=1,
+                file_path=str(conflict_path),
+                file_name=conflict_path.name,
+                status="pending",
+            )
+        )
+        db.commit()
+        persist_calls = 0
+
+        def fake_prepare(file_path, **kwargs):
+            return PreparedScanFile(
+                path=file_path,
+                path_str=str(file_path),
+                relative_path=file_path.name,
+                folder_path=None,
+                file_hash=f"hash-{file_path.name}",
+                file_size=10,
+                mime_type="image/jpeg",
+                width=32,
+                height=24,
+                exif=StructuredExif(),
+                thumbnail_path=str(self._thumbs / f"{file_path.stem}.jpg"),
+                action="upsert",
+                latency_ms=1,
+            )
+
+        def fake_persist(session, prepared, state, project_id):
+            nonlocal persist_calls
+            persist_calls += 1
+            if persist_calls == 2:
+                session.add(
+                    Photo(
+                        id=100 + persist_calls,
+                        project_id=project_id,
+                        file_path=str(conflict_path),
+                        file_name=conflict_path.name,
+                        status="pending",
+                    )
+                )
+                session.flush()
+                return
+            session.add(
+                Photo(
+                    id=100 + persist_calls,
+                    project_id=project_id,
+                    file_path=prepared.path_str,
+                    file_name=prepared.path.name,
+                    status="pending",
+                )
+            )
+            session.flush()
+            state["inserted"] += 1
+
+        with patch(
+            "app.services.scanner._prepare_scan_file_with_retries",
+            side_effect=fake_prepare,
+        ), patch(
+            "app.services.scanner._persist_prepared_file",
+            side_effect=fake_persist,
+        ), patch(
+            "app.services.scanner.cleanup_missing_project_photos"
+        ), patch(
+            "app.services.scanner.settings.scan_thumbnail_concurrency",
+            1,
+        ), patch(
+            "app.services.scanner.settings.scan_queue_max_size",
+            1,
+        ), patch(
+            "app.services.scanner.settings.scan_db_write_batch_size",
+            20,
+        ), patch(
+            "app.services.folder_service.recompute_project_folder_counts"
+        ):
+            state = scan_project(db, 1)
+
+        persisted_names = {
+            photo.file_name
+            for photo in db.query(Photo).filter(Photo.id.in_([101, 103])).all()
+        }
+        self.assertEqual(persist_calls, 3)
+        self.assertEqual(len(persisted_names), 2)
+        self.assertEqual(state["inserted"], 2)
+        self.assertEqual(state["errors"], 1)
         db.close()
 
     def test_scan_project_flushes_remaining_batch_at_end(self) -> None:

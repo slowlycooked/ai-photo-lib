@@ -41,7 +41,7 @@ from ..services.project_ai_service import (
 )
 from ..services.project_embedding_settings_service import resolve_embedding_settings_strict
 from ..services.search.result_cache import bump_project_search_cache_epoch
-from ..services.thumbnail import ThumbnailGenerationError, generate_thumbnail
+from ..services.thumbnail import VIDEO_SUFFIXES, ThumbnailGenerationError, generate_thumbnail
 from .task_claim_service import TaskClaimService
 from ..services.vlm_client import VLMRequestError, analyze_image
 from ..face.providers import FaceRecognitionProviderUnavailableError
@@ -210,8 +210,21 @@ class AIJobAppService:
     def _pick_image_path(self, photo: Photo) -> str:
         """Return the path to send to the VLM.
 
-        Priority: existing thumbnail → on-the-fly generation → original file.
+        Videos always use the original so the VLM can sample multiple frames.
+        Images use: existing thumbnail → on-the-fly generation → original file.
         """
+        suffix = Path(photo.file_path).suffix.lower()
+        is_video = (
+            str(getattr(photo, "mime_type", "") or "").startswith("video/")
+            or suffix in VIDEO_SUFFIXES
+        )
+        if is_video:
+            if Path(photo.file_path).exists():
+                return photo.file_path
+            raise FileNotFoundError(
+                f"No accessible video for photo {photo.id}: original={photo.file_path!r}"
+            )
+
         if photo.thumbnail_path and Path(photo.thumbnail_path).exists():
             return photo.thumbnail_path
 
@@ -236,7 +249,6 @@ class AIJobAppService:
             self._db.flush()
             return new_thumb
 
-        suffix = Path(photo.file_path).suffix.lower()
         if suffix in (".heic", ".heif"):
             detail = ""
             if thumbnail_error is not None:

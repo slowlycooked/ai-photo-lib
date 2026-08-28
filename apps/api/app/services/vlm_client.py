@@ -6,12 +6,14 @@ import logging
 from pathlib import Path
 from typing import Any
 
+import cv2
 import httpx
 import pillow_heif
 from PIL import Image
 
 from ..config import settings
 from ..logging_config import should_log_ai_raw_payload
+from .thumbnail import VIDEO_SUFFIXES
 
 # Register HEIF/HEIC opener so PIL.Image.open() handles these formats
 pillow_heif.register_heif_opener()
@@ -121,6 +123,133 @@ def _normalize_chat_url(endpoint_url: str) -> str:
     return url
 
 
+def _image_data_url(path: Path) -> str:
+    suffix = path.suffix.lower()
+    if suffix in (".heic", ".heif"):
+        with Image.open(path) as img:
+            img = img.convert("RGB")
+            buf = io.BytesIO()
+            img.save(buf, "JPEG", quality=85)
+            img_bytes = buf.getvalue()
+        mime = "image/jpeg"
+    else:
+        mime = {
+            ".jpg": "image/jpeg",
+            ".jpeg": "image/jpeg",
+            ".png": "image/png",
+            ".webp": "image/webp",
+        }.get(suffix, "image/jpeg")
+        img_bytes = path.read_bytes()
+    return f"data:{mime};base64,{base64.b64encode(img_bytes).decode()}"
+
+
+def _sample_video_frames(path: Path, *, max_frames: int) -> list[tuple[float, bytes]]:
+    capture = cv2.VideoCapture(str(path))
+    try:
+        if not capture.isOpened():
+            raise VLMRequestError(
+                "无法打开视频文件，可能是格式、编码或文件完整性问题。",
+                retryable=False,
+                code="invalid_video_file",
+            )
+
+        frame_count = int(capture.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+        fps = float(capture.get(cv2.CAP_PROP_FPS) or 0.0)
+        sample_limit = min(16, max(1, max_frames))
+        if frame_count > 0:
+            target_count = min(sample_limit, frame_count)
+            frame_indexes = sorted(
+                {
+                    min(frame_count - 1, int((index + 0.5) * frame_count / target_count))
+                    for index in range(target_count)
+                }
+            )
+        else:
+            frame_indexes = list(range(sample_limit))
+
+        frames: list[tuple[float, bytes]] = []
+        max_edge = max(
+            256,
+            int(getattr(settings, "ai_thumbnail_max_edge", 768) or 768),
+        )
+        for frame_index in frame_indexes:
+            if frame_count > 0:
+                capture.set(cv2.CAP_PROP_POS_FRAMES, frame_index)
+            ok, frame = capture.read()
+            if not ok or frame is None:
+                continue
+            height, width = frame.shape[:2]
+            longest_edge = max(height, width)
+            if longest_edge > max_edge:
+                scale = max_edge / longest_edge
+                frame = cv2.resize(
+                    frame,
+                    (max(1, int(width * scale)), max(1, int(height * scale))),
+                    interpolation=cv2.INTER_AREA,
+                )
+            encoded, buffer = cv2.imencode(
+                ".jpg",
+                frame,
+                [int(cv2.IMWRITE_JPEG_QUALITY), 82],
+            )
+            if not encoded:
+                continue
+            timestamp = frame_index / fps if fps > 0 else float(len(frames))
+            frames.append((timestamp, buffer.tobytes()))
+
+        if not frames:
+            raise VLMRequestError(
+                "无法从视频中读取任何画面，可能是视频编码不受支持或文件损坏。",
+                retryable=False,
+                code="video_frame_decode_failed",
+            )
+        return frames
+    finally:
+        capture.release()
+
+
+def _build_user_content(
+    path: Path,
+    prompt_text: str,
+) -> tuple[list[dict[str, Any]], str, int]:
+    if path.suffix.lower() not in VIDEO_SUFFIXES:
+        return (
+            [
+                {"type": "text", "text": prompt_text},
+                {"type": "image_url", "image_url": {"url": _image_data_url(path)}},
+            ],
+            "image",
+            1,
+        )
+
+    frames = _sample_video_frames(
+        path,
+        max_frames=int(getattr(settings, "ai_video_max_frames", 8) or 8),
+    )
+    content: list[dict[str, Any]] = [
+        {
+            "type": "text",
+            "text": (
+                "这是同一个视频按时间顺序抽取的关键帧。请综合所有画面理解场景、"
+                "人物、物体、动作及其随时间的变化；不要把每一帧当成互不相关的图片。\n"
+                f"{prompt_text}"
+            ),
+        }
+    ]
+    for index, (timestamp, frame_bytes) in enumerate(frames, start=1):
+        data_url = f"data:image/jpeg;base64,{base64.b64encode(frame_bytes).decode()}"
+        content.extend(
+            [
+                {
+                    "type": "text",
+                    "text": f"视频帧 {index}/{len(frames)}，时间约 {timestamp:.1f} 秒",
+                },
+                {"type": "image_url", "image_url": {"url": data_url}},
+            ]
+        )
+    return content, "video", len(frames)
+
+
 def analyze_image(
     image_path: str,
     *,
@@ -133,8 +262,7 @@ def analyze_image(
     top_p: float | None = None,
     max_tokens: int | None = None,
 ) -> str:
-    """Call OpenAI-compatible /v1/chat/completions with the image encoded as a
-    base64 data URL and return raw text.
+    """Analyze an image or sampled video frames via OpenAI-compatible chat.
 
     Using base64 (instead of file://) means thumbnails stored outside the
     llama-server --media-path are handled correctly, and all image formats
@@ -142,43 +270,28 @@ def analyze_image(
     """
     path = Path(image_path).resolve()
     if not path.exists():
-        raise FileNotFoundError(f"Image not found: {image_path}")
-
-    suffix = path.suffix.lower()
-
-    if suffix in (".heic", ".heif"):
-        # Convert HEIC/HEIF to JPEG in-memory — llama-server cannot decode raw
-        # HEIC bytes even when the mime type claims image/jpeg.
-        with Image.open(path) as img:
-            img = img.convert("RGB")
-            buf = io.BytesIO()
-            img.save(buf, "JPEG", quality=85)
-            img_bytes = buf.getvalue()
-        mime = "image/jpeg"
-    else:
-        _mime_map = {
-            ".jpg": "image/jpeg",
-            ".jpeg": "image/jpeg",
-            ".png": "image/png",
-            ".webp": "image/webp",
-        }
-        mime = _mime_map.get(suffix, "image/jpeg")
-        with open(path, "rb") as fh:
-            img_bytes = fh.read()
-
-    img_b64 = base64.b64encode(img_bytes).decode()
-
-    data_url = f"data:{mime};base64,{img_b64}"
+        raise FileNotFoundError(f"Media not found: {image_path}")
 
     effective_system_text = system_text or _DEFAULT_SYSTEM_TEXT
     effective_prompt_text = prompt_text or _DEFAULT_PROMPT
+    user_content, media_kind, visual_count = _build_user_content(
+        path,
+        effective_prompt_text,
+    )
+    if media_kind == "video":
+        effective_system_text += (
+            " 当前输入是同一视频的连续关键帧；请输出对整个视频的综合分析。"
+        )
 
     logger.debug(
-        "Dispatching VLM image analysis request. endpoint_url=%s model_name=%s image_path=%s mime=%s max_tokens=%s temperature=%s top_p=%s thinking_disabled=%s",
+        "Dispatching VLM media analysis request. endpoint_url=%s model_name=%s "
+        "media_path=%s media_kind=%s visual_count=%s max_tokens=%s "
+        "temperature=%s top_p=%s thinking_disabled=%s",
         endpoint_url or settings.openai_base_url,
         model_name or settings.openai_vision_model,
         str(path),
-        mime,
+        media_kind,
+        visual_count,
         max_tokens if max_tokens is not None else settings.ai_vision_max_tokens,
         temperature if temperature is not None else settings.ai_vision_temperature,
         top_p if top_p is not None else 0.8,
@@ -202,10 +315,7 @@ def analyze_image(
             },
             {
                 "role": "user",
-                "content": [
-                    {"type": "text", "text": effective_prompt_text},
-                    {"type": "image_url", "image_url": {"url": data_url}},
-                ],
+                "content": user_content,
             }
         ],
         "max_tokens": max_tokens if max_tokens is not None else settings.ai_vision_max_tokens,
@@ -250,8 +360,8 @@ def analyze_image(
 
         if status == 400 and "Failed to load image or audio file" in err_message:
             raise VLMRequestError(
-                "模型无法加载该图片文件，可能是格式不支持或文件损坏。"
-                " 请确认图片可正常打开后重试。",
+                "模型无法加载媒体画面，可能是格式不支持或文件损坏。"
+                " 请确认文件可正常打开后重试。",
                 retryable=False,
                 code="invalid_image_file",
             ) from exc

@@ -1,5 +1,5 @@
 import { lazy, Suspense, useState } from "react";
-import { ImageIcon, LocateFixed, MapPin } from "lucide-react";
+import { ImageIcon, LocateFixed, MapPin, Play } from "lucide-react";
 import type { Photo } from "@/api";
 import { api } from "@/api";
 import { formatLocationAddress, formatLocationSummary } from "@/lib/utils";
@@ -39,6 +39,7 @@ export function PhotoCard({
   const retryThumbnailUrl = retryNonce
     ? `${thumbnailUrl}${thumbnailUrl.includes("?") ? "&" : "?"}retry=${retryNonce}`
     : thumbnailUrl;
+  const isVideo = photo.mime_type?.startsWith("video/") ?? false;
   const gpsFallback =
     photo.gps_latitude != null && photo.gps_longitude != null
       ? `${photo.gps_latitude.toFixed(5)}, ${photo.gps_longitude.toFixed(5)}`
@@ -57,11 +58,20 @@ export function PhotoCard({
         role="button"
         tabIndex={0}
         onKeyDown={(e) => e.key === "Enter" && setShowDetail(true)}
-        aria-label={`查看照片 ${photo.file_name}`}
+        aria-label={`${isVideo ? "查看视频" : "查看照片"} ${photo.file_name}`}
       >
         {highlighted && (
           <span className="absolute left-2 bottom-2 z-10 inline-flex items-center gap-1 rounded-full bg-primary px-2.5 py-1 text-[11px] font-bold text-white shadow-md">
             <LocateFixed className="h-3.5 w-3.5" />定位目标
+          </span>
+        )}
+        {isVideo && (
+          <span
+            className="absolute right-2 top-2 z-10 inline-flex h-9 w-9 items-center justify-center rounded-full bg-black/65 text-white shadow-md"
+            title="视频"
+            aria-hidden="true"
+          >
+            <Play className="h-4 w-4 fill-current" aria-hidden="true" />
           </span>
         )}
         {selectMode && (

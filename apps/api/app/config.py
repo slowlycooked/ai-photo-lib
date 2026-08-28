@@ -100,6 +100,7 @@ class Settings(BaseSettings):
     api_reload: bool = False
     ai_vision_max_tokens: int = 1200
     ai_vision_temperature: float = 0.1
+    ai_video_max_frames: int = 8
     ai_max_retries: int = 3
     # Used by svc.sh/worker to control AI job concurrency; not read by the API.
     ai_worker_concurrency: int = 3

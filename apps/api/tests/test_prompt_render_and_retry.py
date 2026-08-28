@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import os
+import tempfile
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
 
 # Required before importing app.config.Settings at module import time.
 os.environ.setdefault("DATABASE_URL", "sqlite:///ignored.db")
@@ -19,6 +21,7 @@ from app.services.project_ai_service import (  # noqa: E402
     render_analysis_prompt_parts,
 )
 from app.services.vlm_client import (  # noqa: E402
+    analyze_image,
     _extract_message_text,
     _thinking_control_payload,
 )
@@ -76,6 +79,33 @@ class PromptRenderAndRetryTest(unittest.TestCase):
             _thinking_control_payload("llama-server"),
             {"chat_template_kwargs": {"enable_thinking": False}},
         )
+
+    def test_analyze_image_sends_sampled_video_frames_in_time_order(self) -> None:
+        response = SimpleNamespace(
+            json=lambda: {"choices": [{"message": {"content": '{"caption":"ok"}'}}]}
+        )
+        with tempfile.NamedTemporaryFile(suffix=".mp4") as video, patch(
+            "app.services.vlm_client._sample_video_frames",
+            return_value=[(0.5, b"frame-a"), (3.0, b"frame-b")],
+        ), patch(
+            "app.services.vlm_client._send_chat_completion",
+            return_value=response,
+        ) as send:
+            result = analyze_image(
+                video.name,
+                provider="ollama",
+                prompt_text="只返回 JSON",
+            )
+
+        self.assertEqual(result, '{"caption":"ok"}')
+        messages = send.call_args.kwargs["payload"]["messages"]
+        self.assertIn("整个视频", messages[0]["content"])
+        content = messages[1]["content"]
+        self.assertIn("同一个视频", content[0]["text"])
+        self.assertEqual(content[1]["text"], "视频帧 1/2，时间约 0.5 秒")
+        self.assertTrue(content[2]["image_url"]["url"].startswith("data:image/jpeg;base64,"))
+        self.assertEqual(content[3]["text"], "视频帧 2/2，时间约 3.0 秒")
+        self.assertTrue(content[4]["image_url"]["url"].startswith("data:image/jpeg;base64,"))
 
     def test_analyze_with_strict_json_retry_retries_once_for_non_json_prefix(self) -> None:
         calls: list[dict[str, str]] = []

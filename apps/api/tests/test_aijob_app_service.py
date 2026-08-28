@@ -103,6 +103,23 @@ class AIJobAppServiceFaceScanTest(unittest.TestCase):
 
 
 class AIJobAppServicePickImagePathTest(unittest.TestCase):
+    def test_video_uses_original_file_instead_of_still_thumbnail(self) -> None:
+        db = _FakeDB()
+        with tempfile.NamedTemporaryFile(suffix=".mp4") as src, tempfile.NamedTemporaryFile(
+            suffix=".jpg"
+        ) as thumb:
+            photo = SimpleNamespace(
+                id=8,
+                file_path=src.name,
+                thumbnail_path=thumb.name,
+                mime_type="video/mp4",
+            )
+
+            result = AIJobAppService(db)._pick_image_path(photo)
+
+        self.assertEqual(result, photo.file_path)
+        self.assertEqual(db.flushes, 0)
+
     def test_heic_thumbnail_failure_includes_underlying_error(self) -> None:
         db = _FakeDB()
         photo = SimpleNamespace(

@@ -13,13 +13,14 @@ from pathlib import Path
 from time import perf_counter
 from typing import Any, Dict, Optional, Tuple
 
+import cv2
 import exifread
 from PIL import Image, UnidentifiedImageError
 from sqlalchemy.orm import Session
 
 from ..config import settings
 from ..models.photo import Photo
-from .thumbnail import SUPPORTED_SUFFIXES, generate_thumbnail
+from .thumbnail import SUPPORTED_SUFFIXES, VIDEO_SUFFIXES, generate_thumbnail
 from .path_utils import build_relative_paths
 from .folder_service import ensure_folder_path
 from .location_service import resolve_photo_location
@@ -36,6 +37,7 @@ class ExistingPhotoSnapshot:
     thumbnail_path: Optional[str]
     relative_path: Optional[str]
     folder_path: Optional[str]
+    is_tombstoned: bool
 
 
 @dataclass(frozen=True)
@@ -328,6 +330,19 @@ def _image_size(path: str) -> Tuple[Optional[int], Optional[int]]:
         return None, None
 
 
+def _video_size(path: str) -> Tuple[Optional[int], Optional[int]]:
+    capture = cv2.VideoCapture(path)
+    try:
+        if not capture.isOpened():
+            logger.warning("Failed to open video for dimensions: %s", path)
+            return None, None
+        width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
+        height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
+        return (width or None), (height or None)
+    finally:
+        capture.release()
+
+
 def _is_writable_directory(path: Path) -> bool:
     """Best-effort check whether a directory is writable by this process."""
     try:
@@ -364,11 +379,10 @@ def _load_existing_photo_index(db: Session, project_id: int) -> dict[str, Existi
             Photo.thumbnail_path,
             Photo.relative_path,
             Photo.folder_path,
+            Photo.status,
+            Photo.deleted_at,
         )
-        .filter(
-            Photo.project_id == project_id,
-            Photo.deleted_at.is_(None),
-        )
+        .filter(Photo.project_id == project_id)
         .all()
     )
     return {
@@ -377,8 +391,17 @@ def _load_existing_photo_index(db: Session, project_id: int) -> dict[str, Existi
             thumbnail_path=thumbnail_path,
             relative_path=relative_path,
             folder_path=folder_path,
+            is_tombstoned=deleted_at is not None or status == "quarantined",
         )
-        for file_path, file_hash, thumbnail_path, relative_path, folder_path in rows
+        for (
+            file_path,
+            file_hash,
+            thumbnail_path,
+            relative_path,
+            folder_path,
+            status,
+            deleted_at,
+        ) in rows
     }
 
 
@@ -433,8 +456,9 @@ def _prepare_scan_file(
         suffix = file_path.suffix.lower()
         if suffix in (".heic", ".heif"):
             mime_type = "image/heic"
-    width, height = _image_size(path_str)
-    exif = _extract_exif(path_str)
+    is_video = file_path.suffix.lower() in VIDEO_SUFFIXES
+    width, height = _video_size(path_str) if is_video else _image_size(path_str)
+    exif = StructuredExif() if is_video else _extract_exif(path_str)
     thumbnail_path = generate_thumbnail(
         path_str,
         force=True,
@@ -527,10 +551,25 @@ def _persist_prepared_file(
         .filter(
             Photo.project_id == project_id,
             Photo.file_path == path_str,
-            Photo.deleted_at.is_(None),
         )
         .first()
     )
+    if existing is not None and (
+        existing.deleted_at is not None or existing.status == "quarantined"
+    ):
+        _mark_persisted(state, path=path_str, latency_ms=prepared.latency_ms)
+        _push_file_progress(
+            state,
+            path=path_str,
+            status="success",
+            message="Skipped quarantined photo",
+        )
+        logger.debug(
+            "scan_file_skipped project_id=%s path=%s reason=tombstoned",
+            project_id,
+            path_str,
+        )
+        return
     if prepared.action == "refresh":
         if existing is None:
             raise RuntimeError(f"Photo disappeared during scan persistence: {path_str}")
@@ -726,7 +765,10 @@ def scan_project(
                 try:
                     prepared = future.result()
                     state["prepared_count"] = int(state.get("prepared_count") or 0) + 1
-                    _persist_prepared_file(db, prepared, state, project_id)
+                    # Isolate each file write so one bad photo cannot roll back
+                    # successful writes that are waiting for the batch commit.
+                    with db.begin_nested():
+                        _persist_prepared_file(db, prepared, state, project_id)
                     state["persisted_count"] = int(state.get("persisted_count") or 0) + 1
                     pending_writes += 1
                     if pending_writes >= scan_batch_size:
@@ -735,7 +777,12 @@ def scan_project(
                         pending_writes = 0
                 except Exception as exc:
                     logger.error("Failed to process %s: %s", entry, exc)
-                    db.rollback()
+                    # A failed SAVEPOINT leaves the outer transaction usable.
+                    # Only a commit/connection failure requires a full rollback.
+                    if not db.is_active:
+                        db.rollback()
+                        pending_writes = 0
+                    state.pop("_folder_cache", None)
                     state["errors"] += 1
                     _push_scan_error(state, f"{entry.name}: {exc}")
                     _push_file_progress(
@@ -771,6 +818,22 @@ def scan_project(
                 current_path=str(entry),
                 queue_depth=len(futures),
             )
+            existing = existing_index.get(str(entry))
+            if existing is not None and existing.is_tombstoned:
+                _push_file_progress(
+                    state,
+                    path=str(entry),
+                    status="success",
+                    message="Skipped quarantined photo",
+                )
+                logger.debug(
+                    "scan_file_skipped project_id=%s path=%s reason=tombstoned",
+                    project_id,
+                    entry,
+                )
+                if state["scanned"] % 25 == 0:
+                    _emit_progress(state, progress_callback)
+                continue
             futures[
                 executor.submit(
                     _prepare_scan_file_with_retries,
@@ -778,7 +841,7 @@ def scan_project(
                     project_id=project_id,
                     thumbnail_root=str(thumb_root),
                     relative_base_path=str(library),
-                    existing=existing_index.get(str(entry)),
+                    existing=existing,
                 )
             ] = entry
             _set_scan_stage(

@@ -3,7 +3,9 @@ import type { TouchEvent } from "react";
 
 export function PhotoViewer({
   src,
+  poster,
   alt,
+  mediaType,
   canPrev,
   canNext,
   onPrev,
@@ -11,7 +13,9 @@ export function PhotoViewer({
   swipeHandlers,
 }: {
   src: string;
+  poster?: string;
   alt: string;
+  mediaType?: string | null;
   canPrev: boolean;
   canNext: boolean;
   onPrev: () => void;
@@ -27,7 +31,19 @@ export function PhotoViewer({
       onTouchStart={swipeHandlers.onTouchStart}
       onTouchEnd={swipeHandlers.onTouchEnd}
     >
-      <img src={src} alt={alt} className="block h-full w-full object-contain" />
+      {mediaType?.startsWith("video/") ? (
+        <video
+          src={src}
+          poster={poster}
+          controls
+          playsInline
+          preload="metadata"
+          aria-label={`播放视频 ${alt}`}
+          className="block h-full w-full object-contain focus-visible:ring-2 focus-visible:ring-mobileAccent"
+        />
+      ) : (
+        <img src={src} alt={alt} className="block h-full w-full object-contain" />
+      )}
 
       <button
         type="button"

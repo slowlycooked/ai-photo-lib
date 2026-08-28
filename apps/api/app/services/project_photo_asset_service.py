@@ -131,7 +131,10 @@ class ProjectPhotoAssetService:
             "Content-Disposition": "inline",
         }
 
-        if mime in self._INLINE_MIME and suffix not in self._CONVERT_SUFFIXES:
+        if (
+            mime.startswith("video/")
+            or (mime in self._INLINE_MIME and suffix not in self._CONVERT_SUFFIXES)
+        ):
             return PhotoFileAsset(path=original_path, media_type=mime, headers=headers)
 
         try:
