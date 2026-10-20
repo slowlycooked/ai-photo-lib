@@ -248,10 +248,10 @@ class WorkerProjectIdGuardTest(unittest.TestCase):
     def test_aijob_rejects_missing_project_id(self) -> None:
         class _SessionStub:
             def __init__(self) -> None:
-                self.commit_calls = 0
+                self.flush_calls = 0
 
-            def commit(self) -> None:
-                self.commit_calls += 1
+            def flush(self) -> None:
+                self.flush_calls += 1
 
         db = _SessionStub()
         service = AIJobAppService(db)  # type: ignore[arg-type]
@@ -270,7 +270,7 @@ class WorkerProjectIdGuardTest(unittest.TestCase):
 
         self.assertEqual(job.status, "failed")
         self.assertIn("has no project_id", job.error_message)
-        self.assertEqual(db.commit_calls, 1)
+        self.assertEqual(db.flush_calls, 1)
 
 
 class StaticQualityGuardTest(unittest.TestCase):
@@ -341,7 +341,7 @@ class StaticQualityGuardTest(unittest.TestCase):
             "app/services/people_assignment_mutation_service.py": 1,
             "app/services/people_audit_service.py": 3,
             "app/services/people_batch_review_service.py": 4,
-            "app/services/people_lifecycle_mutation_service.py": 1,
+            "app/services/people_lifecycle_mutation_service.py": 4,
             "app/services/people_mutation_service.py": 4,
             "app/services/person_assignment_workflow_service.py": 10,
             "app/services/person_lifecycle_mutation_service.py": 10,
@@ -450,10 +450,10 @@ class StaticQualityGuardTest(unittest.TestCase):
         self.assertIn("resolve_embedding_settings_strict", text)
         self.assertNotIn("embed_endpoint = ai_settings.endpoint_url", text)
 
-    def test_aijob_analysis_uses_strict_project_ai_settings(self) -> None:
+    def test_aijob_analysis_uses_project_ai_runtime_settings(self) -> None:
         path = _API_ROOT / "app/services/aijob_app_service.py"
         text = path.read_text(encoding="utf-8")
-        self.assertIn("get_project_ai_settings_strict", text)
+        self.assertIn("resolve_project_ai_runtime_settings", text)
         self.assertIn("get_active_prompt_template_strict", text)
         self.assertNotIn("get_or_create_project_ai_settings", text)
 

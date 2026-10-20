@@ -72,6 +72,7 @@ CREATE TABLE project_embedding_settings (
   timeout_seconds INTEGER NOT NULL DEFAULT 60,
   input_prefix_query TEXT,
   input_prefix_document TEXT,
+  ai_service_profile_id INTEGER,
   enabled BOOLEAN NOT NULL DEFAULT 1,
   search_content_vector_weight REAL NOT NULL DEFAULT 0.5,
   search_tag_vector_weight REAL NOT NULL DEFAULT 0.25,
@@ -98,8 +99,27 @@ CREATE TABLE project_query_planner_settings (
   prompt_template TEXT,
   system_prompt TEXT,
   fallback_mode TEXT NOT NULL DEFAULT 'rule_fallback',
+  ai_service_profile_id INTEGER,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE project_ai_settings (
+  id INTEGER PRIMARY KEY,
+  project_id INTEGER NOT NULL UNIQUE,
+  provider TEXT NOT NULL DEFAULT 'llama-server',
+  endpoint_url TEXT NOT NULL,
+  model_name TEXT NOT NULL,
+  temperature REAL NOT NULL DEFAULT 0,
+  top_p REAL NOT NULL DEFAULT 0.8,
+  max_tokens INTEGER NOT NULL DEFAULT 1024,
+  retry_count INTEGER NOT NULL DEFAULT 1,
+  output_language TEXT NOT NULL DEFAULT 'zh-CN',
+  json_parse_strategy TEXT NOT NULL DEFAULT 'auto_extract',
+  ai_service_profile_id INTEGER,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  active_prompt_template_id INTEGER
 );
 """
 
