@@ -25,6 +25,7 @@ router = APIRouter(prefix="/projects", tags=["projects-scan"])
 
 @router.post("/{project_id}/scan/start")
 def start_project_scan(
+    rebuild: bool = False,
     project: Project = Depends(require_project_manager),
     db: Session = Depends(get_db),
 ):
@@ -38,7 +39,7 @@ def start_project_scan(
         db,
         project_id=project_id,
         task_type=TASK_TYPE_LIBRARY_SCAN,
-        request_params={},
+        request_params={"rebuild": True} if rebuild else {},
     )
     return {
         "message": "Scan queued" if result.created else "Scan already in progress",

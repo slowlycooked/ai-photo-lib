@@ -47,6 +47,14 @@ class ProjectTaskHandler(Protocol):
 
 class LibraryScanTaskHandler:
     def run(self, task: ProjectTask, context: ProjectTaskRunContext) -> dict:
+        rebuild = bool((task.request_params or {}).get("rebuild", False))
+        if rebuild:
+            return scan_project(
+                context.db,
+                task.project_id,
+                rebuild=True,
+                progress_callback=lambda state: context.persist_progress(task.id, state),
+            )
         return scan_project(
             context.db,
             task.project_id,

@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { CheckCircle2, Loader2, AlertCircle, FolderSearch, XCircle } from "lucide-react";
 import type { ScanStatus } from "@/api";
 import { ProjectTaskFailureDetails } from "@/components/tasks/ProjectTaskFailureDetails";
@@ -6,6 +7,7 @@ import { ProjectTaskFailureDetails } from "@/components/tasks/ProjectTaskFailure
 const LABEL: Record<string, string> = {
   idle: "待扫描",
   scanning: "正在扫描照片目录…",
+  rebuilding: "正在清理旧照片库索引…",
   "reindexing (all)": "正在重新提取元数据（全部）…",
   "reindexing (missing_metadata)": "正在重新提取元数据（缺失）…",
   "reindexing (missing_location)": "正在补全地点信息（仅缺失地点）…",
@@ -16,6 +18,7 @@ const LABEL: Record<string, string> = {
 };
 
 const STAGE_LABEL: Record<string, string> = {
+  rebuild: "清理旧索引",
   discovery: "发现文件",
   prepare: "预处理",
   persist: "落库",
@@ -27,7 +30,7 @@ interface ScanPanelProps {
   projectId: number | null;
   status: ScanStatus | undefined;
   isLoading: boolean;
-  onStart: () => void;
+  onStart: (rebuild: boolean) => void;
   isPending: boolean;
   /** Network / API-level error from the start-scan mutation. */
   mutationError?: string | null;
@@ -50,6 +53,12 @@ export function ScanPanel({
   onCancel,
   isCancelPending,
 }: ScanPanelProps) {
+  const [rebuild, setRebuild] = useState(false);
+
+  useEffect(() => {
+    setRebuild(false);
+  }, [projectId]);
+
   if (isLoading) {
     return (
       <div className="flex items-center gap-2 text-mute text-body-sm px-1 py-3">
@@ -73,17 +82,29 @@ export function ScanPanel({
   const displayLabel = status.running
     ? status.message === "cancelling"
       ? LABEL.cancelling
-      : LABEL.scanning
+      : LABEL[status.message] ?? LABEL.scanning
     : hasScanErrors && status.message === "done"
       ? LABEL.done_with_errors
       : LABEL[status.message] ?? status.message;
 
   const showError = mutationError ?? statusError;
+  const handleStart = () => {
+    if (
+      rebuild &&
+      !window.confirm(
+        "确认重建当前项目的照片库索引？\n\n旧照片记录、EXIF metadata、AI 标签、向量和人脸关联将被清除并重新扫描；原始照片不会被删除。",
+      )
+    ) {
+      return;
+    }
+    onStart(rebuild);
+    setRebuild(false);
+  };
 
   return (
     <div className="bg-canvas border border-hairline rounded-md p-4 space-y-3">
       {/* Title row */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           {status.running ? (
             <Loader2 className="w-4 h-4 animate-spin text-primary" />
@@ -110,7 +131,7 @@ export function ScanPanel({
         )}
 
         {!status.running && (
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center justify-end gap-3">
             {onReindex && (
               <div className="flex items-center gap-3">
                 <div className="flex items-center gap-1">
@@ -142,15 +163,33 @@ export function ScanPanel({
               </div>
             )}
             <button
-              onClick={onStart}
+              onClick={handleStart}
               disabled={isPending || isReindexPending}
-              className="text-btn-sm font-bold text-primary hover:text-primary-pressed disabled:text-stone transition-colors"
+              className="min-h-11 text-btn-sm font-bold text-primary transition-colors hover:text-primary-pressed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-outer disabled:text-stone"
             >
-              {isPending ? "启动中…" : "重新扫描"}
+              {isPending ? "启动中…" : rebuild ? "重建并扫描" : "重新扫描"}
             </button>
           </div>
         )}
       </div>
+
+      {!status.running && (
+        <label className="flex min-h-11 cursor-pointer items-start gap-3 rounded-md border border-hairline bg-surface-soft px-3 py-2.5">
+          <input
+            type="checkbox"
+            checked={rebuild}
+            onChange={(event) => setRebuild(event.target.checked)}
+            disabled={isPending || isReindexPending}
+            className="mt-0.5 h-5 w-5 shrink-0 accent-danger focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-outer"
+          />
+          <span className="space-y-0.5">
+            <span className="block text-body-sm font-semibold text-ink">重建照片库索引</span>
+            <span className="block text-caption-sm leading-relaxed text-mute">
+              仅本次扫描生效。清除当前项目旧照片记录、metadata、AI 标签、向量和人脸关联后重新扫描；不会删除原始照片。
+            </span>
+          </span>
+        </label>
+      )}
 
       {/* Error alert */}
       {showError && (

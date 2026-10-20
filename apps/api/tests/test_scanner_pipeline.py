@@ -143,6 +143,29 @@ class ScannerPipelineTest(unittest.TestCase):
         self.assertEqual(state["current_stage"], "done")
         db.close()
 
+    def test_scan_project_rebuilds_index_before_loading_existing_photos(self) -> None:
+        db = self._SessionLocal()
+        calls: list[str] = []
+
+        with patch(
+            "app.services.scanner.rebuild_project_photo_index",
+            side_effect=lambda *args, **kwargs: calls.append("rebuild"),
+        ) as rebuild_mock, patch(
+            "app.services.scanner._load_existing_photo_index",
+            side_effect=lambda *args, **kwargs: calls.append("load") or {},
+        ) as load_index_mock, patch(
+            "app.services.scanner.cleanup_missing_project_photos",
+        ), patch(
+            "app.services.folder_service.recompute_project_folder_counts",
+        ):
+            state = scan_project(db, 1, rebuild=True)
+
+        rebuild_mock.assert_called_once()
+        load_index_mock.assert_called_once_with(db, 1)
+        self.assertEqual(calls, ["rebuild", "load"])
+        self.assertEqual(state["message"], "done")
+        db.close()
+
     def test_scan_project_discovers_supported_video_files(self) -> None:
         self._create_files(["clip.mp4", "notes.txt"])
         db = self._SessionLocal()

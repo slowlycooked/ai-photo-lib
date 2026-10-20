@@ -24,7 +24,7 @@ from .thumbnail import SUPPORTED_SUFFIXES, VIDEO_SUFFIXES, generate_thumbnail
 from .path_utils import build_relative_paths
 from .folder_service import ensure_folder_path
 from .location_service import resolve_photo_location
-from .photo_cleanup import cleanup_missing_project_photos
+from .photo_cleanup import cleanup_missing_project_photos, rebuild_project_photo_index
 
 logger = logging.getLogger(__name__)
 
@@ -671,6 +671,7 @@ def scan_project(
     db: Session,
     project_id: int,
     *,
+    rebuild: bool = False,
     progress_callback: Optional[ScanProgressCallback] = None,
 ) -> dict[str, Any]:
     """
@@ -736,6 +737,18 @@ def scan_project(
         logger.error("Project %d scan aborted: thumbnail path not writable: %s", project_id, thumb_root)
         _emit_progress(state, progress_callback)
         return _snapshot_state(state)
+
+    if rebuild:
+        _set_scan_stage(state, stage="rebuild", queue_depth=0)
+        state["message"] = "rebuilding"
+        _emit_progress(state, progress_callback)
+        rebuild_project_photo_index(
+            db,
+            project_id=project_id,
+            batch_size=_scan_db_batch_size(),
+        )
+        state["message"] = "scanning"
+        _emit_progress(state, progress_callback)
 
     existing_index = _load_existing_photo_index(db, project_id)
     pending_writes = 0

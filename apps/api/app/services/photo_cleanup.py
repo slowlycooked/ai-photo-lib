@@ -11,6 +11,7 @@ from typing import List, Optional, Sequence
 from sqlalchemy.orm import Session
 
 from ..config import settings
+from ..models.derivative import PhotoDerivative
 from ..models.photo import Photo
 from ..models.project import Project
 
@@ -216,6 +217,56 @@ def cleanup_missing_project_photos(
             project_id,
         )
 
+    return deleted_count
+
+
+def rebuild_project_photo_index(
+    db: Session,
+    *,
+    project_id: int,
+    batch_size: int = 100,
+) -> int:
+    """Delete one project's stale photo index without touching original files.
+
+    Photo-owned database rows are removed by foreign-key cascades. Cached
+    thumbnails and derivative files are removed explicitly because the newly
+    scanned photos receive new IDs and therefore cannot reuse those files.
+    """
+    photos = db.query(Photo).filter(Photo.project_id == project_id).all()
+    if not photos:
+        return 0
+
+    photo_ids = [photo.id for photo in photos]
+    derivative_paths = (
+        db.query(PhotoDerivative.path)
+        .filter(
+            PhotoDerivative.project_id == project_id,
+            PhotoDerivative.photo_id.in_(photo_ids),
+        )
+        .all()
+    )
+    for (path,) in derivative_paths:
+        _remove_file(path)
+
+    deleted_count = 0
+    pending = 0
+    for photo in photos:
+        _remove_file(photo.thumbnail_path)
+        db.delete(photo)
+        deleted_count += 1
+        pending += 1
+        if pending >= batch_size:
+            db.commit()
+            pending = 0
+
+    if pending > 0:
+        db.commit()
+
+    logger.info(
+        "Rebuild removed %d stale photo index records for project_id=%d",
+        deleted_count,
+        project_id,
+    )
     return deleted_count
 
 

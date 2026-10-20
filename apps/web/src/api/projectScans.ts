@@ -4,13 +4,14 @@ import type { ScanStatus } from "./types";
 export type ReindexScope = "all" | "missing_metadata" | "missing_location";
 
 export const projectScansApi = {
-  start: (projectId: number) =>
-    request<{ message: string; status: ScanStatus }>(`/projects/${projectId}/scan/start`, {
-      method: "POST",
-    }),
+  start: (projectId: number, rebuild = false) =>
+    request<{ message: string; status: ScanStatus }>(
+      `/projects/${projectId}/scan/start${rebuild ? "?rebuild=true" : ""}`,
+      { method: "POST" },
+    ),
 
-  status: (projectId: number) =>
-    request<ScanStatus>(`/projects/${projectId}/scan/status`),
+  status: (projectId: number, signal?: AbortSignal) =>
+    request<ScanStatus>(`/projects/${projectId}/scan/status`, { signal }),
 
   cancel: (projectId: number) =>
     request<ScanStatus>(`/projects/${projectId}/scan/cancel`, {

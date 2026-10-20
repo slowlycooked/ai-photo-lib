@@ -5,7 +5,7 @@ import { queryKeys } from "@/api/queryKeys";
 export function useScanStatus(projectId: number | null) {
   return useQuery({
     queryKey: queryKeys.projectScanStatus(projectId),
-    queryFn: () => api.projectScans.status(projectId!),
+    queryFn: ({ signal }) => api.projectScans.status(projectId!, signal),
     enabled: projectId !== null,
     refetchInterval: (query) => (query.state.data?.running ? 1500 : false),
     staleTime: 0,
@@ -36,9 +36,9 @@ export function useStartReindex(projectId: number | null) {
 export function useStartScan(projectId: number | null) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: () => {
+    mutationFn: (rebuild: boolean) => {
       if (projectId === null) return Promise.reject(new Error("No project selected"));
-      return api.projectScans.start(projectId);
+      return api.projectScans.start(projectId, rebuild);
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: queryKeys.projectScanStatus(projectId) });

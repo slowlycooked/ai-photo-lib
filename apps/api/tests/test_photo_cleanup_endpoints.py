@@ -30,6 +30,7 @@ from app.models.project import Project  # noqa: E402
 from app.models.project_task import ProjectTask  # noqa: E402
 from app.services.project_task_app_service import ProjectTaskAppService  # noqa: E402
 from app.services.project_task_service import TASK_TYPE_LIBRARY_SCAN  # noqa: E402
+from app.services.photo_cleanup import rebuild_project_photo_index  # noqa: E402
 from app.services.scanner import scan_project  # noqa: E402
 
 ORIGINAL_TRASH_MANIFEST = "pending-original-trash.jsonl"
@@ -128,6 +129,26 @@ CREATE TABLE project_tasks (
 
 CREATE INDEX ix_project_tasks_project_type_status
     ON project_tasks (project_id, task_type, status);
+
+CREATE TABLE photo_derivatives (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id INTEGER NOT NULL,
+    photo_id INTEGER NOT NULL,
+    kind TEXT NOT NULL,
+    path TEXT,
+    format TEXT,
+    width INTEGER,
+    height INTEGER,
+    source_path TEXT,
+    source_mtime NUMERIC,
+    source_hash TEXT,
+    quality INTEGER,
+    status TEXT NOT NULL DEFAULT 'ready',
+    error_message TEXT,
+    face_detection_id INTEGER,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 
 CREATE UNIQUE INDEX uq_project_tasks_one_active_scan
     ON project_tasks (project_id)
@@ -415,6 +436,38 @@ class PhotoDeleteEndpointTest(unittest.TestCase):
         entries = self._trash_manifest_entries()
         self.assertEqual([entry["photo_id"] for entry in entries], [101])
 
+    def test_rebuild_photo_index_clears_only_current_project_caches(self) -> None:
+        derivative = self._thumb.parent / "project-1-derivative.jpg"
+        Image.new("RGB", (16, 16), color=(50, 60, 70)).save(derivative, "JPEG")
+        with self._engine.begin() as conn:
+            conn.execute(
+                sa.text(
+                    """
+                    INSERT INTO photo_derivatives (project_id, photo_id, kind, path)
+                    VALUES (1, 101, 'ai_thumbnail', :path)
+                    """
+                ),
+                {"path": str(derivative)},
+            )
+
+        db = self._SessionLocal()
+        try:
+            deleted_count = rebuild_project_photo_index(db, project_id=1)
+        finally:
+            db.close()
+
+        self.assertEqual(deleted_count, 2)
+        self.assertEqual(self._count_photo(101), 0)
+        self.assertEqual(self._count_photo(102), 0)
+        self.assertEqual(self._count_photo(201), 1)
+        self.assertFalse(self._thumb.exists())
+        self.assertFalse(self._batch_thumb.exists())
+        self.assertFalse(derivative.exists())
+        self.assertTrue(self._original.exists())
+        self.assertTrue(self._batch_original.exists())
+        self.assertTrue(self._project2_original.exists())
+        self.assertTrue(self._project2_thumb.exists())
+
     def test_scan_start_and_status_expose_fail_fast_config_error(self) -> None:
         with self._engine.begin() as conn:
             conn.execute(
@@ -438,6 +491,8 @@ class PhotoDeleteEndpointTest(unittest.TestCase):
             self.assertIsNotNone(task)
             assert task is not None
             ProjectTaskAppService(db, session_factory=self._SessionLocal).process_task(task)
+            # Match the worker's transaction boundary before querying via HTTP.
+            db.commit()
         finally:
             db.close()
 
@@ -447,6 +502,27 @@ class PhotoDeleteEndpointTest(unittest.TestCase):
         self.assertFalse(status_body["running"])
         self.assertGreaterEqual(int(status_body.get("errors") or 0), 1)
         self.assertIn("Missing required project thumbnail_path", status_body.get("message", ""))
+
+    def test_scan_start_records_optional_rebuild_request(self) -> None:
+        res = self.client.post("/projects/1/scan/start?rebuild=true")
+        self.assertEqual(res.status_code, 200)
+
+        db = self._SessionLocal()
+        try:
+            task = (
+                db.query(ProjectTask)
+                .filter(
+                    ProjectTask.project_id == 1,
+                    ProjectTask.task_type == TASK_TYPE_LIBRARY_SCAN,
+                )
+                .order_by(ProjectTask.id.desc())
+                .first()
+            )
+            self.assertIsNotNone(task)
+            assert task is not None
+            self.assertEqual(task.request_params, {"rebuild": True})
+        finally:
+            db.close()
 
     def test_scan_start_rejects_invalid_project_library_path_with_actionable_error(self) -> None:
         with self._engine.begin() as conn:

@@ -1,4 +1,5 @@
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, expect, it, vi } from "vitest";
 
@@ -44,6 +45,60 @@ function buildStatus(overrides: Partial<ScanStatus> = {}): ScanStatus {
 }
 
 describe("ScanPanel", () => {
+  it("keeps rebuild off by default and confirms before a rebuild scan", async () => {
+    taskFailuresMock.mockResolvedValue({ total: 0, items: [] });
+    const user = userEvent.setup();
+    const onStart = vi.fn();
+    const confirmMock = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ScanPanel
+          projectId={7}
+          status={buildStatus()}
+          isLoading={false}
+          onStart={onStart}
+          isPending={false}
+        />
+      </QueryClientProvider>,
+    );
+
+    const rebuildToggle = screen.getByRole("checkbox", { name: /重建照片库索引/ });
+    expect(rebuildToggle).not.toBeChecked();
+    await user.click(rebuildToggle);
+    await user.click(screen.getByRole("button", { name: "重建并扫描" }));
+
+    expect(confirmMock).toHaveBeenCalledOnce();
+    expect(onStart).toHaveBeenCalledWith(true);
+    expect(rebuildToggle).not.toBeChecked();
+    confirmMock.mockRestore();
+  });
+
+  it("starts a normal scan without confirmation when rebuild is off", async () => {
+    taskFailuresMock.mockResolvedValue({ total: 0, items: [] });
+    const user = userEvent.setup();
+    const onStart = vi.fn();
+    const confirmMock = vi.spyOn(window, "confirm");
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ScanPanel
+          projectId={7}
+          status={buildStatus()}
+          isLoading={false}
+          onStart={onStart}
+          isPending={false}
+        />
+      </QueryClientProvider>,
+    );
+
+    await user.click(screen.getByRole("button", { name: "重新扫描" }));
+
+    expect(confirmMock).not.toHaveBeenCalled();
+    expect(onStart).toHaveBeenCalledWith(false);
+    confirmMock.mockRestore();
+  });
+
   it("shows unified failure details for finished scans with errors", async () => {
     taskFailuresMock.mockResolvedValue({
       total: 1,
