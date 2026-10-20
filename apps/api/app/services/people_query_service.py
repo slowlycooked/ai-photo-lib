@@ -202,6 +202,21 @@ class PeopleQueryService:
         payload.assignments_total = total
         payload.assignments_limit = assignment_limit
         payload.assignments_has_more = len(rows) < total
+        payload.review_face_ids = [
+            face_id for (face_id,) in (
+                self._db.query(PersonFaceAssignment.face_detection_id)
+                .join(FaceDetection, FaceDetection.id == PersonFaceAssignment.face_detection_id)
+                .filter(
+                    PersonFaceAssignment.project_id == project_id,
+                    PersonFaceAssignment.person_id == person_id,
+                    PersonFaceAssignment.assignment_status == STATUS_REVIEW_PENDING,
+                    FaceDetection.project_id == project_id,
+                )
+                .order_by(PersonFaceAssignment.updated_at.desc(), PersonFaceAssignment.id.desc())
+                .limit(500)
+                .all()
+            )
+        ]
         return payload
 
     def _load_negative_constraints(

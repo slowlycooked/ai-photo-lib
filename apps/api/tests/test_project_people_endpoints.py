@@ -250,6 +250,42 @@ class ProjectPeopleEndpointsTest(unittest.TestCase):
         self.assertEqual(body["id"], 101)
         self.assertEqual(len(body["assignments"]), 2)
         self.assertEqual(body["assignments"][0]["face_detection"]["project_id"], 1)
+        self.assertEqual(body["review_face_ids"], [302])
+
+    def test_detail_review_ids_are_bounded_and_independent_of_assignment_page(self) -> None:
+        with self._engine.begin() as conn:
+            conn.execute(sa.text("""
+                INSERT INTO face_detections
+                  (id, project_id, photo_id, bbox_x, bbox_y, bbox_w, bbox_h)
+                VALUES (:id, 1, :id, 0, 0, 20, 20)
+            """), [{"id": face_id} for face_id in range(1000, 1505)])
+            conn.execute(sa.text("""
+                INSERT INTO person_face_assignments
+                  (id, project_id, person_id, face_detection_id,
+                   assignment_status, assignment_source, updated_at)
+                VALUES (:id, 1, 101, :id, 'review_pending', 'similarity_match', '2026-01-01')
+            """), [{"id": face_id} for face_id in range(1000, 1505)])
+            # Newer rows outside the requested person/project must not enter the batch.
+            conn.execute(sa.text("""
+                INSERT INTO person_face_assignments
+                  (id, project_id, person_id, face_detection_id,
+                   assignment_status, assignment_source, updated_at)
+                VALUES
+                  (2001, 2, 101, 401, 'review_pending', 'similarity_match', '2099-01-01'),
+                  (2002, 1, 102, 301, 'review_pending', 'similarity_match', '2099-01-01'),
+                  (2003, 1, 101, 401, 'review_pending', 'similarity_match', '2099-01-01')
+            """))
+        response = self.client.get("/projects/1/people/101?assignment_limit=1")
+        self.assertEqual(response.status_code, 200)
+        detail = response.json()
+        self.assertEqual(len(detail["assignments"]), 1)
+        self.assertEqual(len(detail["review_face_ids"]), 500)
+        self.assertNotIn(301, detail["review_face_ids"])
+        self.assertNotIn(401, detail["review_face_ids"])
+        # Match the existing review endpoint's ordering and 500-item batch boundary.
+        review = self.client.get("/projects/1/people/review?person_id=101&limit=500")
+        self.assertEqual(review.status_code, 200)
+        self.assertEqual(detail["review_face_ids"], [item["face_detection_id"] for item in review.json()["items"]])
 
     def test_project_cannot_read_other_project_person(self) -> None:
         res = self.client.get("/projects/1/people/201")

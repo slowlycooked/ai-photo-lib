@@ -31,6 +31,7 @@ export const projectPeopleApi = {
     includeUnnamed = true,
     limit = 200,
     filters?: ProjectPeopleFilters,
+    signal?: AbortSignal,
   ) =>
     request<PersonListResponse>(
       `/projects/${projectId}/people${qs({
@@ -42,6 +43,7 @@ export const projectPeopleApi = {
         min_auto_assigned_count: filters?.min_auto_assigned_count,
         q: filters?.q,
       })}`,
+      { signal },
     ),
 
   create: (projectId: number, body: PersonCreateRequest) =>
@@ -51,9 +53,10 @@ export const projectPeopleApi = {
       body: JSON.stringify(body),
     }),
 
-  get: (projectId: number, personId: number, assignmentLimit = 120) =>
+  get: (projectId: number, personId: number, assignmentLimit = 120, signal?: AbortSignal) =>
     request<PersonDetail>(
       `/projects/${projectId}/people/${personId}${qs({ assignment_limit: assignmentLimit })}`,
+      { signal },
     ),
 
   rename: (projectId: number, personId: number, displayName: string) =>
@@ -128,6 +131,7 @@ export const projectPeopleApi = {
     personId?: number | null,
     limit = 200,
     offset = 0,
+    signal?: AbortSignal,
   ) =>
     request<PersonReviewListResponse>(
       `/projects/${projectId}/people/review${qs({
@@ -135,6 +139,7 @@ export const projectPeopleApi = {
         limit,
         offset,
       })}`,
+      { signal },
     ),
 
   batchConfirmReview: (

@@ -63,20 +63,23 @@ export function usePeopleReviewPage() {
 
   const { data: peopleData } = useQuery({
     queryKey: ["project-people", selectedProjectId],
-    queryFn: () => api.projectPeople.list(selectedProjectId, true, 500),
+    queryFn: ({ signal }) => api.projectPeople.list(selectedProjectId, true, 500, undefined, signal),
     enabled: selectedProjectId > 0,
+    staleTime: 15_000,
   });
 
   const { data: reviewData, isLoading, isFetching, error } = useQuery({
     queryKey: ["project-review-page", selectedProjectId, selectedReviewPersonId, page, pageSize],
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       api.projectPeople.reviewPending(
         selectedProjectId,
         selectedReviewPersonId,
         pageSize,
         (page - 1) * pageSize,
+        signal,
       ),
     enabled: selectedProjectId > 0,
+    staleTime: 15_000,
     placeholderData: (previousData) => previousData,
   });
 

@@ -40,6 +40,11 @@ export function usePeoplePage() {
   const [createDisplayName, setCreateDisplayName] = useState("");
   const [filterMode, setFilterMode] = useState<PeopleFilterMode>("all");
   const [searchText, setSearchText] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearch(searchText.trim()), 250);
+    return () => clearTimeout(timer);
+  }, [searchText]);
   const [manualArchivedPersonIds, setManualArchivedPersonIds] = useState<Set<number>>(new Set());
   const [manualManagedPersonIds, setManualManagedPersonIds] = useState<Set<number>>(new Set());
   const [selectedPersonIds, setSelectedPersonIds] = useState<number[]>([]);
@@ -82,34 +87,43 @@ export function usePeoplePage() {
 
   const selectedPersonIdRaw = searchParams.get("person_id");
   const selectedPersonId = selectedPersonIdRaw ? Number(selectedPersonIdRaw) : null;
+  const usesDefaultList = filterMode === "all" && debouncedSearch.length === 0;
 
   const {
     data: peopleData,
     isLoading: peopleLoading,
     error: peopleError,
   } = useQuery({
-    queryKey: [...queryKeys.projectPeople(selectedProjectId, true), filterMode, searchText.trim()],
-    queryFn: () =>
-      api.projectPeople.list(selectedProjectId!, true, 200, {
-        is_named: filterMode === "named" ? true : filterMode === "unnamed" ? false : undefined,
-        has_review_pending: filterMode === "review_pending" ? true : undefined,
-        min_auto_assigned_count: filterMode === "auto_assigned" ? 1 : undefined,
-        q: searchText.trim() || undefined,
-      }),
+    queryKey: usesDefaultList
+      ? ["project-people", selectedProjectId, "archive-candidates"]
+      : [...queryKeys.projectPeople(selectedProjectId, true), filterMode, debouncedSearch],
+    queryFn: ({ signal }) =>
+      api.projectPeople.list(
+        selectedProjectId!,
+        true,
+        usesDefaultList ? 500 : 200,
+        usesDefaultList ? undefined : {
+          is_named: filterMode === "named" ? true : filterMode === "unnamed" ? false : undefined,
+          has_review_pending: filterMode === "review_pending" ? true : undefined,
+          min_auto_assigned_count: filterMode === "auto_assigned" ? 1 : undefined,
+          q: debouncedSearch || undefined,
+        },
+        signal,
+      ),
     enabled: selectedProjectId != null,
-    staleTime: 15_000,
+    staleTime: 30_000,
   });
 
   // Dedicated query for archive candidates — runs independently of the active filter
   // so the archive section stays visible even when named/review_pending/etc. filters are applied.
   const { data: archivePeopleData } = useQuery({
-    queryKey: ["project-people-archive-candidates", selectedProjectId],
-    queryFn: () => api.projectPeople.list(selectedProjectId!, true, 500),
+    queryKey: ["project-people", selectedProjectId, "archive-candidates"],
+    queryFn: ({ signal }) => api.projectPeople.list(selectedProjectId!, true, 500, undefined, signal),
     enabled: selectedProjectId != null,
     staleTime: 30_000,
   });
 
-  const people = useMemo(() => peopleData?.items ?? [], [peopleData]);
+  const people = useMemo(() => (peopleData?.items ?? []).slice(0, 200), [peopleData]);
   const archivedPeople = useMemo(
     () =>
       (archivePeopleData?.items ?? []).filter(
@@ -183,11 +197,12 @@ export function usePeoplePage() {
       ...queryKeys.projectPerson(selectedProjectId, resolvedSelectedPersonId),
       personDetailAssignmentLimit,
     ],
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       api.projectPeople.get(
         selectedProjectId!,
         resolvedSelectedPersonId!,
         personDetailAssignmentLimit,
+        signal,
       ),
     enabled: resolvedSelectedPersonId != null,
     staleTime: 15_000,
@@ -196,18 +211,20 @@ export function usePeoplePage() {
 
   const { data: reviewData } = useQuery({
     queryKey: ["project-review-pending", selectedProjectId, resolvedSelectedPersonId],
-    queryFn: () => api.projectPeople.reviewPending(selectedProjectId!, resolvedSelectedPersonId, 500, 0),
-    enabled: resolvedSelectedPersonId != null,
+    queryFn: ({ signal }) => api.projectPeople.reviewPending(selectedProjectId!, resolvedSelectedPersonId, 500, 0, signal),
+    // Compatibility with an older API; the current detail response includes these IDs.
+    enabled: resolvedSelectedPersonId != null && personDetail?.id === resolvedSelectedPersonId
+      && !personFetching && personDetail.review_face_ids == null,
     staleTime: 15_000,
   });
 
   const { data: rematchStatus } = useQuery({
     queryKey: ["face-rematch-unknown-status", selectedProjectId, resolvedSelectedPersonId],
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       api.projectFaces.rematchUnknownStatus(selectedProjectId!, {
         scope: "person",
         person_id: resolvedSelectedPersonId!,
-      }),
+      }, signal),
     enabled: selectedProjectId != null && resolvedSelectedPersonId != null,
     refetchInterval: (query) => {
       const d = query.state.data;
@@ -217,7 +234,6 @@ export function usePeoplePage() {
 
   const refreshPeopleData = () => {
     queryClient.invalidateQueries({ queryKey: ["project-people", selectedProjectId] });
-    queryClient.invalidateQueries({ queryKey: ["project-people-archive-candidates", selectedProjectId] });
     queryClient.invalidateQueries({
       queryKey: queryKeys.projectPerson(selectedProjectId, resolvedSelectedPersonId),
     });
@@ -486,7 +502,9 @@ export function usePeoplePage() {
   const moveCandidates = selectedPersonIsManageable
     ? managedPeople.filter((person) => person.id !== resolvedSelectedPersonId)
     : [];
-  const reviewFaceIds = (reviewData?.items ?? []).map((item) => item.face_detection_id);
+  const reviewFaceIds = personDetail?.id === resolvedSelectedPersonId
+    ? personDetail.review_face_ids ?? (reviewData?.items ?? []).map((item) => item.face_detection_id)
+    : [];
   const loadedAssignmentCount = personDetail?.assignments.length ?? 0;
   const totalAssignmentCount =
     personDetail?.assignments_total ?? personDetail?.sample_count ?? loadedAssignmentCount;

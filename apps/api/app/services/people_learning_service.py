@@ -458,24 +458,71 @@ def _search_profile_matches_embedding(
     )
 
 
-def _best_prototype_match(
+def _load_similar_negative_person_ids(
+    db: Session,
+    *,
+    project_id: int,
     target_vector: list[float],
-    candidate_rows: list[tuple[PersonPrototype, Person]],
-    negatives: set[int],
-) -> tuple[Optional[int], float]:
-    best_person_id: Optional[int] = None
-    best_similarity = -1.0
-    for prototype, person in candidate_rows:
-        if person.id in negatives:
-            continue
-        similarity = _cosine_similarity(
-            target_vector,
-            _coerce_vector(prototype.embedding_vector),
+    candidate_scores: dict[int, float],
+    model_name: str,
+    model_version: str,
+    embedding_dim: int,
+    similarity_threshold: float,
+    min_quality: float,
+) -> set[int]:
+    """Generalize human exclusions only when strong negative evidence wins."""
+    if not candidate_scores:
+        return set()
+    rows = (
+        db.query(
+            FaceNegativeConstraint.not_person_id,
+            FaceEmbedding.face_detection_id,
+            FaceEmbedding.embedding_vector,
         )
-        if similarity > best_similarity:
-            best_similarity = similarity
-            best_person_id = int(person.id)
-    return best_person_id, best_similarity
+        .join(
+            FaceEmbedding,
+            sa.and_(
+                FaceEmbedding.project_id == FaceNegativeConstraint.project_id,
+                FaceEmbedding.face_detection_id == FaceNegativeConstraint.face_detection_id,
+            ),
+        )
+        .join(
+            FaceDetection,
+            sa.and_(
+                FaceDetection.project_id == FaceEmbedding.project_id,
+                FaceDetection.id == FaceEmbedding.face_detection_id,
+            ),
+        )
+        .filter(
+            FaceNegativeConstraint.project_id == project_id,
+            FaceNegativeConstraint.not_person_id.in_(candidate_scores),
+            FaceNegativeConstraint.source.in_(
+                ["human_rejected", "human_corrected", "human_split"]
+            ),
+            FaceEmbedding.model_name == model_name,
+            FaceEmbedding.model_version == model_version,
+            FaceEmbedding.embedding_dim == embedding_dim,
+            FaceEmbedding.embedding_vector.isnot(None),
+            FaceDetection.status == "embedded",
+            FaceDetection.face_quality_score >= min_quality,
+        )
+        .order_by(FaceEmbedding.embedded_at.desc().nullslast(), FaceEmbedding.id.desc())
+        .all()
+    )
+    blocked: set[int] = set()
+    seen: set[tuple[int, int]] = set()
+    for person_id, face_id, raw_vector in rows:
+        key = (int(person_id), int(face_id))
+        if key in seen:
+            continue
+        seen.add(key)
+        vector = _coerce_vector(raw_vector)
+        if len(vector) != embedding_dim:
+            continue
+        similarity = _cosine_similarity(target_vector, vector)
+        if similarity >= similarity_threshold and similarity >= candidate_scores[int(person_id)]:
+            blocked.add(int(person_id))
+    return blocked
 
 
 def _resolve_match_candidate(
@@ -488,6 +535,8 @@ def _resolve_match_candidate(
     model_name: str,
     model_version: str,
     negative_constraints_enabled: bool,
+    negative_similarity_threshold: float,
+    min_negative_quality: float,
     target_person_id: Optional[int],
     target_search_profile: Optional[PersonSearchProfile],
 ) -> tuple[Optional[int], float]:
@@ -497,6 +546,7 @@ def _resolve_match_candidate(
         face_detection_id=face_detection_id,
         enabled=negative_constraints_enabled,
     )
+    candidate_scores: dict[int, float] = {}
     if target_search_profile is not None:
         if not _search_profile_matches_embedding(
             target_search_profile,
@@ -507,24 +557,48 @@ def _resolve_match_candidate(
             embedding_dim=embedding_dim,
         ):
             return None, -1.0
-        if target_search_profile.person_id in negatives:
-            return None, -1.0
-        return (
-            target_search_profile.person_id,
-            _cosine_similarity(target_vector, target_search_profile.embedding_vector),
+        candidate_scores = {
+            target_search_profile.person_id: _cosine_similarity(
+                target_vector, target_search_profile.embedding_vector
+            ),
+        }
+    else:
+        candidate_rows = _load_candidate_prototypes(
+            db,
+            project_id=project_id,
+            model_name=model_name,
+            model_version=model_version,
+            embedding_dim=embedding_dim,
+            target_person_id=target_person_id,
         )
+        for prototype, person in candidate_rows:
+            similarity = _cosine_similarity(
+                target_vector, _coerce_vector(prototype.embedding_vector)
+            )
+            candidate_scores[int(person.id)] = max(
+                candidate_scores.get(int(person.id), -1.0), similarity
+            )
 
-    candidate_rows = _load_candidate_prototypes(
-        db,
-        project_id=project_id,
-        model_name=model_name,
-        model_version=model_version,
-        embedding_dim=embedding_dim,
-        target_person_id=target_person_id,
+    candidate_scores = {key: score for key, score in candidate_scores.items() if key not in negatives}
+    if negative_constraints_enabled:
+        negatives.update(
+            _load_similar_negative_person_ids(
+                db,
+                project_id=project_id,
+                target_vector=target_vector,
+                candidate_scores=candidate_scores,
+                model_name=model_name,
+                model_version=model_version,
+                embedding_dim=embedding_dim,
+                similarity_threshold=negative_similarity_threshold,
+                min_quality=min_negative_quality,
+            )
+        )
+    return max(
+        ((key, score) for key, score in candidate_scores.items() if key not in negatives),
+        key=lambda candidate: candidate[1],
+        default=(None, -1.0),
     )
-    if not candidate_rows:
-        return None, -1.0
-    return _best_prototype_match(target_vector, candidate_rows, negatives)
 
 
 def match_face_detection_to_person(
@@ -553,6 +627,19 @@ def match_face_detection_to_person(
         .first()
     )
     if detection is None:
+        return None
+
+    # Every caller, including a repeated single-photo scan, must preserve labels.
+    human_assignment = (
+        db.query(PersonFaceAssignment.id)
+        .filter(
+            PersonFaceAssignment.project_id == project_id,
+            PersonFaceAssignment.face_detection_id == face_detection_id,
+            PersonFaceAssignment.assignment_status.in_(POSITIVE_ASSIGNMENT_STATUSES),
+        )
+        .first()
+    )
+    if human_assignment is not None:
         return None
 
     embedding = (
@@ -586,6 +673,8 @@ def match_face_detection_to_person(
         model_name=settings.face_embedding_model,
         model_version=embedding_model_version,
         negative_constraints_enabled=bool(settings.enable_negative_constraints),
+        negative_similarity_threshold=float(settings.auto_accept_threshold),
+        min_negative_quality=float(settings.min_quality_for_prototype),
         target_person_id=target_person_id,
         target_search_profile=target_search_profile,
     )

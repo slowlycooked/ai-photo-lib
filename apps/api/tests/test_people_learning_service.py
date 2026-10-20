@@ -4,7 +4,9 @@ import json
 import os
 import tempfile
 from datetime import datetime
+from unittest.mock import Mock
 
+import pytest
 import sqlalchemy as sa
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -21,6 +23,7 @@ from app.services.people_learning_service import (  # noqa: E402
     rebuild_person_centroid_prototype,
 )
 from app.services.face_rematch_service import rematch_unknown_faces  # noqa: E402
+from app.services.person_assignment_workflow_service import PersonAssignmentWorkflowService  # noqa: E402
 from app.models.project import Project  # noqa: E402,F401
 
 
@@ -238,6 +241,141 @@ def test_rebuild_person_centroid_prototype() -> None:
         assert row.sample_count == 1
         assert row.embedding_dim == 128
         assert row.embedding_vector == [1.0, 0.0] + ([0.0] * 126)
+    finally:
+        db.close()
+
+
+def test_human_feedback_learns_exclusions_and_can_be_corrected() -> None:
+    db = _make_session()
+    try:
+        # A different photo of the same lookalike originally matches this person.
+        db.execute(sa.text("UPDATE face_embeddings SET embedding_vector = :vector WHERE face_detection_id = 203"),
+                   {"vector": json.dumps([0.94, 0.06] + [0.0] * 126)})
+        rebuild_person_centroid_prototype(db, project_id=1, person_id=101)
+        assert match_face_detection_to_person(db, project_id=1, face_detection_id=202) is not None
+        effects = Mock()
+        workflow = PersonAssignmentWorkflowService(db, effects)
+
+        workflow.exclude_assignment(project_id=1, person_id=101, face_id=202)
+
+        assert match_face_detection_to_person(db, project_id=1, face_detection_id=202) is None
+        assert match_face_detection_to_person(db, project_id=1, face_detection_id=203) is None
+        assert rematch_unknown_faces(db, project_id=1, scope="person", person_id=101).matched_faces == 0
+        effects.set.assert_called_with(project_id=1, rebuilt_person_ids=[101],
+                                       rematch_scope="person", rematch_person_id=101)
+
+        # Correcting an accidental exclusion removes its negative evidence.
+        workflow.confirm_assignment(project_id=1, person_id=101, face_id=202)
+        decision = match_face_detection_to_person(db, project_id=1, face_detection_id=203)
+        assert decision is not None
+        assert decision.person_id == 101
+        assert db.execute(sa.text("SELECT sample_count FROM person_prototypes")).scalar_one() == 2
+    finally:
+        db.close()
+
+
+@pytest.mark.parametrize("target_person_id", [None, 101, 102])
+@pytest.mark.parametrize("status", ["human_confirmed", "human_corrected"])
+def test_matching_never_overwrites_human_confirmed_faces(target_person_id: int | None, status: str) -> None:
+    db = _make_session()
+    try:
+        rebuild_person_centroid_prototype(db, project_id=1, person_id=101)
+        db.execute(sa.text("UPDATE person_face_assignments SET assignment_status = :status WHERE id = 401"), {"status": status})
+        assert match_face_detection_to_person(db, project_id=1, face_detection_id=201,
+                                              target_person_id=target_person_id,
+                                              force_auto_assigned=True) is None
+        row = db.execute(sa.text("SELECT assignment_status, is_positive_sample FROM person_face_assignments WHERE id = 401")).one()
+        assert tuple(row) == (status, 1)
+        assert db.execute(sa.text("SELECT count(*) FROM person_face_assignments")).scalar_one() == 1
+    finally:
+        db.close()
+
+
+@pytest.mark.parametrize("change", [
+    "UPDATE face_negative_constraints SET project_id = 2",
+    "UPDATE face_embeddings SET project_id = 2 WHERE face_detection_id = 203",
+    "UPDATE face_detections SET project_id = 2 WHERE id = 203",
+    "UPDATE face_embeddings SET model_name = 'other' WHERE face_detection_id = 203",
+    "UPDATE face_embeddings SET model_version = 'v2' WHERE face_detection_id = 203",
+    "UPDATE face_embeddings SET embedding_dim = 64 WHERE face_detection_id = 203",
+    "UPDATE face_detections SET face_quality_score = 0.4 WHERE id = 203",
+    "UPDATE face_detections SET face_quality_score = NULL WHERE id = 203",
+    "UPDATE face_negative_constraints SET source = 'prototype_rematch'",
+    "UPDATE project_face_settings SET enable_negative_constraints = 0",
+])
+def test_negative_learning_requires_compatible_human_evidence(change: str) -> None:
+    db = _make_session()
+    try:
+        rebuild_person_centroid_prototype(db, project_id=1, person_id=101)
+        db.execute(sa.text("UPDATE face_embeddings SET embedding_vector = :vector WHERE face_detection_id = 203"),
+                   {"vector": json.dumps([0.95, 0.05] + [0.0] * 126)})
+        db.execute(sa.text("INSERT INTO face_negative_constraints (project_id, face_detection_id, not_person_id, source) VALUES (1, 203, 101, 'human_rejected')"))
+        assert match_face_detection_to_person(db, project_id=1, face_detection_id=202) is None
+        db.execute(sa.text(change))
+        db.expire_all()
+        assert match_face_detection_to_person(db, project_id=1, face_detection_id=202) is not None
+    finally:
+        db.close()
+
+
+def test_negative_learning_keeps_stronger_positive_match() -> None:
+    db = _make_session()
+    try:
+        rebuild_person_centroid_prototype(db, project_id=1, person_id=101)
+        db.execute(sa.text("INSERT INTO face_negative_constraints (project_id, face_detection_id, not_person_id, source) VALUES (1, 203, 101, 'human_rejected')"))
+        # The negative is fairly similar, but the positive centroid is closer.
+        decision = match_face_detection_to_person(db, project_id=1, face_detection_id=202)
+        assert decision is not None
+        assert decision.person_id == 101
+    finally:
+        db.close()
+
+
+def test_negative_learning_can_select_another_person() -> None:
+    db = _make_session()
+    try:
+        rebuild_person_centroid_prototype(db, project_id=1, person_id=101)
+        db.execute(sa.text("INSERT INTO persons (id, project_id, display_name, is_named) VALUES (102, 1, '另一个人', 1)"))
+        db.execute(sa.text("""
+            INSERT INTO person_prototypes (project_id, person_id, prototype_type,
+                embedding_vector, sample_count, model_name, model_version, embedding_dim)
+            VALUES (1, 102, 'centroid', :vector, 1, 'sface', '', 128)
+        """), {"vector": json.dumps([0.8, 0.2] + [0.0] * 126)})
+        db.execute(sa.text("UPDATE face_embeddings SET embedding_vector = :vector WHERE face_detection_id = 203"),
+                   {"vector": json.dumps([0.95, 0.05] + [0.0] * 126)})
+        db.execute(sa.text("INSERT INTO face_negative_constraints (project_id, face_detection_id, not_person_id, source) VALUES (1, 203, 101, 'human_corrected')"))
+
+        decision = match_face_detection_to_person(db, project_id=1, face_detection_id=202)
+
+        assert decision is not None
+        assert decision.person_id == 102
+    finally:
+        db.close()
+
+
+def test_weak_negative_evidence_does_not_remove_review_candidate() -> None:
+    db = _make_session()
+    try:
+        rebuild_person_centroid_prototype(db, project_id=1, person_id=101)
+        db.execute(sa.text("INSERT INTO face_negative_constraints (project_id, face_detection_id, not_person_id, source) VALUES (1, 202, 101, 'human_rejected')"))
+        # Negative cosine is about 0.743: stronger than the centroid's 0.707,
+        # but below the 0.75 minimum required to generalize an exclusion.
+        decision = match_face_detection_to_person(db, project_id=1, face_detection_id=203)
+        assert decision is not None
+        assert decision.assignment_status == "review_pending"
+    finally:
+        db.close()
+
+
+def test_auto_matches_do_not_train_the_positive_prototype() -> None:
+    db = _make_session()
+    try:
+        rebuild_person_centroid_prototype(db, project_id=1, person_id=101)
+        assert match_face_detection_to_person(db, project_id=1, face_detection_id=202) is not None
+        prototype = rebuild_person_centroid_prototype(db, project_id=1, person_id=101)
+        assert prototype is not None
+        assert prototype.sample_count == 1
+        assert prototype.source_assignment_ids == [401]
     finally:
         db.close()
 

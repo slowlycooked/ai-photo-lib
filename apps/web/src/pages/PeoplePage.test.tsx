@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -194,7 +194,7 @@ function renderPage(initialEntry: string) {
     },
   });
 
-  return render(
+  const view = render(
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={[initialEntry]}>
         <Routes>
@@ -204,6 +204,7 @@ function renderPage(initialEntry: string) {
       </MemoryRouter>
     </QueryClientProvider>,
   );
+  return { ...view, client };
 }
 
 describe("PeoplePage", () => {
@@ -401,7 +402,7 @@ describe("PeoplePage", () => {
 
     await screen.findByText("爸爸");
     await waitFor(() => {
-      expect(personMock).toHaveBeenCalledWith(1, 101, 40);
+      expect(personMock).toHaveBeenCalledWith(1, 101, 40, expect.any(AbortSignal));
     });
     expect(
       await screen.findByRole("img", { name: "样本结构：正样本 0，候选 1，负样本 0" }),
@@ -438,8 +439,45 @@ describe("PeoplePage", () => {
           has_review_pending: true,
           q: "爸",
         }),
+        expect.any(AbortSignal),
       );
     });
+  });
+
+  it("shares the default people list with archive candidates", async () => {
+    renderPage("/projects/1/people");
+    await screen.findByText("爸爸");
+    expect(peopleMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("refreshes the shared list when another page invalidates people", async () => {
+    const { client } = renderPage("/projects/1/people");
+    await screen.findByText("爸爸");
+    peopleMock.mockClear();
+    await act(async () => {
+      await client.invalidateQueries({ queryKey: ["project-people", 1] });
+    });
+    expect(peopleMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("waits for a pause in typing before searching people", async () => {
+    const user = userEvent.setup();
+    renderPage("/projects/1/people");
+    await screen.findByText("爸爸");
+    peopleMock.mockClear();
+    await user.type(screen.getByPlaceholderText("按人物名搜索"), "爸爸");
+    await waitFor(() => expect(peopleMock).toHaveBeenCalled());
+    expect(peopleMock).toHaveBeenCalledTimes(1);
+    expect(peopleMock.mock.calls[0][3]?.q).toBe("爸爸");
+  });
+
+  it("uses lightweight review IDs bundled with person detail", async () => {
+    personMock.mockImplementation((_projectId: number, personId: number) =>
+      Promise.resolve({ ...buildDetail(personId), review_face_ids: [901] }),
+    );
+    renderPage("/projects/1/people");
+    await screen.findByText(/当前人物仍有 1 张待确认人脸/);
+    expect(reviewPendingMock).not.toHaveBeenCalled();
   });
 
   it("creates a person and switches detail to the new record", async () => {
@@ -457,7 +495,7 @@ describe("PeoplePage", () => {
       );
     });
     await waitFor(() => {
-      expect(personMock).toHaveBeenCalledWith(1, 103, 40);
+      expect(personMock).toHaveBeenCalledWith(1, 103, 40, expect.any(AbortSignal));
     });
   });
 
@@ -583,7 +621,7 @@ describe("PeoplePage", () => {
       expect(rematchUnknownStatusMock).toHaveBeenCalledWith(1, {
         scope: "person",
         person_id: 102,
-      });
+      }, expect.any(AbortSignal));
     });
   });
 
@@ -635,13 +673,13 @@ describe("PeoplePage", () => {
 
     await screen.findByText("爸爸");
     await waitFor(() => {
-      expect(personMock).toHaveBeenCalledWith(1, 101, 40);
+      expect(personMock).toHaveBeenCalledWith(1, 101, 40, expect.any(AbortSignal));
     });
 
     await user.click(screen.getByRole("button", { name: "加载更多人脸" }));
 
     await waitFor(() => {
-      expect(personMock).toHaveBeenCalledWith(1, 101, 80);
+      expect(personMock).toHaveBeenCalledWith(1, 101, 80, expect.any(AbortSignal));
     });
   });
 
@@ -851,7 +889,7 @@ describe("PeoplePage", () => {
     expect(screen.getByText("#102 · 妈妈")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "#102 · 妈妈" }));
     await waitFor(() => {
-      expect(personMock).toHaveBeenCalledWith(1, 102, 40);
+      expect(personMock).toHaveBeenCalledWith(1, 102, 40, expect.any(AbortSignal));
     });
   });
 

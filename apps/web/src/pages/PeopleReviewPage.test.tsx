@@ -309,7 +309,7 @@ describe("PeopleReviewPage", () => {
       "href",
       "/projects/1/people/review",
     );
-    expect(reviewPendingMock).toHaveBeenCalledWith(1, 101, 500, 0);
+    expect(reviewPendingMock).toHaveBeenCalledWith(1, 101, 500, 0, expect.any(AbortSignal));
   });
 
   it("does not display review-pending faces for archived people", async () => {
@@ -335,7 +335,7 @@ describe("PeopleReviewPage", () => {
     });
     expect((await screen.findAllByText(/人物\s*#\s*103/)).length).toBeGreaterThan(0);
     expect(screen.getByRole("button", { name: "批量确认" })).toBeInTheDocument();
-    expect(reviewPendingMock).toHaveBeenLastCalledWith(1, null, 40, 40);
+    expect(reviewPendingMock).toHaveBeenLastCalledWith(1, null, 40, 40, expect.any(AbortSignal));
   });
 
   it("triggers batch confirm for the grouped faces", async () => {

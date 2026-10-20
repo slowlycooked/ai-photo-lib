@@ -778,6 +778,7 @@ export interface PersonDetail extends PersonSummary {
   assignments_total?: number;
   assignments_limit?: number;
   assignments_has_more?: boolean;
+  review_face_ids?: number[] | null;
 }
 
 export interface PersonListResponse {

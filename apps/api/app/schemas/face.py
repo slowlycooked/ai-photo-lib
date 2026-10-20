@@ -279,6 +279,8 @@ class PersonDetailResponse(PersonSummaryResponse):
     assignments_total: int = 0
     assignments_limit: int = 0
     assignments_has_more: bool = False
+    # Bounded IDs for batch review actions; avoids transferring full review details.
+    review_face_ids: Optional[list[int]] = None
 
 
 class PersonRenameRequest(BaseModel):
