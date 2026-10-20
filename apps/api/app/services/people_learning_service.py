@@ -601,6 +601,55 @@ def _resolve_match_candidate(
     )
 
 
+def _load_matchable_detection(
+    db: Session,
+    *,
+    project_id: int,
+    face_detection_id: int,
+) -> Optional[FaceDetection]:
+    """Load a face detection eligible for auto-matching, or None to skip it.
+
+    Detections without a row, or already carrying a positive human
+    assignment, are skipped so repeated scans never overwrite manual labels.
+    """
+    detection = (
+        db.query(FaceDetection)
+        .filter(
+            FaceDetection.project_id == project_id,
+            FaceDetection.id == face_detection_id,
+        )
+        .first()
+    )
+    if detection is None:
+        return None
+    if _has_positive_human_assignment(
+        db,
+        project_id=project_id,
+        face_detection_id=face_detection_id,
+    ):
+        return None
+    return detection
+
+
+def _has_positive_human_assignment(
+    db: Session,
+    *,
+    project_id: int,
+    face_detection_id: int,
+) -> bool:
+    """Return True when this face already carries a positive human assignment."""
+    row = (
+        db.query(PersonFaceAssignment.id)
+        .filter(
+            PersonFaceAssignment.project_id == project_id,
+            PersonFaceAssignment.face_detection_id == face_detection_id,
+            PersonFaceAssignment.assignment_status.in_(POSITIVE_ASSIGNMENT_STATUSES),
+        )
+        .first()
+    )
+    return row is not None
+
+
 def match_face_detection_to_person(
     db: Session,
     *,
@@ -618,28 +667,13 @@ def match_face_detection_to_person(
 
     settings = get_or_create_project_face_settings(db, project_id)
 
-    detection = (
-        db.query(FaceDetection)
-        .filter(
-            FaceDetection.project_id == project_id,
-            FaceDetection.id == face_detection_id,
-        )
-        .first()
+    # Every caller, including a repeated single-photo scan, must preserve labels.
+    detection = _load_matchable_detection(
+        db,
+        project_id=project_id,
+        face_detection_id=face_detection_id,
     )
     if detection is None:
-        return None
-
-    # Every caller, including a repeated single-photo scan, must preserve labels.
-    human_assignment = (
-        db.query(PersonFaceAssignment.id)
-        .filter(
-            PersonFaceAssignment.project_id == project_id,
-            PersonFaceAssignment.face_detection_id == face_detection_id,
-            PersonFaceAssignment.assignment_status.in_(POSITIVE_ASSIGNMENT_STATUSES),
-        )
-        .first()
-    )
-    if human_assignment is not None:
         return None
 
     embedding = (
