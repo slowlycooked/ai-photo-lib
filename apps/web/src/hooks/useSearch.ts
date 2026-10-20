@@ -53,7 +53,7 @@ export function useSearch(
       hasReviewPending,
       hasUnnamedPeople,
     ],
-    queryFn: ({ pageParam = 1 }) =>
+    queryFn: ({ pageParam = 1, signal }) =>
       api.projectSearch.search(
         projectId!,
         query,
@@ -69,6 +69,7 @@ export function useSearch(
         faceCountMax,
         hasReviewPending,
         hasUnnamedPeople,
+        signal,
       ),
     initialPageParam: 1,
     enabled: (query.trim().length > 0 || isTagFilter) && projectId !== null,

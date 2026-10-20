@@ -128,7 +128,7 @@ export function FailedJobsSection({
 
   const { data } = useQuery({
     queryKey: [listQueryKey, projectId],
-    queryFn: () => api.projectAiJobs.list(projectId!, "failed", 50, 0, jobType),
+    queryFn: ({ signal }) => api.projectAiJobs.list(projectId!, "failed", 50, 0, jobType, signal),
     enabled: projectId != null,
     staleTime: 10_000,
   });

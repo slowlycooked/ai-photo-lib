@@ -22,6 +22,7 @@ export const projectPhotosApi = {
     folderScope: FolderScope = "subtree",
     pagination: "offset" | "cursor" = "offset",
     cursor?: string | null,
+    signal?: AbortSignal,
   ) =>
     request<PhotoListResponse>(
       `/projects/${projectId}/photos${qs({
@@ -34,30 +35,34 @@ export const projectPhotosApi = {
         pagination,
         cursor,
       })}`,
+      { signal },
     ),
 
   timeline: (
     projectId: number,
     folderId?: number | null,
     folderScope: FolderScope = "subtree",
+    signal?: AbortSignal,
   ) =>
     request<TimelineResponse>(
       `/projects/${projectId}/photos/timeline${qs({
         folder_id: folderId,
         folder_scope: folderScope,
       })}`,
+      { signal },
     ),
 
-  get: (projectId: number, photoId: number) =>
-    request<PhotoDetail>(`/projects/${projectId}/photos/${photoId}`),
+  get: (projectId: number, photoId: number, signal?: AbortSignal) =>
+    request<PhotoDetail>(`/projects/${projectId}/photos/${photoId}`, { signal }),
 
-  locate: (projectId: number, photoId: number, pageSize = 50) =>
+  locate: (projectId: number, photoId: number, pageSize = 50, signal?: AbortSignal) =>
     request<PhotoLocationResponse>(
       `/projects/${projectId}/photos/${photoId}/location${qs({ page_size: pageSize })}`,
+      { signal },
     ),
 
-  ai: (projectId: number, photoId: number) =>
-    request<AIAnalysis>(`/projects/${projectId}/photos/${photoId}/ai`),
+  ai: (projectId: number, photoId: number, signal?: AbortSignal) =>
+    request<AIAnalysis>(`/projects/${projectId}/photos/${photoId}/ai`, { signal }),
 
   thumbnailUrl: (projectId: number, photoId: number, updatedAt?: string | null) => {
     const base = `${BASE}/projects/${projectId}/photos/${photoId}/thumbnail`;

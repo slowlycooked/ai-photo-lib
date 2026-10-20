@@ -84,7 +84,7 @@ describe("FailedJobsSection", () => {
 
     expect(await screen.findByText("AI 失败任务")).toBeInTheDocument();
     expect(await screen.findByText("a.jpg")).toBeInTheDocument();
-    expect(aiJobsMock).toHaveBeenCalledWith(7, "failed", 50, 0, "analyze,reanalyze");
+    expect(aiJobsMock).toHaveBeenCalledWith(7, "failed", 50, 0, "analyze,reanalyze", expect.any(AbortSignal));
   });
 
   it("retries failed jobs through shared action", async () => {

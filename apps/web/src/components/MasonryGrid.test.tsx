@@ -1,5 +1,23 @@
-import { describe, expect, it } from "vitest";
-import { assignMasonryColumns, getMasonryColumnCount } from "./MasonryGrid";
+import { describe, expect, it, vi } from "vitest";
+import { render, screen } from "@testing-library/react";
+import { useEffect } from "react";
+import { assignMasonryColumns, getMasonryColumnCount, MasonryGrid } from "./MasonryGrid";
+
+it("mounts each image only once when opening a wide gallery", () => {
+  const bounds = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({ width: 1400 } as DOMRect);
+  const mounts = vi.fn();
+  function Item({ id }: { id: number }) {
+    useEffect(() => { mounts(id); }, [id]);
+    return <img alt={`photo-${id}`} />;
+  }
+  try {
+    render(<MasonryGrid items={Array.from({ length: 50 }, (_, id) => id)} getKey={(id) => id} renderItem={(id) => <Item id={id} />} />);
+    expect(screen.getAllByRole("img")).toHaveLength(50);
+    expect(mounts).toHaveBeenCalledTimes(50);
+  } finally {
+    bounds.mockRestore();
+  }
+});
 
 describe("getMasonryColumnCount", () => {
   it("adapts columns to the grid container width", () => {

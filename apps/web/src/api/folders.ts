@@ -5,11 +5,12 @@ import type {
 } from "./types";
 
 export const foldersApi = {
-  tree: (projectId: number) =>
-    request<FolderTreeResponse>(`/projects/${projectId}/folders/tree`),
+  tree: (projectId: number, signal?: AbortSignal) =>
+    request<FolderTreeResponse>(`/projects/${projectId}/folders/tree`, { signal }),
 
-  breadcrumb: (projectId: number, folderId: number) =>
+  breadcrumb: (projectId: number, folderId: number, signal?: AbortSignal) =>
     request<FolderBreadcrumbResponse>(
       `/projects/${projectId}/folders/${folderId}/breadcrumb`,
+      { signal },
     ),
 };

@@ -31,6 +31,35 @@ describe("usePhotos", () => {
     photosMock.mockReset();
   });
 
+  it("aborts obsolete folder requests through fetch while keeping the current folder active", async () => {
+    const { projectPhotosApi } = await import("@/api/projectPhotos");
+    const signals: (AbortSignal | undefined)[] = [];
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation((_url, init) => {
+      signals.push(init?.signal ?? undefined);
+      return new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")));
+      });
+    });
+    photosMock.mockImplementation(projectPhotosApi.list);
+    const { wrapper, queryClient } = createQueryClientWrapper();
+    const { rerender, unmount } = renderHook(
+      ({ folderId }) => usePhotos({ projectId: 1, folderId }),
+      { initialProps: { folderId: 1 }, wrapper },
+    );
+    try {
+      for (let folderId = 2; folderId <= 10; folderId += 1) rerender({ folderId });
+      expect(fetchMock).toHaveBeenCalledTimes(10);
+      expect(signals.filter((signal) => signal?.aborted)).toHaveLength(9);
+      expect(signals[9]?.aborted).toBe(false);
+      unmount();
+      expect(signals.filter((signal) => signal?.aborted)).toHaveLength(10);
+    } finally {
+      unmount();
+      queryClient.clear();
+      fetchMock.mockRestore();
+    }
+  });
+
   it("uses each returned cursor once when fetching more photos", async () => {
     photosMock.mockImplementation((...args: unknown[]) => {
       const pageSize = args[2] as number;
@@ -67,6 +96,41 @@ describe("usePhotos", () => {
 
     expect(photosMock.mock.calls.map((call) => call[7])).toEqual(["cursor", "cursor", "cursor"]);
     expect(photosMock.mock.calls.map((call) => call[8])).toEqual([null, "cursor-2", "cursor-3"]);
+  });
+
+  it("keeps a shared request alive until its last observer leaves", () => {
+    photosMock.mockImplementation(() => new Promise(() => {}));
+    const { wrapper, queryClient } = createQueryClientWrapper();
+    const first = renderHook(() => usePhotos({ projectId: 1 }), { wrapper });
+    const second = renderHook(() => usePhotos({ projectId: 1 }), { wrapper });
+    try {
+      expect(photosMock).toHaveBeenCalledTimes(1);
+      const signal = photosMock.mock.calls[0][9] as AbortSignal;
+      first.unmount();
+      expect(signal.aborted).toBe(false);
+      second.unmount();
+      expect(signal.aborted).toBe(true);
+    } finally {
+      first.unmount();
+      second.unmount();
+      queryClient.clear();
+    }
+  });
+
+  it("reuses loaded pages when returning to the gallery within the freshness window", async () => {
+    photosMock.mockResolvedValue({ total: 1, page: 1, page_size: 50, items: buildItems(1, 1), has_more: false });
+    const { wrapper, queryClient } = createQueryClientWrapper();
+    const first = renderHook(() => usePhotos({ projectId: 1 }), { wrapper });
+    await waitFor(() => expect(first.result.current.data?.pages).toHaveLength(1));
+    first.unmount();
+    const second = renderHook(() => usePhotos({ projectId: 1 }), { wrapper });
+    try {
+      expect(second.result.current.data?.pages).toHaveLength(1);
+      expect(photosMock).toHaveBeenCalledTimes(1);
+    } finally {
+      second.unmount();
+      queryClient.clear();
+    }
   });
 
   it("stops requesting next pages when the backend clears has_more", async () => {

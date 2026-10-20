@@ -28,7 +28,8 @@ export function ProjectTaskFailureDetails({
   const shouldLoad = projectId != null && taskId != null && expectedCount > 0;
   const query = useQuery({
     queryKey: queryKeys.projectTaskFailures(projectId, taskId ?? null, limit, 0),
-    queryFn: () => api.projectTasks.failures(projectId!, taskId!, { limit, offset: 0 }),
+    queryFn: ({ signal }) => api.projectTasks.failures(projectId!, taskId!, { limit, offset: 0 }, signal),
+    staleTime: 3_000,
     enabled: shouldLoad,
   });
 

@@ -18,7 +18,7 @@ export interface ProjectTaskFailureParams {
 }
 
 export const projectTasksApi = {
-  list: (projectId: number, params: ProjectTaskListParams = {}) =>
+  list: (projectId: number, params: ProjectTaskListParams = {}, signal?: AbortSignal) =>
     request<ProjectTaskListResponse>(
       `/projects/${projectId}/tasks${qs({
         status: params.status,
@@ -26,6 +26,7 @@ export const projectTasksApi = {
         limit: params.limit ?? 20,
         offset: params.offset ?? 0,
       })}`,
+      { signal },
     ),
 
   get: (projectId: number, taskId: number) =>
@@ -35,12 +36,14 @@ export const projectTasksApi = {
     projectId: number,
     taskId: number,
     params: ProjectTaskFailureParams = {},
+    signal?: AbortSignal,
   ) =>
     request<ProjectTaskFailureListResponse>(
       `/projects/${projectId}/tasks/${taskId}/failures${qs({
         limit: params.limit ?? 20,
         offset: params.offset ?? 0,
       })}`,
+      { signal },
     ),
 
   pause: (projectId: number, taskId: number) =>

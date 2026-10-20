@@ -41,7 +41,8 @@ export function ProjectTaskHistorySection({ projectId }: { projectId: number | n
   const queryClient = useQueryClient();
   const { data, isLoading, error } = useQuery({
     queryKey: queryKeys.projectTasks(projectId, 8),
-    queryFn: () => api.projectTasks.list(projectId!, { limit: 8 }),
+    queryFn: ({ signal }) => api.projectTasks.list(projectId!, { limit: 8 }, signal),
+    staleTime: 3_000,
     enabled: canLoad,
     refetchInterval: (query) => {
       const hasActive = query.state.data?.items.some((task) =>

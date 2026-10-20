@@ -14,8 +14,8 @@ export const projectAiJobsApi = {
       { method: "POST" },
     ),
 
-  status: (projectId: number) =>
-    request<AIStatus>(`/projects/${projectId}/ai/status`),
+  status: (projectId: number, signal?: AbortSignal) =>
+    request<AIStatus>(`/projects/${projectId}/ai/status`, { signal }),
 
   list: (
     projectId: number,
@@ -23,9 +23,11 @@ export const projectAiJobsApi = {
     limit = 50,
     offset = 0,
     jobType?: string,
+    signal?: AbortSignal,
   ) =>
     request<AIJobListResponse>(
       `/projects/${projectId}/ai/jobs${qs({ status, limit, offset, job_type: jobType })}`,
+      { signal },
     ),
 
   retryFailed: (projectId: number, jobType?: string) =>

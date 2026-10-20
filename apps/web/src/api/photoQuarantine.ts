@@ -12,8 +12,8 @@ import type {
 } from "./types";
 
 export const photoQuarantineApi = {
-  getSettings: (projectId: number) =>
-    request<ProjectPhotoQuarantineSettings>(`/projects/${projectId}/photo-quarantine/settings`),
+  getSettings: (projectId: number, signal?: AbortSignal) =>
+    request<ProjectPhotoQuarantineSettings>(`/projects/${projectId}/photo-quarantine/settings`, { signal }),
 
   updateSettings: (projectId: number, body: ProjectPhotoQuarantineSettingsUpdate) =>
     request<ProjectPhotoQuarantineSettings>(`/projects/${projectId}/photo-quarantine/settings`, {
@@ -29,9 +29,11 @@ export const photoQuarantineApi = {
     offset = 0,
     humanLabel?: "KEEP" | "TRASH" | "UNLABELED",
     classification?: string,
+    signal?: AbortSignal,
   ) =>
     request<PhotoQuarantineListResponse>(
       `/projects/${projectId}/photo-quarantine/items${qs({ status, human_label: humanLabel, classification, limit, offset })}`,
+      { signal },
     ),
 
   reconcile: (projectId: number) =>
@@ -40,9 +42,10 @@ export const photoQuarantineApi = {
       { method: "POST" },
     ),
 
-  getCalibration: (projectId: number) =>
+  getCalibration: (projectId: number, signal?: AbortSignal) =>
     request<PhotoQuarantineCalibrationResponse>(
       `/projects/${projectId}/photo-quarantine/calibration`,
+      { signal },
     ),
 
   label: (projectId: number, itemId: number, label: "KEEP" | "TRASH", note?: string) =>

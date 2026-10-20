@@ -31,6 +31,24 @@ describe("useSearch", () => {
     searchMock.mockReset();
   });
 
+  it("cancels an obsolete search on query change and on unmount", () => {
+    searchMock.mockImplementation(() => new Promise(() => {}));
+    const { wrapper, queryClient } = createQueryClientWrapper();
+    const { rerender, unmount } = renderHook(({ query }) => useSearch(query, 1), {
+      initialProps: { query: "海边" }, wrapper,
+    });
+    try {
+      rerender({ query: "山" });
+      expect(searchMock.mock.calls[0][14]?.aborted).toBe(true);
+      expect(searchMock.mock.calls[1][14]?.aborted).toBe(false);
+      unmount();
+      expect(searchMock.mock.calls[1][14]?.aborted).toBe(true);
+    } finally {
+      unmount();
+      queryClient.clear();
+    }
+  });
+
   it("uses requested page params to avoid repeated page fetches", async () => {
     searchMock.mockImplementation((_projectId: number, _query: string, page: number, pageSize: number) =>
       Promise.resolve({

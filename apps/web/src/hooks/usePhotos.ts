@@ -31,7 +31,7 @@ export function usePhotos({
       folderScope,
       initialPage,
     ),
-    queryFn: ({ pageParam }) =>
+    queryFn: ({ pageParam, signal }) =>
       projectId != null
         ? api.projectPhotos.list(
             projectId,
@@ -43,6 +43,7 @@ export function usePhotos({
             folderScope,
             locateMode ? "offset" : "cursor",
             locateMode ? null : String(pageParam || "") || null,
+            signal,
           )
         : Promise.resolve({
             total: 0,
@@ -67,8 +68,8 @@ export function usePhotos({
 export function useTimeline(projectId?: number | null, folderId?: number | null, folderScope: FolderScope = "subtree") {
   return useQuery({
     queryKey: queryKeys.timeline(projectId ?? null, folderId, folderScope),
-    queryFn: () => projectId != null
-      ? api.projectPhotos.timeline(projectId, folderId, folderScope)
+    queryFn: ({ signal }) => projectId != null
+      ? api.projectPhotos.timeline(projectId, folderId, folderScope, signal)
       : Promise.resolve({ items: [] }),
     enabled: projectId != null,
     staleTime: 60_000,

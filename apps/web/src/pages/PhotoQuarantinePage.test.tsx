@@ -191,6 +191,25 @@ describe("PhotoQuarantinePage", () => {
     expect(screen.getByText("正在停止分析，将在当前图片处理完成后退出")).toBeInTheDocument();
   });
 
+  it("allows a new scan after a cancelled task reaches a terminal state", async () => {
+    taskListMock.mockResolvedValue({
+      total: 1,
+      items: [{
+        id: 88,
+        project_id: 1,
+        task_type: "photo_quarantine_analysis",
+        status: "cancelled",
+        progress_payload: { running: false, cancel_requested: true },
+        result_payload: null,
+        error_message: null,
+      }],
+    });
+    renderPage();
+
+    expect(await screen.findByRole("button", { name: "启动扫描" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "正在取消" })).not.toBeInTheDocument();
+  });
+
   it("requests failed items first when the start checkbox is selected", async () => {
     const user = userEvent.setup();
     renderPage();
@@ -447,6 +466,7 @@ describe("PhotoQuarantinePage", () => {
       24,
       undefined,
       undefined,
+      expect.any(AbortSignal),
     ));
     expect(await screen.findByText("第 2 / 2 页")).toBeInTheDocument();
   });
@@ -572,6 +592,7 @@ describe("PhotoQuarantinePage", () => {
       0,
       undefined,
       "suspected_duplicate",
+      expect.any(AbortSignal),
     ));
     expect((await screen.findAllByText("疑似重复")).length).toBeGreaterThanOrEqual(2);
     expect(screen.getByRole("button", { name: "提交删除" })).toBeInTheDocument();
@@ -668,6 +689,7 @@ describe("PhotoQuarantinePage", () => {
       0,
       "UNLABELED",
       undefined,
+      expect.any(AbortSignal),
     ));
   });
 });

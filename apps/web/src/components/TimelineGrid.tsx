@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { FolderSearch, ImageOff, Loader2, LocateFixed } from "lucide-react";
 import { usePhotos } from "@/hooks/usePhotos";
@@ -22,6 +22,8 @@ interface TimelineGridProps {
   targetFolderPath?: string | null;
   onClearTarget?: () => void;
 }
+
+const getPhotoHeight = (photo: Photo) => photo.width && photo.height ? photo.height / photo.width : 3 / 4;
 
 function formatGroupLabel(key: string): string {
   if (key === "unknown") return "未知日期";
@@ -95,6 +97,8 @@ export function TimelineGrid({
     return Array.from(uniqueById.values());
   }, [data]);
   const total = data?.pages[0]?.total ?? 0;
+  const groups = useMemo(() => groupPhotosByMonth(allPhotos), [allPhotos]);
+  const selectedIds = useMemo(() => new Set(selectedPhotoIds), [selectedPhotoIds]);
   const isInitialLoading = isLoading && allPhotos.length === 0;
   const priorityPhotoIds = useMemo(
     () => new Set(allPhotos.slice(0, 8).map((photo) => photo.id)),
@@ -103,11 +107,14 @@ export function TimelineGrid({
 
   useEffect(() => {
     if (targetPhotoId == null || targetAvailable === false) return;
-    const target = document.getElementById(`photo-${targetPhotoId}`);
-    if (!target) return;
-    const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
-    target.scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth", block: "center" });
-    target.focus({ preventScroll: true });
+    const frame = requestAnimationFrame(() => {
+      const target = document.getElementById(`photo-${targetPhotoId}`);
+      if (!target) return;
+      const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+      target.scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth", block: "center" });
+      target.focus({ preventScroll: true });
+    });
+    return () => cancelAnimationFrame(frame);
   }, [allPhotos, targetAvailable, targetPhotoId]);
 
   useEffect(() => {
@@ -142,9 +149,9 @@ export function TimelineGrid({
 
   const selectedCount = selectedPhotoIds.length;
   const allLoadedIds = allPhotos.map((photo) => photo.id);
-  const allLoadedSelected = allLoadedIds.length > 0 && allLoadedIds.every((id) => selectedPhotoIds.includes(id));
+  const allLoadedSelected = allLoadedIds.length > 0 && allLoadedIds.every((id) => selectedIds.has(id));
 
-  const togglePhotoSelection = (photoId: number, checked: boolean) => {
+  const togglePhotoSelection = useCallback((photoId: number, checked: boolean) => {
     setBatchMessage(null);
     setSelectedPhotoIds((prev) => {
       if (checked) {
@@ -155,7 +162,11 @@ export function TimelineGrid({
       }
       return prev.filter((id) => id !== photoId);
     });
-  };
+  }, []);
+
+  const handlePhotoDeleted = useCallback((photoId: number) => {
+    setSelectedPhotoIds((prev) => prev.filter((id) => id !== photoId));
+  }, []);
 
   const toggleSelectByPhotoIds = (photoIds: number[]) => {
     if (photoIds.length === 0) {
@@ -163,9 +174,11 @@ export function TimelineGrid({
     }
     setBatchMessage(null);
     setSelectedPhotoIds((prev) => {
-      const allSelected = photoIds.every((id) => prev.includes(id));
+      const previousIds = new Set(prev);
+      const groupIds = new Set(photoIds);
+      const allSelected = photoIds.every((id) => previousIds.has(id));
       if (allSelected) {
-        return prev.filter((id) => !photoIds.includes(id));
+        return prev.filter((id) => !groupIds.has(id));
       }
       const merged = new Set(prev);
       for (const id of photoIds) {
@@ -178,7 +191,8 @@ export function TimelineGrid({
   const toggleSelectAllLoaded = () => {
     setBatchMessage(null);
     if (allLoadedSelected) {
-      setSelectedPhotoIds((prev) => prev.filter((id) => !allLoadedIds.includes(id)));
+      const loadedIds = new Set(allLoadedIds);
+      setSelectedPhotoIds((prev) => prev.filter((id) => !loadedIds.has(id)));
       return;
     }
     setSelectedPhotoIds((prev) => {
@@ -263,8 +277,6 @@ export function TimelineGrid({
       </div>
     );
   }
-
-  const groups = groupPhotosByMonth(allPhotos);
 
   return (
     <div className="flex gap-4">
@@ -372,7 +384,7 @@ export function TimelineGrid({
             {(() => {
               const groupPhotoIds = photos.map((photo) => photo.id);
               const groupAllSelected =
-                groupPhotoIds.length > 0 && groupPhotoIds.every((id) => selectedPhotoIds.includes(id));
+                groupPhotoIds.length > 0 && groupPhotoIds.every((id) => selectedIds.has(id));
 
               return (
                 <div className="mb-3 flex flex-wrap items-center gap-2">
@@ -405,17 +417,15 @@ export function TimelineGrid({
             <MasonryGrid
               items={photos}
               getKey={(photo) => photo.id}
-              getItemHeight={(photo) => (photo.width && photo.height ? photo.height / photo.width : 3 / 4)}
+              getItemHeight={getPhotoHeight}
               renderItem={(photo) => (
                 <PhotoCard
                   photo={photo}
                   priority={priorityPhotoIds.has(photo.id)}
                   selectMode={canDeletePhoto}
-                  selected={selectedPhotoIds.includes(photo.id)}
+                  selected={selectedIds.has(photo.id)}
                   onToggleSelect={togglePhotoSelection}
-                  onDeleted={(photoId) => {
-                    setSelectedPhotoIds((prev) => prev.filter((id) => id !== photoId));
-                  }}
+                  onDeleted={handlePhotoDeleted}
                   highlighted={photo.id === targetPhotoId && targetAvailable !== false}
                 />
               )}

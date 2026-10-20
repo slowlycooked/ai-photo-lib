@@ -46,9 +46,9 @@ export function TaskProgressStream({
 }) {
   const { data, isLoading } = useQuery({
     queryKey: [listQueryKey, projectId],
-    queryFn: () => api.projectAiJobs.list(projectId!, undefined, 30, 0, jobType),
+    queryFn: ({ signal }) => api.projectAiJobs.list(projectId!, undefined, 30, 0, jobType, signal),
     enabled: projectId != null,
-    staleTime: 0,
+    staleTime: 1_500,
     refetchInterval: (query) => {
       const items = query.state.data?.items ?? [];
       const hasActive = items.some((item) => item.status === "queued" || item.status === "running");

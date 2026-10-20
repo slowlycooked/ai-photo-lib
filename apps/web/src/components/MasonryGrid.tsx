@@ -1,4 +1,4 @@
-import { type CSSProperties, type Key, type ReactNode, type RefObject, useEffect, useMemo, useRef, useState } from "react";
+import { type CSSProperties, type Key, type ReactNode, type RefObject, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 const DEFAULT_ITEM_HEIGHT = 1;
 const ITEM_GAP_HEIGHT = 0.04;
@@ -25,9 +25,9 @@ export function getMasonryColumnCount(width: number) {
 }
 
 function useMasonryColumnCount(containerRef: RefObject<HTMLDivElement>) {
-  const [columnCount, setColumnCount] = useState(2);
+  const [columnCount, setColumnCount] = useState<number | null>(null);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const updateColumnCount = () => {
       const width = containerRef.current?.getBoundingClientRect().width ?? window.innerWidth;
       setColumnCount(getMasonryColumnCount(width));
@@ -78,10 +78,11 @@ export function MasonryGrid<TItem>({
   const containerRef = useRef<HTMLDivElement>(null);
   const columnCount = useMasonryColumnCount(containerRef);
   const columns = useMemo(
-    () => assignMasonryColumns(items, columnCount, getItemHeight),
+    // Measure before mounting cards so a wide grid does not mount them twice.
+    () => columnCount == null ? [] : assignMasonryColumns(items, columnCount, getItemHeight),
     [columnCount, getItemHeight, items],
   );
-  const style = { "--masonry-columns": columnCount } as CSSProperties;
+  const style = { "--masonry-columns": columnCount ?? 2 } as CSSProperties;
 
   return (
     <div ref={containerRef} className={["masonry-grid", className].filter(Boolean).join(" ")} style={style}>

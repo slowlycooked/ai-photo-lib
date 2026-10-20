@@ -33,9 +33,10 @@ export const projectFacesApi = {
       },
     ),
 
-  projectScanStatus: (projectId: number) =>
+  projectScanStatus: (projectId: number, signal?: AbortSignal) =>
     request<FaceScanProjectStatusResponse>(
       `/projects/${projectId}/face-scan-project/status`,
+      { signal },
     ),
 
   cancelProjectScan: (projectId: number) =>
@@ -54,9 +55,10 @@ export const projectFacesApi = {
       body: JSON.stringify(body),
     }),
 
-  clusterUnknownStatus: (projectId: number) =>
+  clusterUnknownStatus: (projectId: number, signal?: AbortSignal) =>
     request<FaceClusterUnknownStatusResponse>(
       `/projects/${projectId}/face-cluster-unknown/status`,
+      { signal },
     ),
 
   cancelClusterUnknown: (projectId: number) =>
@@ -78,12 +80,14 @@ export const projectFacesApi = {
   rematchUnknownStatus: (
     projectId: number,
     filter: Pick<FaceRematchUnknownRequest, "scope" | "person_id"> = {},
+    signal?: AbortSignal,
   ) =>
     request<FaceRematchUnknownStatusResponse>(
       `/projects/${projectId}/face-rematch-unknown/status${qs({
         scope: filter.scope,
         person_id: filter.person_id,
       })}`,
+      { signal },
     ),
 
   cancelRematchUnknown: (projectId: number) =>
@@ -98,6 +102,7 @@ export const projectFacesApi = {
     pageSize = 50,
     photoId?: number | null,
     status?: string | null,
+    signal?: AbortSignal,
   ) =>
     request<FaceDetectionListResponse>(
       `/projects/${projectId}/faces${qs({
@@ -106,6 +111,7 @@ export const projectFacesApi = {
         photo_id: photoId,
         status: status ?? undefined,
       })}`,
+      { signal },
     ),
 
   get: (projectId: number, faceId: number) =>

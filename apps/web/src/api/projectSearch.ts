@@ -23,6 +23,7 @@ export const projectSearchApi = {
     faceCountMax?: number | null,
     hasReviewPending?: boolean | null,
     hasUnnamedPeople?: boolean | null,
+    signal?: AbortSignal,
   ) =>
     request<SearchResponse>(
       `/projects/${projectId}/search${qs({
@@ -41,7 +42,8 @@ export const projectSearchApi = {
         has_review_pending: hasReviewPending ?? undefined,
         has_unnamed_people: hasUnnamedPeople ?? undefined,
       })}`,
+      { signal },
     ),
 
-  tags: (projectId: number) => request<TagsResponse>(`/projects/${projectId}/tags`),
+  tags: (projectId: number, signal?: AbortSignal) => request<TagsResponse>(`/projects/${projectId}/tags`, { signal }),
 };

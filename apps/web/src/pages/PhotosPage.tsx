@@ -19,7 +19,7 @@ export function PhotosPage() {
     : null;
   const locationQuery = useQuery({
     queryKey: queryKeys.projectPhotoLocation(currentProjectId, targetPhotoId),
-    queryFn: () => api.projectPhotos.locate(currentProjectId!, targetPhotoId!),
+    queryFn: ({ signal }) => api.projectPhotos.locate(currentProjectId!, targetPhotoId!, 50, signal),
     enabled: currentProjectId != null && targetPhotoId != null,
   });
   const location = locationQuery.data;

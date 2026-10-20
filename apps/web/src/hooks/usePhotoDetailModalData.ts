@@ -22,14 +22,14 @@ export function usePhotoDetailModalData({
 
   const { data: detail } = useQuery({
     queryKey: queryKeys.projectPhotoDetail(projectId, photo.id),
-    queryFn: () => api.projectPhotos.get(projectId, photo.id),
+    queryFn: ({ signal }) => api.projectPhotos.get(projectId, photo.id, signal),
     enabled: projectId != null,
     staleTime: 30_000,
   });
 
   const { data: aiData, isLoading: aiLoading } = useQuery({
     queryKey: queryKeys.projectPhotoAi(projectId, photo.id),
-    queryFn: () => api.projectPhotos.ai(projectId, photo.id),
+    queryFn: ({ signal }) => api.projectPhotos.ai(projectId, photo.id, signal),
     enabled: projectId != null,
     retry: false,
   });
@@ -41,7 +41,7 @@ export function usePhotoDetailModalData({
     refetch: refreshFaces,
   } = useQuery({
     queryKey: queryKeys.projectFaces(projectId, photo.id),
-    queryFn: () => api.projectFaces.list(projectId, 1, 50, photo.id),
+    queryFn: ({ signal }) => api.projectFaces.list(projectId, 1, 50, photo.id, undefined, signal),
     enabled: projectId != null,
     staleTime: 10_000,
   });

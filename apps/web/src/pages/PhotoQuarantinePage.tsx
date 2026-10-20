@@ -147,8 +147,9 @@ export function PhotoQuarantinePage() {
 
   const settingsQuery = useQuery({
     queryKey: queryKeys.photoQuarantineSettings(selectedProjectId),
-    queryFn: () => api.photoQuarantine.getSettings(selectedProjectId!),
+    queryFn: ({ signal }) => api.photoQuarantine.getSettings(selectedProjectId!, signal),
     enabled: projectExists,
+    staleTime: 30_000,
   });
   const itemsQuery = useQuery({
     queryKey: queryKeys.photoQuarantineItems(
@@ -158,29 +159,33 @@ export function PhotoQuarantinePage() {
       labelFilter,
       classificationFilter,
     ),
-    queryFn: () => api.photoQuarantine.list(
+    queryFn: ({ signal }) => api.photoQuarantine.list(
       selectedProjectId!,
       statusFilter,
       PAGE_SIZE,
       page * PAGE_SIZE,
       labelFilter || undefined,
       classificationFilter || undefined,
+      signal,
     ),
     enabled: projectExists,
     refetchInterval: 30_000,
+    staleTime: 15_000,
   });
   const calibrationQuery = useQuery({
     queryKey: queryKeys.photoQuarantineCalibration(selectedProjectId),
-    queryFn: () => api.photoQuarantine.getCalibration(selectedProjectId!),
+    queryFn: ({ signal }) => api.photoQuarantine.getCalibration(selectedProjectId!, signal),
     enabled: projectExists,
+    staleTime: 30_000,
   });
   const taskQuery = useQuery({
     queryKey: ["photo-quarantine-latest-task", selectedProjectId],
-    queryFn: () => api.projectTasks.list(selectedProjectId!, {
+    queryFn: ({ signal }) => api.projectTasks.list(selectedProjectId!, {
       task_type: "photo_quarantine_analysis",
       limit: 1,
-    }),
+    }, signal),
     enabled: projectExists,
+    staleTime: 3_000,
     refetchInterval: (query) => {
       const task = query.state.data?.items[0];
       return task && (task.status === "queued" || task.status === "running") ? 3_000 : 15_000;
@@ -188,15 +193,18 @@ export function PhotoQuarantinePage() {
   });
   const latestTask = taskQuery.data?.items[0];
   const analysisActive = latestTask?.status === "queued" || latestTask?.status === "running";
-  const cancelRequested = latestTask?.progress_payload?.cancel_requested === true;
+  const cancelRequested = analysisActive && latestTask?.progress_payload?.cancel_requested === true;
   const retryFailedTask = latestTask?.request_params?.trigger === "manual_retry_failed";
   const retryQueueQuery = useQuery({
     queryKey: ["photo-quarantine-retry-progress", selectedProjectId, latestTask?.id],
-    queryFn: () => api.photoQuarantine.list(
+    queryFn: ({ signal }) => api.photoQuarantine.list(
       selectedProjectId!,
       "analysis_retry_queued",
       1,
       0,
+      undefined,
+      undefined,
+      signal,
     ),
     enabled: projectExists && analysisActive && retryFailedTask,
     refetchInterval: 3_000,

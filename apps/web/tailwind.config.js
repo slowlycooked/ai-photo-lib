@@ -7,6 +7,9 @@ export default {
         // Brand
         primary: "#e60023",
         "primary-pressed": "#cc001f",
+        // Semantic destructive actions
+        danger: "#9e0a0a",
+        "danger-pressed": "#cc001f",
         // Surfaces — from DESIGN.md
         canvas: "#ffffff",
         "surface-soft": "#fbfbf9",

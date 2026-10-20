@@ -1,4 +1,4 @@
-import { lazy, Suspense, useState } from "react";
+import { lazy, memo, Suspense, useMemo, useState } from "react";
 import { ImageIcon, LocateFixed, MapPin, Play } from "lucide-react";
 import type { Photo } from "@/api";
 import { api } from "@/api";
@@ -20,7 +20,7 @@ interface PhotoCardProps {
   highlighted?: boolean;
 }
 
-export function PhotoCard({
+export const PhotoCard = memo(function PhotoCard({
   photo,
   priority = false,
   selectMode = false,
@@ -33,6 +33,9 @@ export function PhotoCard({
   const [errored, setErrored] = useState(false);
   const [retryNonce, setRetryNonce] = useState(0);
   const [showDetail, setShowDetail] = useState(false);
+  const dateLabel = useMemo(() => photo.taken_at
+    ? new Date(photo.taken_at).toLocaleDateString("zh-CN", { month: "short", year: "numeric" })
+    : null, [photo.taken_at]);
   const locationSummary = formatLocationSummary(photo, { short: true });
   const locationAddress = formatLocationAddress(photo);
   const thumbnailUrl = api.projectPhotos.thumbnailUrl(photo.project_id, photo.id, photo.updated_at);
@@ -139,7 +142,7 @@ export function PhotoCard({
             ].join(" ")}
           >
             <span className="bg-canvas text-ink text-btn-sm font-bold px-3 py-1 rounded-full shadow-sm whitespace-nowrap">
-              {new Date(photo.taken_at).toLocaleDateString("zh-CN", { month: "short", year: "numeric" })}
+              {dateLabel}
             </span>
           </div>
         )}
@@ -174,4 +177,4 @@ export function PhotoCard({
       )}
     </>
   );
-}
+});

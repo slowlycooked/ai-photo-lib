@@ -20,7 +20,7 @@ export function SearchPhotoLightbox({
 }: SearchPhotoLightboxProps) {
   const { data: photo, isLoading, isError } = useQuery({
     queryKey: queryKeys.projectPhotoDetail(projectId!, item.photo_id),
-    queryFn: () => api.projectPhotos.get(projectId!, item.photo_id),
+    queryFn: ({ signal }) => api.projectPhotos.get(projectId!, item.photo_id, signal),
     enabled: projectId != null,
     staleTime: 30_000,
   });

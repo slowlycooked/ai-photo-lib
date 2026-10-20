@@ -32,7 +32,7 @@ function AISection({ projectId }: { projectId: number | null }) {
 
   const { data: status, isLoading } = useProjectQueuedTaskStatus(
     queryKeys.aiStatus(projectId),
-    () => api.projectAiJobs.status(projectId!),
+    ({ signal }) => api.projectAiJobs.status(projectId!, signal),
     projectId != null
   );
 
@@ -323,13 +323,13 @@ function FaceScanSection({ projectId }: { projectId: number | null }) {
 
   const { data: status, isLoading: statusLoading } = useProjectQueuedTaskStatus(
     ["face-scan-status", projectId],
-    () => api.projectFaces.projectScanStatus(projectId!),
+    ({ signal }) => api.projectFaces.projectScanStatus(projectId!, signal),
     canRun
   );
 
   const { data: clusterStatus } = useQuery({
     queryKey: ["face-cluster-unknown-status", projectId],
-    queryFn: () => api.projectFaces.clusterUnknownStatus(projectId!),
+    queryFn: ({ signal }) => api.projectFaces.clusterUnknownStatus(projectId!, signal),
     enabled: canRun,
     refetchInterval: (query) => {
       const d = query.state.data;
@@ -339,7 +339,7 @@ function FaceScanSection({ projectId }: { projectId: number | null }) {
 
   const { data: rematchStatus } = useQuery({
     queryKey: ["face-rematch-unknown-status", projectId],
-    queryFn: () => api.projectFaces.rematchUnknownStatus(projectId!),
+    queryFn: ({ signal }) => api.projectFaces.rematchUnknownStatus(projectId!, {}, signal),
     enabled: canRun,
     refetchInterval: (query) => {
       const d = query.state.data;
@@ -877,7 +877,7 @@ export function TasksPage() {
             projectId={currentProjectId}
             status={scanStatus}
             isLoading={scanLoading}
-            onStart={() => startScan()}
+            onStart={(rebuild) => startScan(rebuild)}
             isPending={isPending}
             mutationError={scanError?.message ?? null}
             onReindex={(scope) => startReindex(scope)}
