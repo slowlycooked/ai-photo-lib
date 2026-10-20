@@ -26,6 +26,7 @@ from app.services.project_task_service import (  # noqa: E402
     TASK_TYPE_FACE_REMATCH_UNKNOWN,
     TASK_TYPE_LIBRARY_REINDEX,
     TASK_TYPE_LIBRARY_SCAN,
+    TASK_TYPE_PHOTO_QUARANTINE_ANALYSIS,
     TASK_TYPE_UNKNOWN_FACE_CLUSTERING,
     build_scan_status,
     enqueue_face_cluster_task,
@@ -37,6 +38,7 @@ from app.services.project_task_service import (  # noqa: E402
     request_project_task_pause,
     resume_project_task,
 )
+from app.services.vlm_client import VLMRequestCancelled  # noqa: E402
 
 
 class ProjectTaskAppServiceTest(unittest.TestCase):
@@ -142,6 +144,27 @@ class ProjectTaskAppServiceTest(unittest.TestCase):
         self.assertEqual(task.progress_payload["message"], "done")
         self.assertEqual(task.result_payload["scanned"], 12)
         self.assertEqual(task.result_payload["recent_files"][0]["status"], "success")
+        db.close()
+
+    def test_process_scan_task_passes_rebuild_flag_to_scanner(self) -> None:
+        db = self._SessionLocal()
+        task = ProjectTask(
+            project_id=1,
+            task_type=TASK_TYPE_LIBRARY_SCAN,
+            status="queued",
+            request_params={"rebuild": True},
+        )
+        db.add(task)
+        db.commit()
+        db.refresh(task)
+
+        with patch(
+            "app.services.project_task_handlers.scan_project",
+            return_value={"running": False, "errors": 0, "message": "done"},
+        ) as scan_mock:
+            ProjectTaskAppService(db, session_factory=self._SessionLocal).process_task(task)
+
+        self.assertTrue(scan_mock.call_args.kwargs["rebuild"])
         db.close()
 
     def test_build_scan_status_includes_task_id(self) -> None:
@@ -369,6 +392,50 @@ class ProjectTaskAppServiceTest(unittest.TestCase):
         self.assertFalse(task.progress_payload["running"])
         self.assertTrue(task.progress_payload["cancel_requested"])
         self.assertEqual(task.result_payload["message"], "cancelled")
+        db.close()
+
+    def test_photo_quarantine_task_cancels_during_vlm_request(self) -> None:
+        db = self._SessionLocal()
+        task = ProjectTask(
+            project_id=1,
+            task_type=TASK_TYPE_PHOTO_QUARANTINE_ANALYSIS,
+            status="queued",
+            request_params={"ignore_window": True},
+            progress_payload={"running": False},
+        )
+        db.add(task)
+        db.commit()
+        db.refresh(task)
+
+        def fake_run_project(
+            _service,
+            *,
+            project_id,
+            ignore_window,
+            progress_callback,
+            should_cancel,
+        ):
+            self.assertEqual(project_id, 1)
+            self.assertTrue(ignore_window)
+            self.assertIsNotNone(progress_callback)
+            self.assertTrue(should_cancel())
+            raise VLMRequestCancelled("cancelled")
+
+        service = ProjectTaskAppService(db, session_factory=self._SessionLocal)
+        with patch(
+            "app.services.project_task_handlers.PhotoQuarantineAnalysisService.run_project",
+            new=fake_run_project,
+        ), patch.object(
+            service,
+            "_cancel_requested_by_id",
+            return_value=True,
+        ):
+            service.process_task(task)
+
+        db.refresh(task)
+        self.assertEqual(task.status, "cancelled")
+        self.assertFalse(task.progress_payload["running"])
+        self.assertEqual(task.progress_payload["message"], "cancelled")
         db.close()
 
     def test_pause_and_resume_queued_scan_task(self) -> None:

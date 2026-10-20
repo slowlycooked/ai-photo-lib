@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import tempfile
 import unittest
@@ -21,8 +22,10 @@ from app.services.project_ai_service import (  # noqa: E402
     render_analysis_prompt_parts,
 )
 from app.services.vlm_client import (  # noqa: E402
+    VLMRequestCancelled,
     analyze_image,
     _extract_message_text,
+    _send_chat_completion,
     _thinking_control_payload,
 )
 
@@ -106,6 +109,30 @@ class PromptRenderAndRetryTest(unittest.TestCase):
         self.assertTrue(content[2]["image_url"]["url"].startswith("data:image/jpeg;base64,"))
         self.assertEqual(content[3]["text"], "视频帧 2/2，时间约 3.0 秒")
         self.assertTrue(content[4]["image_url"]["url"].startswith("data:image/jpeg;base64,"))
+
+    def test_cancellable_chat_request_aborts_in_flight_http_call(self) -> None:
+        checks = iter([False, True])
+        request_cancelled = False
+
+        async def slow_post(*_args, **_kwargs):
+            nonlocal request_cancelled
+            try:
+                await asyncio.sleep(60)
+            except asyncio.CancelledError:
+                request_cancelled = True
+                raise
+
+        with patch("httpx.AsyncClient.post", side_effect=slow_post):
+            with self.assertRaises(VLMRequestCancelled):
+                _send_chat_completion(
+                    url="http://example.invalid/v1/chat/completions",
+                    headers={},
+                    payload={"model": "test"},
+                    should_cancel=lambda: next(checks),
+                    cancel_poll_seconds=0.01,
+                )
+
+        self.assertTrue(request_cancelled)
 
     def test_analyze_with_strict_json_retry_retries_once_for_non_json_prefix(self) -> None:
         calls: list[dict[str, str]] = []

@@ -31,6 +31,7 @@ from .unknown_face_clustering_service import cluster_unknown_faces
 class ProjectTaskRunContext:
     db: Session
     persist_progress: Callable[[int, dict], None]
+    cancel_requested: Callable[[int], bool]
 
     @staticmethod
     def with_task_id(state: dict, task_id: int) -> dict:
@@ -158,6 +159,7 @@ class PhotoQuarantineAnalysisTaskHandler:
         return PhotoQuarantineAnalysisService(context.db).run_project(
             project_id=task.project_id,
             ignore_window=bool(params.get("ignore_window", False)),
+            should_cancel=lambda: context.cancel_requested(task.id),
             progress_callback=lambda state: context.persist_progress(
                 task.id,
                 context.with_task_id(state, task.id),

@@ -18,7 +18,7 @@ from ..models.photo_quarantine import (
     ProjectPhotoQuarantineSettings,
 )
 from .photo_quarantine_service import PhotoQuarantineService
-from .vlm_client import analyze_image
+from .vlm_client import VLMRequestCancelled, analyze_image
 
 PROMPT_VERSION = "photo-quarantine-v3-duplicate-detection"
 AUTO_MOVE_CATEGORIES = frozenset(
@@ -98,6 +98,7 @@ class PhotoQuarantineAnalysisService:
         project_id: int,
         ignore_window: bool = False,
         progress_callback: Optional[Callable[[dict], None]] = None,
+        should_cancel: Optional[Callable[[], bool]] = None,
     ) -> dict:
         settings_row = PhotoQuarantineService(self._db).get_or_create_settings(project_id)
         timezone = load_timezone(settings_row.timezone)
@@ -129,6 +130,7 @@ class PhotoQuarantineAnalysisService:
                     photo,
                     settings_row,
                     duplicate_source=duplicate_sources.get(photo.id),
+                    should_cancel=should_cancel,
                 )
                 counters["analyzed"] += 1
                 if item.status == "kept":
@@ -137,6 +139,8 @@ class PhotoQuarantineAnalysisService:
                     counters["quarantined"] += 1
                 else:
                     counters["review"] += 1
+            except VLMRequestCancelled:
+                raise
             except Exception as exc:  # noqa: BLE001
                 self._persist_analysis_error(
                     photo=photo,
@@ -204,6 +208,7 @@ class PhotoQuarantineAnalysisService:
         settings_row: ProjectPhotoQuarantineSettings,
         *,
         duplicate_source: Optional[DuplicateSource] = None,
+        should_cancel: Optional[Callable[[], bool]] = None,
     ) -> PhotoQuarantineItem:
         if duplicate_source is not None:
             return self._persist_duplicate_candidate(
@@ -223,6 +228,7 @@ class PhotoQuarantineAnalysisService:
                 temperature=0.0,
                 top_p=0.1,
                 max_tokens=500,
+                should_cancel=should_cancel,
             )
         )
 
@@ -241,6 +247,7 @@ class PhotoQuarantineAnalysisService:
                     temperature=0.0,
                     top_p=0.1,
                     max_tokens=500,
+                    should_cancel=should_cancel,
                 )
             )
             if not _is_verified_auto_candidate(first, verification):

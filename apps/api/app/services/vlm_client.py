@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import io
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import cv2
 import httpx
@@ -34,6 +35,10 @@ class VLMRequestError(RuntimeError):
         super().__init__(message)
         self.retryable = retryable
         self.code = code
+
+
+class VLMRequestCancelled(RuntimeError):
+    """Raised when a caller cancels an in-flight VLM request."""
 
 
 def _safe_json(response: httpx.Response) -> dict[str, Any] | None:
@@ -82,12 +87,25 @@ def _send_chat_completion(
     url: str,
     headers: dict[str, str],
     payload: dict[str, Any],
+    should_cancel: Callable[[], bool] | None = None,
+    cancel_poll_seconds: float = 1.0,
 ) -> httpx.Response:
     """Send chat completion request with one compatibility fallback.
 
     Some OpenAI-compatible backends do not support `response_format`.
     When that specific parameter is rejected, retry once without it.
     """
+    if should_cancel is not None:
+        return asyncio.run(
+            _send_chat_completion_cancellable(
+                url=url,
+                headers=headers,
+                payload=payload,
+                should_cancel=should_cancel,
+                cancel_poll_seconds=cancel_poll_seconds,
+            )
+        )
+
     with httpx.Client(timeout=180.0) as client:
         try:
             response = client.post(url, json=payload, headers=headers)
@@ -110,6 +128,80 @@ def _send_chat_completion(
                 return retry_response
 
             raise
+
+
+async def _send_chat_completion_cancellable(
+    *,
+    url: str,
+    headers: dict[str, str],
+    payload: dict[str, Any],
+    should_cancel: Callable[[], bool],
+    cancel_poll_seconds: float,
+) -> httpx.Response:
+    if should_cancel():
+        raise VLMRequestCancelled("VLM request cancelled before dispatch")
+
+    async with httpx.AsyncClient(timeout=180.0) as client:
+        request_task = asyncio.create_task(
+            _send_chat_completion_async(
+                client=client,
+                url=url,
+                headers=headers,
+                payload=payload,
+            )
+        )
+        try:
+            while True:
+                done, _pending = await asyncio.wait(
+                    {request_task},
+                    timeout=max(0.01, cancel_poll_seconds),
+                )
+                if request_task in done:
+                    return request_task.result()
+                if should_cancel():
+                    request_task.cancel()
+                    try:
+                        await request_task
+                    except asyncio.CancelledError:
+                        pass
+                    raise VLMRequestCancelled("VLM request cancelled")
+        finally:
+            if not request_task.done():
+                request_task.cancel()
+
+
+async def _send_chat_completion_async(
+    *,
+    client: httpx.AsyncClient,
+    url: str,
+    headers: dict[str, str],
+    payload: dict[str, Any],
+) -> httpx.Response:
+    try:
+        response = await client.post(url, json=payload, headers=headers)
+        response.raise_for_status()
+        return response
+    except httpx.HTTPStatusError as exc:
+        response = exc.response
+        payload_json = _safe_json(response)
+        err: dict[str, Any] = payload_json.get("error", {}) if payload_json else {}
+        err_message = str(err.get("message") or response.text[:500])
+
+        if response.status_code == 400 and "response_format" in err_message.lower():
+            logger.warning(
+                "Backend does not support response_format=json_object; retrying without it."
+            )
+            compat_payload = dict(payload)
+            compat_payload.pop("response_format", None)
+            retry_response = await client.post(
+                url,
+                json=compat_payload,
+                headers=headers,
+            )
+            retry_response.raise_for_status()
+            return retry_response
+
+        raise
 
 
 def _normalize_chat_url(endpoint_url: str) -> str:
@@ -261,6 +353,7 @@ def analyze_image(
     temperature: float | None = None,
     top_p: float | None = None,
     max_tokens: int | None = None,
+    should_cancel: Callable[[], bool] | None = None,
 ) -> str:
     """Analyze an image or sampled video frames via OpenAI-compatible chat.
 
@@ -331,7 +424,12 @@ def analyze_image(
     headers = {"Authorization": f"Bearer {settings.openai_api_key}"}
 
     try:
-        response = _send_chat_completion(url=url, headers=headers, payload=payload)
+        response = _send_chat_completion(
+            url=url,
+            headers=headers,
+            payload=payload,
+            should_cancel=should_cancel,
+        )
     except httpx.ConnectError as exc:
         raise VLMRequestError(
             f"Cannot connect to OpenAI-compatible API at {settings.openai_base_url}. "

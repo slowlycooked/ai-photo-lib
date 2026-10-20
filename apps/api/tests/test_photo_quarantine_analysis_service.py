@@ -5,6 +5,7 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
@@ -22,6 +23,7 @@ from app.services.photo_quarantine_analysis_service import (
     is_hour_in_window,
 )
 from app.services.photo_quarantine_service import PhotoQuarantineService
+from app.services.vlm_client import VLMRequestCancelled
 
 
 def _build_db(tmp_path: Path, *, dry_run: bool = True) -> tuple[Session, Path]:
@@ -116,6 +118,26 @@ def test_screenshot_is_never_auto_move_category(tmp_path: Path) -> None:
     assert item.decision == "QUARANTINE"
     assert item.status == "review"
     assert item.verification_result is None
+
+
+def test_cancelled_vlm_request_is_not_recorded_as_analysis_failure(tmp_path: Path) -> None:
+    db, _image = _build_db(tmp_path)
+
+    def analyzer(*_args, should_cancel=None, **_kwargs):
+        assert should_cancel is not None
+        assert should_cancel()
+        raise VLMRequestCancelled("cancelled")
+
+    service = PhotoQuarantineAnalysisService(
+        db,
+        analyzer=analyzer,
+        clock=lambda tz: datetime(2026, 8, 25, 2, tzinfo=tz),
+    )
+
+    with pytest.raises(VLMRequestCancelled):
+        service.run_project(project_id=1, should_cancel=lambda: True)
+
+    assert db.query(PhotoQuarantineItem).count() == 0
 
 
 def test_adult_content_is_flagged_and_forced_to_manual_review(tmp_path: Path) -> None:

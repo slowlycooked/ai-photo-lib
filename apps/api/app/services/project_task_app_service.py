@@ -18,6 +18,7 @@ from .project_task_service import (
 )
 from .search.result_cache import bump_project_search_cache_epoch
 from .task_claim_service import TaskClaimService
+from .vlm_client import VLMRequestCancelled
 from .project_task_handlers import (
     ProjectTaskHandler,
     ProjectTaskRunContext,
@@ -66,7 +67,7 @@ class ProjectTaskAppService:
 
         try:
             final_state = self._run_task(task)
-        except ProjectTaskCancelled:
+        except (ProjectTaskCancelled, VLMRequestCancelled):
             self._persist_cancelled(task.id)
             return
         except ProjectTaskPaused:
@@ -315,8 +316,14 @@ class ProjectTaskAppService:
             ProjectTaskRunContext(
                 db=self._db,
                 persist_progress=self._persist_progress,
+                cancel_requested=self._cancel_requested_by_id,
             ),
         )
+
+    def _cancel_requested_by_id(self, task_id: int) -> bool:
+        with self._session_factory() as db:
+            task = self._load_task(db, task_id)
+            return task is None or self._cancel_requested(task)
 
     def _use_main_session_for_progress(self) -> bool:
         bind = self._db.get_bind()
