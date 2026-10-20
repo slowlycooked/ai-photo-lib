@@ -174,6 +174,33 @@ def test_query_plan_v2_adapter_maps_facts_and_semantics_without_taxonomy() -> No
     assert plan.support_terms == ["雪地", "滑雪"]
 
 
+def test_query_plan_v2_adapter_does_not_treat_named_person_as_location() -> None:
+    output = QueryPlanV2.model_validate(
+        {
+            "intent": "photo_search",
+            "filters": {
+                "time_ranges": [{"start": "2024-01-01", "end": "2025-01-01"}],
+                "people": [{"name": "苗苗", "required": True}],
+            },
+            "confidence": 0.8,
+        }
+    )
+    deterministic = understand_query("2024年的苗苗", project_id=1)
+
+    plan = planner_v2_output_to_query_plan(
+        query="2024年的苗苗",
+        output=output,
+        planner_debug={"parsed": True, "confidence": 0.8},
+        deterministic_plan=deterministic,
+    )
+
+    assert plan.metadata_filters["place_terms"] == []
+    assert "苗苗" not in plan.metadata_filters["matched_metadata_terms"]
+    assert plan.planner_filters["people"] == [
+        {"name": "苗苗", "required": True}
+    ]
+
+
 def test_query_plan_v2_adapter_backfills_dynamic_people_count() -> None:
     output = QueryPlanV2.model_validate(
         {

@@ -444,7 +444,7 @@ def planner_v2_output_to_query_plan(
         visual_objects + visual_scenes + visual_activities + visual_attributes
     )
 
-    deterministic_metadata = deterministic_plan.metadata_filters or {}
+    deterministic_metadata = dict(deterministic_plan.metadata_filters or {})
     deterministic_metadata_only = bool(
         deterministic_metadata.get("metadata_only")
     )
@@ -460,6 +460,22 @@ def planner_v2_output_to_query_plan(
             if _is_non_entity_people_term(item.name)
         ]
     )
+    entity_people_names = {
+        str(item.name or "").strip().lower()
+        for item in entity_people
+        if str(item.name or "").strip()
+    }
+    if entity_people_names:
+        deterministic_metadata["place_terms"] = [
+            term
+            for term in deterministic_metadata.get("place_terms", [])
+            if str(term or "").strip().lower() not in entity_people_names
+        ]
+        deterministic_metadata["matched_metadata_terms"] = [
+            term
+            for term in deterministic_metadata.get("matched_metadata_terms", [])
+            if str(term or "").strip().lower() not in entity_people_names
+        ]
     unresolved_entities = output.unresolved.model_dump()
     unresolved_entities["people"] = [
         name

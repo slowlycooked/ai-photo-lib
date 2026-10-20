@@ -4,6 +4,7 @@ import copy
 import threading
 import time
 from collections import OrderedDict
+from concurrent.futures import Future
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import text
@@ -32,6 +33,7 @@ _TAG_GROUP_CACHE: (
     "OrderedDict[tuple[int, int, int], tuple[float, dict[str, list[TagCount]]]]"
 ) = OrderedDict()
 _TAG_GROUP_CACHE_LOCK = threading.Lock()
+_TAG_GROUP_INFLIGHT: dict[tuple[int, int, int], Future] = {}
 
 
 def _empty_tag_groups() -> dict[str, list[TagCount]]:
@@ -116,6 +118,35 @@ def _count_tag_groups(
     return groups
 
 
+def _load_tag_groups(db: Session, cache_key: tuple[int, int, int]) -> dict[str, list[TagCount]]:
+    cached = _get_cached_tag_groups(cache_key)
+    if cached is not None:
+        return cached
+    with _TAG_GROUP_CACHE_LOCK:
+        pending = _TAG_GROUP_INFLIGHT.get(cache_key)
+        owns_query = pending is None
+        if pending is None:
+            pending = Future()
+            _TAG_GROUP_INFLIGHT[cache_key] = pending
+    if not owns_query:
+        return copy.deepcopy(pending.result())
+    try:
+        # Another owner may have filled the cache between the first read and registration.
+        groups = _get_cached_tag_groups(cache_key)
+        if groups is None:
+            project_id, _, limit = cache_key
+            groups = _count_tag_groups(db, project_id, limit=limit)
+            _put_cached_tag_groups(cache_key, groups)
+        pending.set_result(groups)
+        return copy.deepcopy(groups)
+    except BaseException as error:
+        pending.set_exception(error)
+        raise
+    finally:
+        with _TAG_GROUP_CACHE_LOCK:
+            _TAG_GROUP_INFLIGHT.pop(cache_key, None)
+
+
 @router.get("/{project_id}/tags", response_model=TagsResponse)
 def project_tags(
     project_id: int,
@@ -126,10 +157,7 @@ def project_tags(
     limit = 100
     cache_epoch = get_project_search_cache_epoch(db, project_id)
     cache_key = (project_id, cache_epoch, limit)
-    tag_groups = _get_cached_tag_groups(cache_key)
-    if tag_groups is None:
-        tag_groups = _count_tag_groups(db, project_id, limit=limit)
-        _put_cached_tag_groups(cache_key, tag_groups)
+    tag_groups = _load_tag_groups(db, cache_key)
     return TagsResponse(
         scene_tags=tag_groups["scene_tags"],
         object_tags=tag_groups["object_tags"],
