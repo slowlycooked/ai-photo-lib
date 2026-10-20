@@ -83,4 +83,4 @@ htmlcov/
 *.zip
 *.tar.gz
 *.tar
-.codebase-memory
+.codebase-memory*.db
