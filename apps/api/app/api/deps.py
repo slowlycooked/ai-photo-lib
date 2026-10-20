@@ -19,9 +19,20 @@ from ..services.auth_service import (
 def get_current_user(request: Request, db: Session = Depends(get_db)) -> CurrentUser:
     """Resolve the authenticated user from the signed session cookie.
 
+    When auth is disabled, the HTTP middleware lets every request through;
+    resolve those requests as the bootstrap admin so route-level dependencies
+    keep a consistent identity instead of failing with 401.
+
     The legacy env-based admin remains a bootstrap user until database users are
     created, so existing local deployments keep working after the migration.
     """
+    if not settings.auth_enabled:
+        return CurrentUser(
+            id=None,
+            username=settings.auth_username,
+            role="admin",  # type: ignore[arg-type]
+            bootstrap=True,
+        )
     session = verify_session_cookie(request.cookies.get(SESSION_COOKIE_NAME))
     if session is None:
         raise HTTPException(status_code=401, detail="Authentication required")
