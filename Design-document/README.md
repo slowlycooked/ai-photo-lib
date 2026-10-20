@@ -10,6 +10,8 @@ Design-document stores architecture and domain materials, not runbook procedures
    - [convergence-roadmap.md](convergence-roadmap.md)
 3. People/Face domain design and progress:
    - [faceDetectionDesgin.md](faceDetectionDesgin.md)
+4. Full agent handoff snapshot:
+   - [agent-handoff.md](agent-handoff.md)
 
 ## Historical References
 
