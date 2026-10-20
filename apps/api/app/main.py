@@ -251,6 +251,12 @@ async def request_context_middleware(request: Request, call_next):
 
 @app.exception_handler(OperationalError)
 async def db_unavailable_handler(request: Request, exc: OperationalError) -> JSONResponse:
+    # First line only: keep SQL statements and bound parameters out of logs.
+    logger.warning(
+        "OperationalError handled as 503. path=%s error=%s",
+        request.url.path,
+        str(exc).split("\n")[0][:300],
+    )
     return JSONResponse(
         status_code=503,
         content={"detail": "Database unavailable, please try again later"},
