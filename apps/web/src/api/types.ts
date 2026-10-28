@@ -599,6 +599,10 @@ export interface FaceDetection {
   detected_at: string | null;
   created_at: string;
   updated_at: string;
+  assignment_person_id?: number | null;
+  assignment_person_name?: string | null;
+  assignment_status?: string | null;
+  assignment_source?: string | null;
 }
 
 export interface FaceDetectionDetail extends FaceDetection {

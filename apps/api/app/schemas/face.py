@@ -91,6 +91,10 @@ class FaceDetectionResponse(BaseModel):
     detected_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
+    assignment_person_id: Optional[int] = None
+    assignment_person_name: Optional[str] = None
+    assignment_status: Optional[str] = None
+    assignment_source: Optional[str] = None
 
 
 class FaceDetectionDetailResponse(FaceDetectionResponse):

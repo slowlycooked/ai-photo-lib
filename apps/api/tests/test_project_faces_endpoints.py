@@ -134,6 +134,21 @@ CREATE TABLE persons (
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE person_face_assignments (
+  id INTEGER PRIMARY KEY,
+  project_id INTEGER NOT NULL,
+  person_id INTEGER NOT NULL,
+  face_detection_id INTEGER NOT NULL,
+  assignment_status TEXT NOT NULL,
+  assignment_source TEXT,
+  confidence REAL,
+  similarity_score REAL,
+  is_positive_sample BOOLEAN NOT NULL DEFAULT 0,
+  is_training_candidate BOOLEAN NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE photo_derivatives (
   id INTEGER PRIMARY KEY,
   project_id INTEGER NOT NULL,
@@ -260,6 +275,14 @@ INSERT INTO persons (
   (101, 1, 'Dad', 'dad', 1, 301, 1, 1, 'user'),
   (102, 1, 'Person 102', 'person 102', 0, NULL, 0, 0, 'system'),
   (103, 1, 'Mom', 'mom', 1, NULL, 0, 0, 'user');
+
+INSERT INTO person_face_assignments (
+  id, project_id, person_id, face_detection_id,
+  assignment_status, assignment_source, confidence,
+  is_positive_sample, is_training_candidate
+) VALUES
+  (801, 1, 101, 301, 'human_confirmed', 'human_label', 1.0, 1, 1),
+  (802, 1, 102, 302, 'review_pending', 'unknown_cluster', NULL, 0, 0);
 
 INSERT INTO photo_derivatives (
   id, project_id, photo_id, kind, path, source_path, source_mtime, status
@@ -536,6 +559,30 @@ class ProjectFacesEndpointsTest(unittest.TestCase):
     body = res.json()
     self.assertEqual(body["total"], 2)
     self.assertEqual({item["id"] for item in body["items"]}, {301, 302})
+
+  def test_project_faces_list_includes_active_assignment_info(self) -> None:
+    res = self.client.get("/projects/1/faces")
+    self.assertEqual(res.status_code, 200)
+    items = {item["id"]: item for item in res.json()["items"]}
+
+    confirmed = items[301]
+    self.assertEqual(confirmed["assignment_person_id"], 101)
+    self.assertEqual(confirmed["assignment_person_name"], "Dad")
+    self.assertEqual(confirmed["assignment_status"], "human_confirmed")
+    self.assertEqual(confirmed["assignment_source"], "human_label")
+
+    pending = items[302]
+    self.assertEqual(pending["assignment_person_id"], 102)
+    self.assertEqual(pending["assignment_person_name"], "Person 102")
+    self.assertEqual(pending["assignment_status"], "review_pending")
+
+  def test_project_face_detail_includes_active_assignment_info(self) -> None:
+    res = self.client.get("/projects/1/faces/301")
+    self.assertEqual(res.status_code, 200)
+    body = res.json()
+    self.assertEqual(body["assignment_person_id"], 101)
+    self.assertEqual(body["assignment_person_name"], "Dad")
+    self.assertEqual(body["assignment_status"], "human_confirmed")
 
   def test_project_face_scan_jobs_missing_scope_queues_unscanned_photos(self) -> None:
     start = self.client.post("/projects/1/face-scan-project/start")

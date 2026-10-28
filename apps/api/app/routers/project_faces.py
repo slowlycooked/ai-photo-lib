@@ -45,6 +45,7 @@ from ..services.project_manual_face_scan_app_service import (
     ProjectManualFaceScanAppService,
 )
 from ..services.project_faces_query_service import (
+    FaceAssignmentInfo,
     FaceCropNotFoundError,
     FaceNotFoundError,
     ProjectFacesQueryService,
@@ -231,6 +232,18 @@ def cancel_rematch_project_unknown_faces(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
+def _apply_assignment_info(
+    payload: FaceDetectionResponse,
+    info: Optional[FaceAssignmentInfo],
+) -> None:
+    if info is None:
+        return
+    payload.assignment_person_id = info.person_id
+    payload.assignment_person_name = info.person_display_name
+    payload.assignment_status = info.assignment_status
+    payload.assignment_source = info.assignment_source
+
+
 @router.get("/{project_id}/faces", response_model=FaceDetectionListResponse)
 def list_project_faces(
     project_id: int,
@@ -241,7 +254,8 @@ def list_project_faces(
     project: Project = Depends(require_project),
     db: Session = Depends(get_db),
 ) -> FaceDetectionListResponse:
-    total, items = ProjectFacesQueryService(db).list_faces(
+    query_service = ProjectFacesQueryService(db)
+    total, items = query_service.list_faces(
         project_id=project_id,
         page=page,
         page_size=page_size,
@@ -249,11 +263,18 @@ def list_project_faces(
         status=status,
     )
     page_size = max(1, min(page_size, 200))
+    assignments = query_service.get_active_assignments_for_faces(
+        project_id=project_id,
+        face_ids=[face.id for face in items],
+    )
+    response_items = [FaceDetectionResponse.model_validate(face) for face in items]
+    for payload in response_items:
+        _apply_assignment_info(payload, assignments.get(payload.id))
     return FaceDetectionListResponse(
         total=total,
         page=page,
         page_size=page_size,
-        items=[FaceDetectionResponse.model_validate(item) for item in items],
+        items=response_items,
     )
 
 
@@ -272,7 +293,12 @@ def get_project_face(
     except FaceNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
+    assignments = ProjectFacesQueryService(db).get_active_assignments_for_faces(
+        project_id=project_id,
+        face_ids=[face.id],
+    )
     payload = FaceDetectionDetailResponse.model_validate(face)
+    _apply_assignment_info(payload, assignments.get(face.id))
     payload.embeddings = embeddings
     return payload
 

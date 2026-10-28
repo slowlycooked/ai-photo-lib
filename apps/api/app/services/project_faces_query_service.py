@@ -6,7 +6,14 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
-from ..models.face import FaceDetection, FaceEmbedding
+from ..models.face import FaceDetection, FaceEmbedding, Person, PersonFaceAssignment
+from .people_assignment_constants import (
+    STATUS_AUTO_ASSIGNED,
+    STATUS_HUMAN_CONFIRMED,
+    STATUS_HUMAN_CORRECTED,
+    STATUS_REJECTED,
+    STATUS_REVIEW_PENDING,
+)
 
 
 class FaceNotFoundError(RuntimeError):
@@ -15,6 +22,24 @@ class FaceNotFoundError(RuntimeError):
 
 class FaceCropNotFoundError(RuntimeError):
     pass
+
+
+@dataclass(frozen=True)
+class FaceAssignmentInfo:
+    """Best non-rejected person assignment for a face, for display purposes."""
+
+    person_id: int
+    person_display_name: str
+    assignment_status: str
+    assignment_source: Optional[str]
+
+
+_ASSIGNMENT_STATUS_RANK: dict[str, int] = {
+    STATUS_HUMAN_CONFIRMED: 0,
+    STATUS_HUMAN_CORRECTED: 0,
+    STATUS_AUTO_ASSIGNED: 1,
+    STATUS_REVIEW_PENDING: 2,
+}
 
 
 @dataclass
@@ -72,6 +97,59 @@ class ProjectFacesQueryService:
             .all()
         )
         return face, embeddings
+
+    def get_active_assignments_for_faces(
+        self,
+        *,
+        project_id: int,
+        face_ids: list[int],
+    ) -> dict[int, FaceAssignmentInfo]:
+        """Return the best non-rejected assignment per face, project-scoped.
+
+        Priority: human_confirmed/human_corrected > auto_assigned > review_pending;
+        ties break on latest updated_at, then highest assignment id.
+        """
+        if not face_ids:
+            return {}
+        rows = (
+            self.db.query(
+                PersonFaceAssignment.face_detection_id,
+                PersonFaceAssignment.id,
+                PersonFaceAssignment.person_id,
+                PersonFaceAssignment.assignment_status,
+                PersonFaceAssignment.assignment_source,
+                PersonFaceAssignment.updated_at,
+                Person.display_name,
+            )
+            .join(Person, Person.id == PersonFaceAssignment.person_id)
+            .filter(
+                PersonFaceAssignment.project_id == project_id,
+                PersonFaceAssignment.face_detection_id.in_(face_ids),
+                PersonFaceAssignment.assignment_status != STATUS_REJECTED,
+            )
+            .all()
+        )
+        best: dict[int, tuple[tuple[int, str, int], FaceAssignmentInfo]] = {}
+        for row in rows:
+            face_id = int(row.face_detection_id)
+            status = str(row.assignment_status or "")
+            rank = (
+                _ASSIGNMENT_STATUS_RANK.get(status, 3),
+                str(row.updated_at or ""),
+                int(row.id),
+            )
+            info = FaceAssignmentInfo(
+                person_id=int(row.person_id),
+                person_display_name=str(row.display_name),
+                assignment_status=status,
+                assignment_source=(
+                    str(row.assignment_source) if row.assignment_source else None
+                ),
+            )
+            current = best.get(face_id)
+            if current is None or rank > current[0]:
+                best[face_id] = (rank, info)
+        return {face_id: info for face_id, (_, info) in best.items()}
 
     def get_face_crop_path(self, *, project_id: int, face_id: int) -> Path:
         face = (
