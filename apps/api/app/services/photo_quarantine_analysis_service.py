@@ -18,6 +18,7 @@ from ..models.photo_quarantine import (
     ProjectPhotoQuarantineSettings,
 )
 from .photo_quarantine_service import PhotoQuarantineService
+from .thumbnail import VIDEO_SUFFIXES
 from .vlm_client import VLMRequestCancelled, analyze_image
 
 PROMPT_VERSION = "photo-quarantine-v3-duplicate-detection"
@@ -78,6 +79,20 @@ class DuplicateSource:
     id: int
     file_name: str
     file_path: str
+
+
+VIDEO_OUT_OF_SCOPE_CLASSIFICATION = "video_out_of_scope"
+
+
+def _is_video_photo(photo: Photo) -> bool:
+    """Videos are scanned for exact-hash duplicates only.
+
+    A video must never go through VLM content review: it would be judged from
+    a single thumbnail frame, which is not a sound basis for deletion.
+    """
+    if photo.mime_type and photo.mime_type.lower().startswith("video/"):
+        return True
+    return Path(photo.file_path).suffix.lower() in VIDEO_SUFFIXES
 
 
 class PhotoQuarantineAnalysisService:
@@ -216,6 +231,13 @@ class PhotoQuarantineAnalysisService:
                 duplicate_source=duplicate_source,
                 model_name=settings_row.model_name,
             )
+        if _is_video_photo(photo):
+            # Videos never go through content review; only exact-hash
+            # duplicates (handled above) enter the review queue.
+            return self._persist_video_out_of_scope(
+                photo=photo,
+                model_name=settings_row.model_name,
+            )
 
         image_path = _analysis_image_path(photo)
         first = _parse_decision(
@@ -314,6 +336,56 @@ class PhotoQuarantineAnalysisService:
             else:
                 duplicates[photo_id] = source
         return duplicates
+
+    def _persist_video_out_of_scope(
+        self,
+        *,
+        photo: Photo,
+        model_name: str,
+    ) -> PhotoQuarantineItem:
+        """Record a scanned video that is not a duplicate.
+
+        Keeps the video out of future candidate queries without ever running
+        content analysis on it; hidden from the review UI by the service's
+        video visibility filter.
+        """
+        item = (
+            self._db.query(PhotoQuarantineItem)
+            .filter(
+                PhotoQuarantineItem.project_id == photo.project_id,
+                PhotoQuarantineItem.photo_id == photo.id,
+            )
+            .first()
+        )
+        if item is None:
+            item = PhotoQuarantineItem(project_id=photo.project_id, photo_id=photo.id)
+            self._db.add(item)
+        result = {
+            "decision": "KEEP",
+            "classification": VIDEO_OUT_OF_SCOPE_CLASSIFICATION,
+            "confidence": 1.0,
+            "reason": "视频不参与内容审核，仅参与重复排查；未发现重复副本",
+            "preservation_flags": [],
+            "has_record_value": True,
+            "content_rating": "SAFE",
+            "sensitive_content_flags": [],
+        }
+        item.status = "kept"
+        item.decision = "KEEP"
+        item.classification = VIDEO_OUT_OF_SCOPE_CLASSIFICATION
+        item.confidence = 1.0
+        item.reason = str(result["reason"])
+        item.preservation_flags = []
+        item.first_result = result
+        item.verification_result = None
+        item.model_name = model_name
+        item.prompt_version = PROMPT_VERSION
+        item.original_path = photo.file_path
+        item.content_hash = photo.file_hash
+        item.last_error = None
+        self._db.commit()
+        self._db.refresh(item)
+        return item
 
     def _persist_duplicate_candidate(
         self,

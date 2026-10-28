@@ -15,6 +15,8 @@ from app.database import Base
 from app.models.photo import Photo
 from app.models.photo_quarantine import PhotoQuarantineItem
 from app.models.project import Project
+from app.models.project_library_path import ProjectLibraryPath
+from app.services.photo_cleanup import ORIGINAL_TRASH_LOCK_DIR
 from app.services.photo_quarantine_service import (
     PhotoQuarantineConflict,
     PhotoQuarantineError,
@@ -32,6 +34,7 @@ def quarantine_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         engine,
         tables=[
             Project.__table__,
+            ProjectLibraryPath.__table__,
             Photo.__table__,
             PhotoQuarantineItem.__table__,
         ],
@@ -551,3 +554,220 @@ def test_classification_filter_and_counts_normalize_legacy_values(
             project_id=1,
             status="review",
         ) == {"meaningless_test_image": 1}
+
+
+def _add_video_item(
+    db: Session,
+    *,
+    item_id: int,
+    photo_id: int,
+    status: str,
+    classification: str = "other",
+) -> None:
+    video_path = f"/library/VID_{item_id:04d}.mp4"
+    db.add(
+        Photo(
+            id=photo_id,
+            project_id=1,
+            file_path=video_path,
+            file_name=f"VID_{item_id:04d}.mp4",
+            status="indexed",
+        )
+    )
+    db.add(
+        PhotoQuarantineItem(
+            id=item_id,
+            project_id=1,
+            photo_id=photo_id,
+            status=status,
+            decision="REVIEW",
+            classification=classification,
+            confidence=0.5,
+            reason="video item",
+            preservation_flags=[],
+            first_result={"decision": "REVIEW"},
+            model_name="qwen3.8:27b",
+            prompt_version="photo-quarantine-v3-duplicate-detection",
+            original_path=video_path,
+        )
+    )
+    db.commit()
+
+
+def test_undo_delete_request_withdraws_pending_manifest_entry(
+    quarantine_fixture,
+) -> None:
+    engine, _library, trash, original, _digest = quarantine_fixture
+    with Session(engine) as db:
+        service = PhotoQuarantineService(db, root=trash)
+        service.request_delete(project_id=1, item_id=100, labeled_by="martin")
+        manifest = original.parents[2] / "pending-original-trash.jsonl"
+        assert len(manifest.read_text().splitlines()) == 1
+
+        undone = service.undo_delete_request(
+            project_id=1, item_id=100, labeled_by="martin"
+        )
+
+        assert undone.status == "restored"
+        assert undone.decision == "KEEP"
+        assert undone.human_label == "KEEP"
+        assert undone.restored_at is not None
+        assert [line for line in manifest.read_text().splitlines() if line.strip()] == []
+        photo = db.query(Photo).filter(Photo.id == 10).one()
+        assert photo.status == "indexed"
+        assert photo.deleted_at is None
+        assert original.exists()
+
+        # The photo can be queued for deletion again after an undo.
+        requeued = service.request_delete(
+            project_id=1, item_id=100, labeled_by="martin"
+        )
+        assert requeued.item.status == "delete_queued"
+        entries = [
+            json.loads(line)
+            for line in manifest.read_text().splitlines()
+            if line.strip()
+        ]
+        assert len(entries) == 1
+        assert entries[0]["photo_id"] == 10
+
+
+def test_undo_delete_request_conflicts_when_original_file_is_missing(
+    quarantine_fixture,
+) -> None:
+    engine, _library, trash, original, _digest = quarantine_fixture
+    with Session(engine) as db:
+        service = PhotoQuarantineService(db, root=trash)
+        service.request_delete(project_id=1, item_id=100)
+        original.unlink()
+
+        with pytest.raises(PhotoQuarantineConflict, match="原文件已不在原位置"):
+            service.undo_delete_request(project_id=1, item_id=100, labeled_by="martin")
+
+        item = db.query(PhotoQuarantineItem).filter(PhotoQuarantineItem.id == 100).one()
+        assert item.status == "delete_queued"
+
+
+def test_undo_delete_request_conflicts_while_nas_batch_holds_lock(
+    quarantine_fixture,
+) -> None:
+    engine, _library, trash, original, _digest = quarantine_fixture
+    with Session(engine) as db:
+        service = PhotoQuarantineService(db, root=trash)
+        service.request_delete(project_id=1, item_id=100)
+        lock_dir = original.parents[2] / ORIGINAL_TRASH_LOCK_DIR
+        lock_dir.mkdir()
+        try:
+            with pytest.raises(PhotoQuarantineConflict, match="批处理"):
+                service.undo_delete_request(
+                    project_id=1, item_id=100, labeled_by="martin"
+                )
+            item = (
+                db.query(PhotoQuarantineItem)
+                .filter(PhotoQuarantineItem.id == 100)
+                .one()
+            )
+            assert item.status == "delete_queued"
+            manifest = original.parents[2] / "pending-original-trash.jsonl"
+            assert len(manifest.read_text().splitlines()) == 1
+        finally:
+            lock_dir.rmdir()
+
+        undone = service.undo_delete_request(
+            project_id=1, item_id=100, labeled_by="martin"
+        )
+        assert undone.status == "restored"
+
+
+def test_undo_delete_request_conflicts_when_processing_manifest_claims_entry(
+    quarantine_fixture,
+) -> None:
+    engine, _library, trash, original, _digest = quarantine_fixture
+    with Session(engine) as db:
+        service = PhotoQuarantineService(db, root=trash)
+        service.request_delete(project_id=1, item_id=100)
+        manifest = original.parents[2] / "pending-original-trash.jsonl"
+        processing = original.parents[2] / (
+            "pending-original-trash.processing-20261028010000-1.jsonl"
+        )
+        manifest.rename(processing)
+
+        with pytest.raises(PhotoQuarantineConflict, match="提取"):
+            service.undo_delete_request(project_id=1, item_id=100, labeled_by="martin")
+
+        item = db.query(PhotoQuarantineItem).filter(PhotoQuarantineItem.id == 100).one()
+        assert item.status == "delete_queued"
+        assert processing.exists()
+
+
+def test_undo_delete_request_requires_delete_queued_status(
+    quarantine_fixture,
+) -> None:
+    engine, _library, trash, _original, _digest = quarantine_fixture
+    with Session(engine) as db:
+        service = PhotoQuarantineService(db, root=trash)
+
+        with pytest.raises(PhotoQuarantineConflict, match="cannot be undone"):
+            service.undo_delete_request(project_id=1, item_id=100, labeled_by="martin")
+
+
+def test_batch_undo_delete_reports_conflicts_without_rolling_back(
+    quarantine_fixture,
+) -> None:
+    engine, _library, trash, _original, _digest = quarantine_fixture
+    with Session(engine) as db:
+        service = PhotoQuarantineService(db, root=trash)
+        service.request_delete(project_id=1, item_id=100, labeled_by="martin")
+        _add_video_item(db, item_id=101, photo_id=11, status="review")
+
+        result = service.batch_action(
+            project_id=1,
+            item_ids=[100, 101],
+            action="UNDO_DELETE",
+            labeled_by="martin",
+        )
+
+        assert result.succeeded == 1
+        assert result.failed == 1
+        assert result.results[0].item is not None
+        assert result.results[0].item.status == "restored"
+        assert result.results[1].error_code == "conflict"
+
+
+def test_list_items_hides_pending_videos_but_keeps_in_flight_entries(
+    quarantine_fixture,
+) -> None:
+    engine, _library, trash, _original, _digest = quarantine_fixture
+    with Session(engine) as db:
+        service = PhotoQuarantineService(db, root=trash)
+        _add_video_item(
+            db, item_id=101, photo_id=11, status="review", classification="blank_image"
+        )
+        _add_video_item(
+            db,
+            item_id=102,
+            photo_id=12,
+            status="delete_queued",
+            classification="severe_blur",
+        )
+        _add_video_item(
+            db,
+            item_id=103,
+            photo_id=13,
+            status="review",
+            classification="suspected_duplicate",
+        )
+
+        total, items = service.list_items(project_id=1, status="review,delete_queued")
+
+        # The image review item, the duplicate video (reviewable) and the
+        # delete_queued video (undoable) are visible; the legacy
+        # content-classified video review item is hidden.
+        assert total == 3
+        assert {item.id for item in items} == {100, 102, 103}
+        counts = service.classification_counts(
+            project_id=1, status="review,delete_queued"
+        )
+        assert counts.get("blank_image") is None
+        assert counts.get("severe_blur") == 1
+        assert counts.get("suspected_duplicate") == 1

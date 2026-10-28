@@ -273,7 +273,7 @@ describe("LibraryForm", () => {
 
     render(
       <LibraryForm
-        initial={{ name: "", photo_library_path: "", is_default: false }}
+        initial={{ name: "", photo_library_paths: [""], is_default: false }}
         hostPrefix="/Users/martinclaw/nas/photo"
         submitLabel="添加"
         isSubmitting={false}
@@ -289,8 +289,39 @@ describe("LibraryForm", () => {
 
     expect(onSubmit).toHaveBeenCalledWith({
       name: "Family",
-      photo_library_path: "/Users/martinclaw/nas/photo/Family",
+      photo_library_paths: ["/Users/martinclaw/nas/photo/Family"],
       is_default: true,
+    });
+  });
+
+  it("supports adding and removing multiple library paths", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+
+    render(
+      <LibraryForm
+        initial={{ name: "", photo_library_paths: [""], is_default: false }}
+        hostPrefix="/Users/martinclaw/nas/photo"
+        submitLabel="添加"
+        isSubmitting={false}
+        onSubmit={onSubmit}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    await user.type(screen.getByLabelText("名称"), "Multi");
+    await user.type(screen.getByLabelText("图片库路径"), "/nas/first");
+    await user.click(screen.getByRole("button", { name: "添加路径" }));
+    await user.type(screen.getByLabelText("图片库路径 2"), "/nas/second");
+    await user.click(screen.getByRole("button", { name: "添加路径" }));
+    await user.type(screen.getByLabelText("图片库路径 3"), "/nas/third");
+    await user.click(screen.getByRole("button", { name: "删除图片库路径 3" }));
+    await user.click(screen.getByRole("button", { name: "添加" }));
+
+    expect(onSubmit).toHaveBeenCalledWith({
+      name: "Multi",
+      photo_library_paths: ["/nas/first", "/nas/second"],
+      is_default: false,
     });
   });
 });

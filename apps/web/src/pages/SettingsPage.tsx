@@ -286,7 +286,7 @@ function resolveReadinessFixPath(projectId: number, checkName: string): string {
 
 interface LibraryFormValues {
   name: string;
-  photo_library_path: string;
+  photo_library_paths: string[];
   is_default: boolean;
 }
 
@@ -309,28 +309,68 @@ export function LibraryForm({
 }) {
   // Keep compatibility with older records that still store `/photos/...`.
   const initialDisplay = useMemo(
-    () => ({ ...initial, photo_library_path: containerToHost(initial.photo_library_path, hostPrefix) }),
+    () => ({
+      ...initial,
+      photo_library_paths: initial.photo_library_paths.map((path) =>
+        containerToHost(path, hostPrefix),
+      ),
+    }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [initial.photo_library_path, hostPrefix]
+    [initial, hostPrefix]
   );
   const [values, setValues] = useState<LibraryFormValues>(initialDisplay);
   const formId = useId();
   const nameInputId = `${formId}-name`;
-  const pathInputId = `${formId}-path`;
   const defaultInputId = `${formId}-default`;
 
-  function set(k: keyof LibraryFormValues, v: string | boolean) {
-    setValues((prev) => ({ ...prev, [k]: v }));
+  function setName(v: string) {
+    setValues((prev) => ({ ...prev, name: v }));
+  }
+
+  function setPathAt(index: number, v: string) {
+    setValues((prev) => ({
+      ...prev,
+      photo_library_paths: prev.photo_library_paths.map((path, i) =>
+        i === index ? v : path,
+      ),
+    }));
+  }
+
+  function addPath() {
+    setValues((prev) => ({
+      ...prev,
+      photo_library_paths: [...prev.photo_library_paths, ""],
+    }));
+  }
+
+  function removePathAt(index: number) {
+    setValues((prev) => ({
+      ...prev,
+      photo_library_paths:
+        prev.photo_library_paths.length > 1
+          ? prev.photo_library_paths.filter((_, i) => i !== index)
+          : prev.photo_library_paths,
+    }));
+  }
+
+  function setDefault(v: boolean) {
+    setValues((prev) => ({ ...prev, is_default: v }));
   }
 
   function handleSubmit() {
     onSubmit({
-      ...values,
-      photo_library_path: prepareLibrarySubmitPath(values.photo_library_path),
+      name: values.name,
+      photo_library_paths: values.photo_library_paths
+        .map((path) => prepareLibrarySubmitPath(path))
+        .filter((path) => path.trim() !== ""),
+      is_default: values.is_default,
     });
   }
 
   const hostExample = hostPrefix.replace(/\/$/, "") + "/my-library";
+  const hasValidPath = values.photo_library_paths.some(
+    (path) => path.trim() !== "",
+  );
 
   return (
     <form
@@ -350,23 +390,51 @@ export function LibraryForm({
             id={nameInputId}
             type="text"
             value={values.name}
-            onChange={(e) => set("name", e.target.value)}
+            onChange={(e) => setName(e.target.value)}
             placeholder="我的图片库"
             className="h-10 w-full rounded-xl border border-hairline bg-surface-card px-3 text-body-sm text-ink placeholder:text-mute focus:outline-none focus:ring-2 focus:ring-primary/40"
           />
         </div>
-        <div className="min-w-0">
-          <label htmlFor={pathInputId} className="mb-1.5 block text-caption-sm font-medium text-mute">
-            图片库路径
-          </label>
-          <input
-            id={pathInputId}
-            type="text"
-            value={values.photo_library_path}
-            onChange={(e) => set("photo_library_path", e.target.value)}
-            placeholder={hostExample}
-            className="h-10 w-full rounded-xl border border-hairline bg-surface-card px-3 font-mono text-body-sm text-ink placeholder:text-mute focus:outline-none focus:ring-2 focus:ring-primary/40"
-          />
+        <div className="min-w-0 space-y-2">
+          {values.photo_library_paths.map((path, index) => (
+            <div key={index} className="flex items-center gap-2">
+              <div className="min-w-0 flex-1">
+                <label
+                  htmlFor={`${formId}-path-${index}`}
+                  className="mb-1.5 block text-caption-sm font-medium text-mute"
+                >
+                  {index === 0 ? "图片库路径" : `图片库路径 ${index + 1}`}
+                </label>
+                <input
+                  id={`${formId}-path-${index}`}
+                  type="text"
+                  value={path}
+                  onChange={(e) => setPathAt(index, e.target.value)}
+                  placeholder={hostExample}
+                  className="h-10 w-full rounded-xl border border-hairline bg-surface-card px-3 font-mono text-body-sm text-ink placeholder:text-mute focus:outline-none focus:ring-2 focus:ring-primary/40"
+                />
+              </div>
+              {values.photo_library_paths.length > 1 && (
+                <button
+                  type="button"
+                  onClick={() => removePathAt(index)}
+                  title="删除此路径"
+                  aria-label={`删除图片库路径 ${index + 1}`}
+                  className="mt-6 inline-flex h-10 w-10 shrink-0 cursor-pointer items-center justify-center rounded-xl text-mute transition-colors hover:bg-danger/10 hover:text-danger focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-danger/40"
+                >
+                  <Trash2 className="h-4 w-4" aria-hidden="true" />
+                </button>
+              )}
+            </div>
+          ))}
+          <button
+            type="button"
+            onClick={addPath}
+            className="inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-xl border border-dashed border-hairline px-3 text-caption-sm font-medium text-mute transition-colors hover:bg-secondary-bg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+          >
+            <Plus className="h-3.5 w-3.5" aria-hidden="true" />
+            添加路径
+          </button>
         </div>
       </div>
       <label
@@ -377,7 +445,7 @@ export function LibraryForm({
           id={defaultInputId}
           type="checkbox"
           checked={values.is_default}
-          onChange={(e) => set("is_default", e.target.checked)}
+          onChange={(e) => setDefault(e.target.checked)}
           className="h-4 w-4 accent-primary"
         />
         <span>设为默认图片库</span>
@@ -385,7 +453,7 @@ export function LibraryForm({
       <div className="flex flex-wrap gap-2 pt-1">
         <button
           type="submit"
-          disabled={isSubmitting || !values.name.trim() || !values.photo_library_path.trim()}
+          disabled={isSubmitting || !values.name.trim() || !hasValidPath}
           className="inline-flex h-10 cursor-pointer items-center gap-1.5 rounded-xl bg-primary px-4 text-body-sm font-medium text-white transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {isSubmitting ? (
@@ -429,7 +497,11 @@ function LibraryRow({
   onDelete: () => void;
   onSetDefault: () => void;
 }) {
-  const fullPath = containerToHost(project.photo_library_path, hostPrefix);
+  const fullPaths = (
+    project.photo_library_paths?.length
+      ? project.photo_library_paths
+      : [project.photo_library_path]
+  ).map((path) => containerToHost(path, hostPrefix));
 
   return (
     <div className="group flex flex-wrap items-center gap-3 border-b border-hairline py-4 last:border-0">
@@ -444,12 +516,18 @@ function LibraryRow({
               默认
             </span>
           )}
+          {fullPaths.length > 1 && (
+            <span className="rounded-full bg-secondary-bg px-2 py-0.5 text-caption-sm font-medium text-mute">
+              {fullPaths.length} 个路径
+            </span>
+          )}
         </div>
         <p
           className="mt-1 truncate font-mono text-caption-sm text-mute"
-          title={fullPath}
+          title={fullPaths.join("\n")}
         >
-          {compactLibraryPath(fullPath)}
+          {compactLibraryPath(fullPaths[0])}
+          {fullPaths.length > 1 ? ` 等 ${fullPaths.length} 个路径` : ""}
         </p>
       </div>
       <div className="ml-auto flex shrink-0 items-center gap-1.5">
@@ -512,14 +590,14 @@ function LibraryManagementCard() {
 
   function handleCreate(v: LibraryFormValues) {
     createProject.mutate(
-      { name: v.name, photo_library_path: v.photo_library_path, is_default: v.is_default },
+      { name: v.name, photo_library_paths: v.photo_library_paths, is_default: v.is_default },
       { onSuccess: () => setShowAddForm(false) }
     );
   }
 
   function handleUpdate(id: number, v: LibraryFormValues) {
     updateProject.mutate(
-      { id, body: { name: v.name, photo_library_path: v.photo_library_path, is_default: v.is_default } },
+      { id, body: { name: v.name, photo_library_paths: v.photo_library_paths, is_default: v.is_default } },
       { onSuccess: () => setEditingId(null) }
     );
   }
@@ -574,7 +652,10 @@ function LibraryManagementCard() {
             <LibraryForm
               initial={{
                 name: project.name,
-                photo_library_path: project.photo_library_path,
+                photo_library_paths:
+                  project.photo_library_paths?.length
+                    ? project.photo_library_paths
+                    : [project.photo_library_path],
                 is_default: project.is_default,
               }}
               hostPrefix={hostPrefix}
@@ -639,7 +720,7 @@ function LibraryManagementCard() {
       {showAddForm && (
         <div className="border-t border-hairline">
           <LibraryForm
-            initial={{ name: "", photo_library_path: "", is_default: false }}
+            initial={{ name: "", photo_library_paths: [""], is_default: false }}
             hostPrefix={hostPrefix}
             submitLabel="添加"
             isSubmitting={createProject.isPending}

@@ -18,6 +18,7 @@ class StartupSchemaCheckError(RuntimeError):
 
 REQUIRED_TABLES: tuple[str, ...] = (
     "projects",
+    "project_library_paths",
     "photos",
     "ai_jobs",
     "users",
@@ -40,6 +41,14 @@ REQUIRED_TABLES: tuple[str, ...] = (
 )
 
 REQUIRED_COLUMNS: dict[str, tuple[str, ...]] = {
+    "project_library_paths": (
+        "id",
+        "project_id",
+        "path",
+        "position",
+        "created_at",
+        "updated_at",
+    ),
     "photo_ai_analysis": ("semantic_concepts",),
     "photo_embeddings": (
         "id",

@@ -13,6 +13,7 @@ from app.database import Base  # noqa: E402
 from app.models import photo  # noqa: F401, E402 — import so metadata is populated
 from app.models import ai  # noqa: F401, E402
 from app.models import project  # noqa: F401, E402
+from app.models import project_library_path  # noqa: F401, E402
 from app.models import app_settings  # noqa: F401, E402
 from app.models import face  # noqa: F401, E402
 from app.models import location_cache  # noqa: F401, E402

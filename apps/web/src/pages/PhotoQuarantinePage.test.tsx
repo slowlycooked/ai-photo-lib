@@ -11,6 +11,7 @@ const listMock = vi.fn();
 const reconcileMock = vi.fn();
 const restoreMock = vi.fn();
 const requestDeleteMock = vi.fn();
+const undoDeleteMock = vi.fn();
 const keepMock = vi.fn();
 const batchMock = vi.fn();
 const calibrationMock = vi.fn();
@@ -32,6 +33,7 @@ vi.mock("@/api", async () => {
         reconcile: (...args: unknown[]) => reconcileMock(...args),
         restore: (...args: unknown[]) => restoreMock(...args),
         requestDelete: (...args: unknown[]) => requestDeleteMock(...args),
+        undoDelete: (...args: unknown[]) => undoDeleteMock(...args),
         keep: (...args: unknown[]) => keepMock(...args),
         batch: (...args: unknown[]) => batchMock(...args),
         getCalibration: (...args: unknown[]) => calibrationMock(...args),
@@ -118,6 +120,13 @@ describe("PhotoQuarantinePage", () => {
     reconcileMock.mockResolvedValue({ checked: 1, confirmed: 0, remaining: 1, failed: 0 });
     restoreMock.mockResolvedValue({ ...item, status: "restored" });
     requestDeleteMock.mockResolvedValue({ ...item, status: "delete_queued", quarantine_path: null });
+    undoDeleteMock.mockResolvedValue({
+      ...item,
+      status: "restored",
+      decision: "KEEP",
+      quarantine_path: null,
+      human_label: "KEEP",
+    });
     keepMock.mockResolvedValue({ ...item, status: "kept", human_label: "KEEP" });
     batchMock.mockResolvedValue({ requested: 1, succeeded: 1, failed: 0, results: [] });
     calibrationMock.mockResolvedValue({
@@ -643,7 +652,39 @@ describe("PhotoQuarantinePage", () => {
     renderPage();
 
     expect(await screen.findByLabelText("已提交删除，等待后台处理")).toBeInTheDocument();
-    expect(screen.getByText("等待 NAS 后台处理")).toBeInTheDocument();
+    expect(screen.getByText("等待 NAS 后台处理，处理前可撤销")).toBeInTheDocument();
+  });
+
+  it("undoes a queued deletion from the card action", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    listMock.mockResolvedValue({
+      total: 1,
+      items: [{ ...item, status: "delete_queued", quarantine_path: null }],
+    });
+    renderPage();
+
+    await user.click(await screen.findByRole("button", { name: "撤销删除" }));
+
+    await waitFor(() => expect(undoDeleteMock).toHaveBeenCalledWith(1, 7));
+    expect(await screen.findByText(
+      "已撤销删除请求：照片恢复正常状态并记为应保留",
+    )).toBeInTheDocument();
+  });
+
+  it("uses the server batch endpoint for selected undos", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    listMock.mockResolvedValue({
+      total: 1,
+      items: [{ ...item, status: "delete_queued", quarantine_path: null }],
+    });
+    renderPage();
+
+    await user.click(await screen.findByRole("checkbox", { name: "选择审核项" }));
+    await user.click(screen.getByRole("button", { name: "批量撤销删除（1）" }));
+
+    await waitFor(() => expect(batchMock).toHaveBeenCalledWith(1, "UNDO_DELETE", [7]));
   });
 
   it("uses approval actions as the human labels", async () => {

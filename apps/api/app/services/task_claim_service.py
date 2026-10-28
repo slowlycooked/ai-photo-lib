@@ -15,6 +15,7 @@ from .project_task_service import (
     TASK_TYPE_FACE_SCAN_PROJECT,
     TASK_TYPE_LIBRARY_REINDEX,
     TASK_TYPE_LIBRARY_SCAN,
+    TASK_TYPE_PHOTO_QUARANTINE_ANALYSIS,
     TASK_TYPE_UNKNOWN_FACE_CLUSTERING,
 )
 
@@ -32,6 +33,7 @@ class _QueueCandidate:
     kind: ClaimedTaskKind
     id: int
     created_at: datetime
+    task_type: Optional[str] = None  # project_task candidates only
 
 
 class TaskClaimService:
@@ -60,7 +62,18 @@ class TaskClaimService:
                 )
                 if candidate is not None
             ],
-            key=lambda candidate: candidate.created_at,
+            # Photo-quarantine analysis tasks run their own synchronous VLM
+            # loop and are user-facing (e.g. a manual rescan from the
+            # quarantine page). Give them priority over the generic ai_jobs
+            # FIFO; otherwise a large backlogged ai_jobs queue starves the
+            # task and the UI stays on waiting-for-worker for days.
+            key=lambda candidate: (
+                0
+                if candidate.kind == "project_task"
+                and candidate.task_type == TASK_TYPE_PHOTO_QUARANTINE_ANALYSIS
+                else 1,
+                candidate.created_at,
+            ),
         )
 
         for candidate in candidates:
@@ -202,15 +215,33 @@ class TaskClaimService:
         job.last_error_code = None
 
     def _peek_next_project_task(self) -> _QueueCandidate | None:
+        # Prefer the oldest photo-quarantine task so claim_next can give it
+        # priority over the ai_jobs FIFO; otherwise an older non-quarantine
+        # queued task would shadow it indefinitely.
         row = (
-            self._db.query(ProjectTask.id, ProjectTask.created_at)
-            .filter(ProjectTask.status == "queued")
+            self._db.query(ProjectTask.id, ProjectTask.created_at, ProjectTask.task_type)
+            .filter(
+                ProjectTask.status == "queued",
+                ProjectTask.task_type == TASK_TYPE_PHOTO_QUARANTINE_ANALYSIS,
+            )
             .order_by(ProjectTask.created_at)
             .first()
         )
         if row is None:
+            row = (
+                self._db.query(ProjectTask.id, ProjectTask.created_at, ProjectTask.task_type)
+                .filter(ProjectTask.status == "queued")
+                .order_by(ProjectTask.created_at)
+                .first()
+            )
+        if row is None:
             return None
-        return _QueueCandidate(kind="project_task", id=row.id, created_at=row.created_at)
+        return _QueueCandidate(
+            kind="project_task",
+            id=row.id,
+            created_at=row.created_at,
+            task_type=row.task_type,
+        )
 
     def _peek_next_ai_job(self) -> _QueueCandidate | None:
         row = (

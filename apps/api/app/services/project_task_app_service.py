@@ -101,6 +101,11 @@ class ProjectTaskAppService:
         task.progress_payload = progress
         self._claim_service.touch_project_task_lease(task)
         self._db.flush()
+        # Publish the running state immediately so task status APIs and the UI
+        # do not show waiting-for-worker while the handler loop executes in an
+        # otherwise uncommitted transaction.
+        if not self._use_main_session_for_progress():
+            self._db.commit()
 
     def _persist_progress(self, task_id: int, state: dict) -> None:
         """Update task progress. Called from long-running handlers.

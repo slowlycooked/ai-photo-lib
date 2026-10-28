@@ -78,6 +78,12 @@ export const photoQuarantineApi = {
       { method: "POST" },
     ),
 
+  undoDelete: (projectId: number, itemId: number) =>
+    request<PhotoQuarantineItem>(
+      `/projects/${projectId}/photo-quarantine/items/${itemId}/undo-delete`,
+      { method: "POST" },
+    ),
+
   // Compatibility alias for older callers. New review UI uses requestDelete.
   move: (projectId: number, itemId: number) =>
     request<PhotoQuarantineItem>(

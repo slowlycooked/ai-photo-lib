@@ -37,6 +37,15 @@ CREATE TABLE projects (
   deleted_at TEXT
 );
 
+CREATE TABLE project_library_paths (
+  id INTEGER PRIMARY KEY,
+  project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  path TEXT NOT NULL,
+  position INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE project_folders (
   id INTEGER PRIMARY KEY,
   project_id INTEGER,

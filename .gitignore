@@ -84,3 +84,7 @@ htmlcov/
 *.tar.gz
 *.tar
 .codebase-memory*.db
+
+# env backups & stray test artifacts
+.env.bak*
+ignored.db

@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from ..models.photo import Photo
 from ..models.project import Project
+from .project_library_service import get_project_library_paths
 from .thumbnail import generate_thumbnail
 
 
@@ -48,6 +49,23 @@ def _ensure_path_within(path: str | None, root: str | None, label: str) -> str:
     return path
 
 
+def _ensure_path_within_any_root(
+    path: str | None, roots: list[str], label: str
+) -> str:
+    """Ownership check against multiple library roots: any match passes."""
+    if not path or not roots:
+        raise PhotoPathOwnershipError(f"{label} is outside the project path")
+
+    resolved_path = Path(path).resolve()
+    for root in roots:
+        try:
+            resolved_path.relative_to(Path(root).resolve())
+            return path
+        except ValueError:
+            continue
+    raise PhotoPathOwnershipError(f"{label} is outside the project path")
+
+
 class ProjectPhotoAssetService:
     _INLINE_MIME = {"image/jpeg", "image/png", "image/webp", "image/gif", "image/avif"}
     _CONVERT_SUFFIXES = {".heic", ".heif"}
@@ -55,10 +73,18 @@ class ProjectPhotoAssetService:
     def __init__(self, db: Session | None = None) -> None:
         self._db = db
 
+    def _library_roots(self, project: Project) -> list[str]:
+        if self._db is not None:
+            paths = get_project_library_paths(self._db, project)
+            if paths:
+                return paths
+        legacy = (project.photo_library_path or "").strip()
+        return [legacy] if legacy else []
+
     def get_thumbnail_asset(self, *, project: Project, photo: Photo) -> PhotoFileAsset:
-        original_path = _ensure_path_within(
+        original_path = _ensure_path_within_any_root(
             photo.file_path,
-            project.photo_library_path,
+            self._library_roots(project),
             "Original file",
         )
         if not project.thumbnail_path:
@@ -95,9 +121,9 @@ class ProjectPhotoAssetService:
         )
 
     def get_original_asset(self, *, project: Project, photo: Photo) -> PhotoFileAsset:
-        original_path = _ensure_path_within(
+        original_path = _ensure_path_within_any_root(
             photo.file_path,
-            project.photo_library_path,
+            self._library_roots(project),
             "Original file",
         )
         if not Path(original_path).exists():
@@ -116,9 +142,9 @@ class ProjectPhotoAssetService:
     def get_preview_asset(
         self, *, project: Project, photo: Photo
     ) -> PhotoFileAsset | PhotoBytesAsset:
-        original_path = _ensure_path_within(
+        original_path = _ensure_path_within_any_root(
             photo.file_path,
-            project.photo_library_path,
+            self._library_roots(project),
             "Original file",
         )
         if not Path(original_path).exists():

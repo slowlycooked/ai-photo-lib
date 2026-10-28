@@ -25,10 +25,61 @@ from .path_utils import build_relative_paths
 from .folder_service import ensure_folder_path
 from .location_service import resolve_photo_location
 from .photo_cleanup import cleanup_missing_project_photos, rebuild_project_photo_index
+from .project_library_service import get_project_library_paths
 
 logger = logging.getLogger(__name__)
 
 ScanProgressCallback = Callable[[dict[str, Any]], None]
+
+
+def _resolve_scan_roots(library_paths: list[str]) -> tuple[list[Path], list[Path]]:
+    """Split configured library roots into (available, missing).
+
+    Roots are returned in their configured spelling so enumerated file paths
+    keep matching the file_path values already persisted for the project
+    (persisted spellings historically follow the configured root, unresolved).
+    Resolution is only used to detect duplicate or nested roots: a root nested
+    inside another configured root is scanned only once (the outer root wins).
+    """
+    candidates: list[tuple[Path, Path]] = []  # (configured spelling, resolved)
+    missing: list[Path] = []
+    seen: set[Path] = set()
+
+    for raw in library_paths:
+        root = Path(raw).expanduser()
+        try:
+            if not root.is_dir():
+                missing.append(root)
+                continue
+        except OSError:
+            missing.append(root)
+            continue
+        resolved = root.resolve()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        candidates.append((root, resolved))
+
+    # Drop roots nested inside another configured root regardless of order:
+    # the outer root wins and already covers the nested one.
+    resolved_roots = {resolved for _, resolved in candidates}
+    available = [
+        root
+        for root, resolved in candidates
+        if not any(
+            other != resolved and resolved.is_relative_to(other)
+            for other in resolved_roots
+        )
+    ]
+
+    return available, missing
+
+
+def _iter_library_root_files(scan_roots: list[Path]):
+    """Yield (root, file_entry) for every file under each scan root."""
+    for root in scan_roots:
+        for entry in root.rglob("*"):
+            yield root, entry
 
 
 @dataclass(frozen=True)
@@ -712,14 +763,26 @@ def scan_project(
     )
     _emit_progress(state, progress_callback)
 
-    library = Path(project.photo_library_path)
+    scan_roots, missing_roots = _resolve_scan_roots(
+        get_project_library_paths(db, project)
+    )
 
-    if not library.exists():
-        state.update(running=False, message=f"Directory not found: {library}", errors=1)
-        _push_scan_error(state, f"Directory not found: {library}")
-        logger.error("Project library path does not exist: %s", library)
+    if not scan_roots:
+        missing_detail = (
+            ", ".join(str(root) for root in missing_roots)
+            or "(no library paths configured)"
+        )
+        state.update(running=False, message=f"Directory not found: {missing_detail}", errors=1)
+        _push_scan_error(state, f"Directory not found: {missing_detail}")
+        logger.error("Project library path does not exist: %s", missing_detail)
         _emit_progress(state, progress_callback)
         return _snapshot_state(state)
+
+    for missing_root in missing_roots:
+        warning = f"Library root unavailable, skipped this scan: {missing_root}"
+        logger.warning("Project %d scan: %s", project_id, warning)
+        _push_scan_error(state, warning)
+        state["errors"] += 1
 
     thumb_path = (project.thumbnail_path or "").strip()
     if not thumb_path:
@@ -807,7 +870,7 @@ def scan_project(
                 _set_scan_stage(state, stage="persist", queue_depth=len(futures))
                 _emit_progress(state, progress_callback)
 
-        for entry in library.rglob("*"):
+        for root, entry in _iter_library_root_files(scan_roots):
             if not entry.is_file():
                 continue
             if entry.suffix.lower() not in SUPPORTED_SUFFIXES:
@@ -853,7 +916,7 @@ def scan_project(
                     entry,
                     project_id=project_id,
                     thumbnail_root=str(thumb_root),
-                    relative_base_path=str(library),
+                    relative_base_path=str(root),
                     existing=existing,
                 )
             ] = entry
@@ -881,11 +944,21 @@ def scan_project(
 
             if not aborted:
                 _set_scan_stage(state, stage="cleanup", queue_depth=0)
-                cleanup_missing_project_photos(
-                    db,
-                    project_id=project_id,
-                    batch_size=scan_batch_size,
-                )
+                if missing_roots:
+                    skipped_msg = (
+                        "Skipped missing-photo cleanup because "
+                        f"{len(missing_roots)} library root(s) unavailable: "
+                        + ", ".join(str(r) for r in missing_roots)
+                    )
+                    logger.warning("Project %d scan: %s", project_id, skipped_msg)
+                    _push_scan_error(state, skipped_msg)
+                    state["errors"] += 1
+                else:
+                    cleanup_missing_project_photos(
+                        db,
+                        project_id=project_id,
+                        batch_size=scan_batch_size,
+                    )
 
                 # 扫描结束后重算文件夹计数（若失败也不能阻塞状态收尾）
                 from .folder_service import recompute_project_folder_counts
@@ -905,6 +978,8 @@ def scan_project(
             state.pop("_folder_cache", None)
             state.update(running=False, current_path=None, queue_depth=0)
             if not aborted:
+                if missing_roots:
+                    final_message = "done_with_errors"
                 state.update(current_stage="done", message=final_message)
                 _emit_progress(state, progress_callback)
 

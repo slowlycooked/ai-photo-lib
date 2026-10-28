@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from sqlalchemy import func
+from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import Session
 
 from ..config import settings
@@ -16,7 +16,14 @@ from ..models.folder import ProjectFolder  # noqa: F401 - register Photo.folder_
 from ..models.photo import Photo
 from ..models.photo_quarantine import PhotoQuarantineItem, ProjectPhotoQuarantineSettings
 from ..models.project import Project
-from .photo_cleanup import queue_original_trash_request
+from .photo_cleanup import (
+    PhotoCleanupConflict,
+    PhotoCleanupError,
+    cancel_original_trash_request,
+    queue_original_trash_request,
+)
+from .project_library_service import get_project_library_paths
+from .thumbnail import VIDEO_SUFFIXES
 
 
 logger = logging.getLogger(__name__)
@@ -24,6 +31,24 @@ logger = logging.getLogger(__name__)
 _CLASSIFICATION_ALIASES = {
     "meaningless_test": "meaningless_test_image",
 }
+
+# Videos are out of scope for content review; they are scanned only for
+# exact-hash duplicate detection. Video items are hidden from the review list
+# unless they are suspected duplicates or have an in-flight/pending file
+# operation (delete_queued, quarantined, restoring, restore_*) that can still
+# be undone or finalized.
+_VIDEO_HIDDEN_STATUSES = frozenset(
+    {
+        "review",
+        "kept",
+        "restored",
+        "deleted_confirmed",
+        "analysis_failed",
+        "analysis_retry_queued",
+        "queue_failed",
+        "move_failed",
+    }
+)
 
 
 class PhotoQuarantineError(RuntimeError):
@@ -201,7 +226,23 @@ class PhotoQuarantineService:
             query = query.filter(PhotoQuarantineItem.human_label.is_(None))
         elif human_label in {"KEEP", "TRASH"}:
             query = query.filter(PhotoQuarantineItem.human_label == human_label)
-        return query
+        video_path = or_(
+            *[
+                PhotoQuarantineItem.original_path.ilike(f"%{suffix}")
+                for suffix in VIDEO_SUFFIXES
+            ]
+        )
+        # Hide video items unless they are duplicate candidates (the only
+        # review path for videos) or mid-flight deletions/restores.
+        non_duplicate_video = and_(
+            video_path,
+            PhotoQuarantineItem.status.in_(_VIDEO_HIDDEN_STATUSES),
+            or_(
+                PhotoQuarantineItem.classification.is_(None),
+                PhotoQuarantineItem.classification != "suspected_duplicate",
+            ),
+        )
+        return query.filter(~non_duplicate_video)
 
     def get_item(self, *, project_id: int, item_id: int) -> PhotoQuarantineItem:
         item = (
@@ -298,6 +339,51 @@ class PhotoQuarantineService:
             item_id=item_id,
             labeled_by=labeled_by,
         )
+
+    def undo_delete_request(
+        self,
+        *,
+        project_id: int,
+        item_id: int,
+        labeled_by: Optional[str] = None,
+    ) -> PhotoQuarantineItem:
+        """Withdraw a queued NAS deletion request before the worker picks it up.
+
+        The original file never moved, so undo only cancels the manifest entry
+        and rolls the photo/item state back. If the NAS batch already claimed
+        or processed the entry, undo fails closed with a conflict.
+        """
+        item, photo, project = self._load_item_photo_project(project_id, item_id)
+        if item.status != "delete_queued":
+            raise PhotoQuarantineConflict(
+                f"Item status {item.status!r} cannot be undone; only queued "
+                "deletion requests can be withdrawn"
+            )
+        source = self._validated_original_path(
+            project, item.original_path, must_exist=False
+        )
+        if not source.exists():
+            raise PhotoQuarantineConflict(
+                "原文件已不在原位置，可能已被 NAS 批处理移入回收站，无法撤销；"
+                "请确认后台处理结果"
+            )
+        try:
+            cancelled = cancel_original_trash_request(
+                self._db, project_id=project_id, photo=photo
+            )
+        except PhotoCleanupConflict as exc:
+            raise PhotoQuarantineConflict(str(exc)) from exc
+        except PhotoCleanupError as exc:
+            raise PhotoQuarantineError(str(exc)) from exc
+        if not cancelled:
+            logger.info(
+                "photo_quarantine.undo_found_no_pending_manifest_entry "
+                "project_id=%d item_id=%d photo_id=%d",
+                project_id,
+                item.id,
+                photo.id,
+            )
+        return self._finalize_undo_delete(item.id, labeled_by=labeled_by)
 
     def restore(
         self,
@@ -648,6 +734,9 @@ class PhotoQuarantineService:
             "MOVE": lambda **kwargs: self.request_delete(
                 **kwargs, labeled_by=labeled_by
             ).item,
+            "UNDO_DELETE": lambda **kwargs: self.undo_delete_request(
+                **kwargs, labeled_by=labeled_by
+            ),
             "RESTORE": lambda **kwargs: self.restore(**kwargs, labeled_by=labeled_by),
             "RETRY_ANALYSIS": self.retry_analysis,
             "LABEL_KEEP": lambda **kwargs: self.label(
@@ -758,13 +847,10 @@ class PhotoQuarantineService:
         if item.quarantine_path:
             return self._validated_quarantine_path(item.quarantine_path), self._root
         if item.status == "delete_queued":
-            root = Path(project.photo_library_path).expanduser().resolve()
-            return (
-                self._validated_original_path(
-                    project, item.original_path, must_exist=False
-                ),
-                root,
+            validated = self._validated_original_path(
+                project, item.original_path, must_exist=False
             )
+            return validated, self._matching_library_root(project, item.original_path)
         raise PhotoQuarantineConflict("Item has not been queued or quarantined")
 
     @staticmethod
@@ -840,6 +926,27 @@ class PhotoQuarantineService:
         self._db.refresh(item)
         return item
 
+    def _finalize_undo_delete(
+        self, item_id: int, *, labeled_by: Optional[str]
+    ) -> PhotoQuarantineItem:
+        item = self._reload_item(item_id)
+        photo = self._db.query(Photo).filter(Photo.id == item.photo_id).first()
+        if photo is None:
+            raise PhotoQuarantineError("Photo record disappeared during undo")
+        now = _now()
+        photo.status = item.previous_photo_status or "indexed"
+        photo.deleted_at = None
+        photo.updated_at = now
+        item.status = "restored"
+        item.decision = "KEEP"
+        item.restored_at = item.restored_at or now
+        item.last_error = None
+        item.updated_at = now
+        self._set_label_fields(item, label="KEEP", labeled_by=labeled_by)
+        self._db.commit()
+        self._db.refresh(item)
+        return item
+
     def _destination(self, item: PhotoQuarantineItem, file_name: str) -> Path:
         if item.id is None:
             raise PhotoQuarantineError("Quarantine item must be persisted before moving")
@@ -847,12 +954,35 @@ class PhotoQuarantineService:
         path = self._root / f"project-{item.project_id}" / day / str(item.id) / file_name
         return _ensure_within(path, self._root)
 
+    def _project_library_roots(self, project: Project) -> list[str]:
+        if self._db is None:
+            legacy = (project.photo_library_path or "").strip()
+            return [legacy] if legacy else []
+        return get_project_library_paths(self._db, project)
+
+    def _matching_library_root(self, project: Project, raw_path: str) -> Path:
+        """Return the resolved library root that contains ``raw_path``."""
+        resolved = Path(raw_path).expanduser().resolve(strict=False)
+        for root in self._project_library_roots(project):
+            library = Path(root).expanduser().resolve()
+            try:
+                resolved.relative_to(library)
+                return library
+            except ValueError:
+                continue
+        raise PhotoQuarantineError(f"Path escapes managed root: {resolved}")
+
     def _validated_original_path(
         self, project: Project, raw_path: str, *, must_exist: bool = True
     ) -> Path:
-        library = Path(project.photo_library_path).expanduser().resolve()
         path = Path(raw_path).expanduser().resolve(strict=must_exist)
-        return _ensure_within(path, library)
+        for root in self._project_library_roots(project):
+            library = Path(root).expanduser().resolve()
+            try:
+                return _ensure_within(path, library)
+            except PhotoQuarantineError:
+                continue
+        raise PhotoQuarantineError(f"Path escapes managed root: {path}")
 
     def _validated_quarantine_path(self, raw_path: str) -> Path:
         path = Path(raw_path).expanduser().resolve(strict=False)

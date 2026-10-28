@@ -224,6 +224,26 @@ def move_photo_quarantine_item(
 
 
 @router.post(
+    "/{project_id}/photo-quarantine/items/{item_id}/undo-delete",
+    response_model=PhotoQuarantineItemResponse,
+)
+def undo_delete_photo_quarantine_item(
+    item_id: int,
+    project: Project = Depends(require_project_manager),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    try:
+        return PhotoQuarantineService(db).undo_delete_request(
+            project_id=project.id, item_id=item_id, labeled_by=current_user.username
+        )
+    except PhotoQuarantineConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except PhotoQuarantineError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.post(
     "/{project_id}/photo-quarantine/items/{item_id}/restore",
     response_model=PhotoQuarantineItemResponse,
 )

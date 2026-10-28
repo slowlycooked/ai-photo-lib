@@ -17,6 +17,7 @@ os.environ.setdefault("OPENAI_VISION_MODEL", "test-model")
 
 from app.models.project_task import ProjectTask  # noqa: E402
 from app.models.project import Project  # noqa: E402
+from app.models.project_library_path import ProjectLibraryPath  # noqa: E402
 from app.services.project_task_app_service import (  # noqa: E402
     ProjectTaskAppService,
     ProjectTaskRunContext,
@@ -59,6 +60,7 @@ class ProjectTaskAppServiceTest(unittest.TestCase):
             future=True,
         )
         Project.__table__.create(self._engine)
+        ProjectLibraryPath.__table__.create(self._engine)
         ProjectTask.__table__.create(self._engine)
 
         db = self._SessionLocal()

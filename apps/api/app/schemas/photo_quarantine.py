@@ -86,6 +86,7 @@ class PhotoQuarantineBatchRequest(BaseModel):
         "KEEP",
         "REQUEST_DELETE",
         "MOVE",
+        "UNDO_DELETE",
         "RESTORE",
         "RETRY_ANALYSIS",
         "LABEL_KEEP",

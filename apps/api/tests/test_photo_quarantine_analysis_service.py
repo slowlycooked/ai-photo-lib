@@ -19,6 +19,7 @@ from app.models.photo_quarantine import (
 from app.models.project import Project
 from app.schemas.photo_quarantine import PhotoQuarantineItemResponse
 from app.services.photo_quarantine_analysis_service import (
+    PROMPT_VERSION,
     PhotoQuarantineAnalysisService,
     is_hour_in_window,
 )
@@ -285,3 +286,139 @@ def test_hour_window_supports_normal_and_overnight_ranges() -> None:
     assert is_hour_in_window(23, 22, 3)
     assert is_hour_in_window(2, 22, 3)
     assert not is_hour_in_window(12, 22, 3)
+
+
+def test_videos_skip_content_analysis_and_only_duplicates_reach_review(
+    tmp_path: Path,
+) -> None:
+    db, image = _build_db(tmp_path)
+    video = tmp_path / "library" / "clip.mp4"
+    video.write_bytes(b"unique-video-bytes")
+    mime_video = tmp_path / "library" / "photo-2.jpg"
+    mime_video.write_bytes(b"photo-2")
+    db.add(
+        Photo(
+            id=2,
+            project_id=1,
+            file_path=str(video),
+            file_name=video.name,
+            status="indexed",
+        )
+    )
+    db.add(
+        Photo(
+            id=3,
+            project_id=1,
+            file_path=str(mime_video),
+            file_name=mime_video.name,
+            mime_type="video/quicktime",
+            status="indexed",
+        )
+    )
+    db.commit()
+    analyzed_paths = []
+
+    def analyzer(path, *_args, **_kwargs):
+        analyzed_paths.append(path)
+        return _decision("valuable", decision="KEEP")
+
+    service = PhotoQuarantineAnalysisService(
+        db,
+        analyzer=analyzer,
+        clock=lambda tz: datetime(2026, 8, 25, 2, tzinfo=tz),
+    )
+    result = service.run_project(project_id=1)
+
+    # The image is analyzed by the model; both videos are scanned but never
+    # sent to content review (no VLM call), because neither is a duplicate.
+    assert result["analyzed"] == 3
+    assert analyzed_paths == [str(image)]
+    for video_photo_id in (2, 3):
+        video_item = (
+            db.query(PhotoQuarantineItem)
+            .filter(PhotoQuarantineItem.photo_id == video_photo_id)
+            .one()
+        )
+        assert video_item.status == "kept"
+        assert video_item.classification == "video_out_of_scope"
+        assert video_item.model_name == "qwen3.8:27b"
+        assert video_item.prompt_version == PROMPT_VERSION
+
+    # A second run must not re-select the out-of-scope videos.
+    result_second = service.run_project(project_id=1)
+    assert result_second["analyzed"] == 0
+
+
+def test_duplicate_videos_are_flagged_without_content_analysis(
+    tmp_path: Path,
+) -> None:
+    db, image = _build_db(tmp_path)
+    # Mark the fixture image as already analyzed so only videos are candidates.
+    db.add(
+        PhotoQuarantineItem(
+            project_id=1,
+            photo_id=1,
+            status="kept",
+            decision="KEEP",
+            classification="valuable",
+            confidence=0.99,
+            reason="ok",
+            preservation_flags=[],
+            first_result={"decision": "KEEP"},
+            model_name="qwen3.8:27b",
+            prompt_version=PROMPT_VERSION,
+            original_path=str(image),
+        )
+    )
+    first_video = tmp_path / "library" / "clip.mp4"
+    first_video.write_bytes(b"same-video-content")
+    second_video = tmp_path / "library" / "clip-copy.mov"
+    second_video.write_bytes(b"same-video-content")
+    db.add(
+        Photo(
+            id=2,
+            project_id=1,
+            file_path=str(first_video),
+            file_name=first_video.name,
+            file_hash="same-video-hash",
+            status="indexed",
+        )
+    )
+    db.add(
+        Photo(
+            id=3,
+            project_id=1,
+            file_path=str(second_video),
+            file_name=second_video.name,
+            file_hash="same-video-hash",
+            status="indexed",
+        )
+    )
+    db.commit()
+
+    def analyzer(_path, *_args, **_kwargs):  # pragma: no cover
+        raise AssertionError("VLM content review must never run for videos")
+
+    service = PhotoQuarantineAnalysisService(
+        db,
+        analyzer=analyzer,
+        clock=lambda tz: datetime(2026, 8, 25, 2, tzinfo=tz),
+    )
+    result = service.run_project(project_id=1)
+
+    # First copy: scanned, kept as out of scope. Second copy: flagged as a
+    # suspected duplicate and queued for human review.
+    assert result["analyzed"] == 2
+    assert result["review"] == 1
+    canonical_item = (
+        db.query(PhotoQuarantineItem).filter(PhotoQuarantineItem.photo_id == 2).one()
+    )
+    duplicate_item = (
+        db.query(PhotoQuarantineItem).filter(PhotoQuarantineItem.photo_id == 3).one()
+    )
+    assert canonical_item.status == "kept"
+    assert canonical_item.classification == "video_out_of_scope"
+    assert duplicate_item.status == "review"
+    assert duplicate_item.classification == "suspected_duplicate"
+    assert duplicate_item.reason == "与 clip.mp4 的内容哈希一致"
+    assert duplicate_item.first_result["duplicate_photo_id"] == 2

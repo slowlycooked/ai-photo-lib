@@ -23,7 +23,11 @@ from ..services.project_ai_service import (
     resolve_project_ai_runtime_settings,
 )
 from ..services.project_embedding_settings_service import resolve_embedding_settings_strict
-from ..services.project_scan_runtime_service import validate_project_library_path
+from ..services.project_scan_runtime_service import validate_project_library_paths
+from ..services.project_library_service import (
+    build_project_response,
+    get_project_library_paths,
+)
 from ..services.project_app_service import (
     DefaultProjectDeleteError,
     ProjectAppService,
@@ -67,7 +71,10 @@ def list_projects(
             .order_by(Project.is_default.desc(), Project.id.asc())
             .all()
         )
-    return ProjectListResponse(total=len(projects), items=projects)
+    return ProjectListResponse(
+        total=len(projects),
+        items=[build_project_response(db, project) for project in projects],
+    )
 
 
 @router.post("", response_model=ProjectResponse, status_code=201)
@@ -76,12 +83,16 @@ def create_project(
     _: object = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
-    return ProjectAppService(db).create_project(body)
+    project = ProjectAppService(db).create_project(body)
+    return build_project_response(db, project)
 
 
 @router.get("/{project_id}", response_model=ProjectResponse)
-def get_project(project: Project = Depends(require_project)):
-    return project
+def get_project(
+    project: Project = Depends(require_project),
+    db: Session = Depends(get_db),
+):
+    return build_project_response(db, project)
 
 
 @router.get("/{project_id}/readiness", response_model=ProjectReadinessResponse)
@@ -91,7 +102,7 @@ def get_project_readiness(
 ):
     checks: list[ProjectReadinessCheck] = []
 
-    checks.append(_scan_readiness_check(project))
+    checks.append(_scan_readiness_check(db, project))
 
     try:
         ai_settings = resolve_project_ai_runtime_settings(db, project.id)
@@ -149,9 +160,10 @@ def update_project(
     db: Session = Depends(get_db),
 ):
     try:
-        return ProjectAppService(db).update_project(project_id, body)
+        project = ProjectAppService(db).update_project(project_id, body)
     except ProjectNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return build_project_response(db, project)
 
 
 @router.delete("/{project_id}", status_code=204)
@@ -173,16 +185,17 @@ def delete_project(
 # These helpers are retained for the CRUD endpoints above.
 
 
-def _scan_readiness_check(project: Project) -> ProjectReadinessCheck:
-    library_path = (project.photo_library_path or "").strip()
+def _scan_readiness_check(db: Session, project: Project) -> ProjectReadinessCheck:
     thumb_path = (project.thumbnail_path or "").strip()
 
-    library_error = validate_project_library_path(library_path)
-    if library_error:
+    library_errors = validate_project_library_paths(
+        get_project_library_paths(db, project)
+    )
+    if library_errors:
         return ProjectReadinessCheck(
             name="scan_runtime",
             ready=False,
-            message=library_error,
+            message="; ".join(library_errors),
         )
 
     if not thumb_path:

@@ -33,6 +33,18 @@ CREATE TABLE projects (
 );
 """
 
+LIBRARY_PATHS_SCHEMA_SQL = """
+CREATE TABLE project_library_paths (
+  id INTEGER PRIMARY KEY,
+  project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  path TEXT NOT NULL,
+  position INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE (project_id, path)
+);
+"""
+
 
 class RepairLegacyProjectLibraryPathsTest(unittest.TestCase):
     def test_rewrites_legacy_container_paths_to_configured_host_path(self) -> None:
@@ -47,12 +59,21 @@ class RepairLegacyProjectLibraryPathsTest(unittest.TestCase):
 
             with engine.begin() as conn:
                 conn.execute(sa.text(SCHEMA_SQL))
+                conn.execute(sa.text(LIBRARY_PATHS_SCHEMA_SQL))
                 conn.execute(
                     sa.text(
                         "INSERT INTO projects (id, name, photo_library_path, thumbnail_path, is_default) "
                         "VALUES (1, 'Default', '/photos', '/tmp/thumbs', 1), "
                         "(2, 'Nested', '/photos/travel', '/tmp/thumbs', 0), "
                         "(3, 'Modern', '/Users/unclema/Desktop/ai-lib/keep', '/tmp/thumbs', 0)"
+                    )
+                )
+                conn.execute(
+                    sa.text(
+                        "INSERT INTO project_library_paths (project_id, path, position) "
+                        "VALUES (1, '/photos', 0), "
+                        "(2, '/photos/travel', 0), "
+                        "(3, '/Users/unclema/Desktop/ai-lib/keep', 0)"
                     )
                 )
 
@@ -72,5 +93,65 @@ class RepairLegacyProjectLibraryPathsTest(unittest.TestCase):
                         (3, "/Users/unclema/Desktop/ai-lib/keep"),
                     ],
                 )
+
+                library_path_rows = db.execute(
+                    sa.text(
+                        "SELECT project_id, path, position FROM project_library_paths "
+                        "ORDER BY project_id, position"
+                    )
+                ).all()
+                self.assertEqual(
+                    library_path_rows,
+                    [
+                        (1, "/tmp", 0),
+                        (2, "/tmp/travel", 0),
+                        (3, "/Users/unclema/Desktop/ai-lib/keep", 0),
+                    ],
+                )
+            finally:
+                db.close()
+
+
+    def test_conflicting_repaired_child_row_is_replaced(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            db_path = Path(tmp_dir) / "projects.db"
+            engine = sa.create_engine(
+                f"sqlite:///{db_path}",
+                connect_args={"check_same_thread": False},
+                future=True,
+            )
+            SessionLocal = sessionmaker(bind=engine, future=True)
+
+            with engine.begin() as conn:
+                conn.execute(sa.text(SCHEMA_SQL))
+                conn.execute(sa.text(LIBRARY_PATHS_SCHEMA_SQL))
+                conn.execute(
+                    sa.text(
+                        "INSERT INTO projects (id, name, photo_library_path, thumbnail_path, is_default) "
+                        "VALUES (1, 'Legacy', '/photos/lib', '/tmp/thumbs', 1)"
+                    )
+                )
+                # Both the legacy row and a pre-existing row for the repaired
+                # target path are present: renaming alone would hit the unique
+                # constraint without the delete-first fix.
+                conn.execute(
+                    sa.text(
+                        "INSERT INTO project_library_paths (project_id, path, position) "
+                        "VALUES (1, '/photos/lib', 0), (1, '/tmp/lib', 1)"
+                    )
+                )
+
+            db = SessionLocal()
+            try:
+                repaired = repair_legacy_project_library_paths(db)
+                self.assertEqual(repaired, 1)
+
+                rows = db.execute(
+                    sa.text(
+                        "SELECT path, position FROM project_library_paths "
+                        "WHERE project_id = 1 ORDER BY position"
+                    )
+                ).all()
+                self.assertEqual(rows, [("/tmp/lib", 0)])
             finally:
                 db.close()

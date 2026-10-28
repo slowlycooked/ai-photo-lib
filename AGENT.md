@@ -45,8 +45,8 @@ Backend:
 
 ```bash
 cd apps/api
-../../.venv/bin/python -m pytest -q
-../../.venv/bin/python -m pytest tests/test_project_photos_query_service.py -q
+.venv/bin/python -m pytest -q
+.venv/bin/python -m pytest tests/test_project_photos_query_service.py -q
 ```
 
 Frontend:

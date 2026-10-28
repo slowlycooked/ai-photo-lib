@@ -14,6 +14,7 @@ export interface Project {
   name: string;
   description: string | null;
   photo_library_path: string;
+  photo_library_paths?: string[];
   thumbnail_path: string | null;
   is_default: boolean;
   created_at: string;

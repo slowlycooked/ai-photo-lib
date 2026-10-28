@@ -21,6 +21,7 @@ os.environ.setdefault("OPENAI_VISION_MODEL", "test-model")
 
 from app.models.photo import Photo  # noqa: E402
 from app.models.project import Project  # noqa: E402
+from app.models.project_library_path import ProjectLibraryPath  # noqa: E402
 from app.services.scanner import PreparedScanFile, StructuredExif, scan_project  # noqa: E402
 
 
@@ -44,6 +45,7 @@ class ScannerPipelineTest(unittest.TestCase):
             future=True,
         )
         Project.__table__.create(self._engine)
+        ProjectLibraryPath.__table__.create(self._engine)
         Photo.__table__.create(self._engine)
 
         self._tmpdir = tempfile.TemporaryDirectory()

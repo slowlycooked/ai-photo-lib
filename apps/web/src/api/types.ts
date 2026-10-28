@@ -9,6 +9,7 @@ export interface Project {
   name: string;
   description: string | null;
   photo_library_path: string;
+  photo_library_paths?: string[];
   thumbnail_path: string | null;
   is_default: boolean;
   created_at: string;
@@ -23,7 +24,8 @@ export interface ProjectListResponse {
 export interface ProjectCreate {
   name: string;
   description?: string | null;
-  photo_library_path: string;
+  photo_library_path?: string;
+  photo_library_paths?: string[];
   thumbnail_path?: string | null;
   is_default?: boolean;
 }
@@ -32,6 +34,7 @@ export interface ProjectUpdate {
   name?: string;
   description?: string | null;
   photo_library_path?: string;
+  photo_library_paths?: string[];
   thumbnail_path?: string | null;
   is_default?: boolean;
 }
@@ -1161,6 +1164,7 @@ export type PhotoQuarantineBatchAction =
   | "KEEP"
   | "REQUEST_DELETE"
   | "MOVE"
+  | "UNDO_DELETE"
   | "RESTORE"
   | "RETRY_ANALYSIS"
   | "LABEL_KEEP"
